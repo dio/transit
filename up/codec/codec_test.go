@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/dio/transit/up/codec"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,7 +32,7 @@ func TestEncodeDecode_roundTrip(t *testing.T) {
 
 			decoded, err := codec.Decode(enc.name, compressed)
 			require.NoError(t, err)
-			assert.Equal(t, plaintext, decoded)
+			require.Equal(t, plaintext, decoded)
 		})
 	}
 }
@@ -47,7 +46,7 @@ func TestEncodeDecode_normalisation(t *testing.T) {
 			// Decode with alternate spelling — must still work.
 			decoded, err := codec.Decode(enc.variant, compressed)
 			require.NoError(t, err)
-			assert.Equal(t, plaintext, decoded)
+			require.Equal(t, plaintext, decoded)
 		})
 	}
 }
@@ -57,11 +56,11 @@ func TestEncodeDecode_identity(t *testing.T) {
 		t.Run(enc, func(t *testing.T) {
 			out, err := codec.Encode(enc, plaintext)
 			require.NoError(t, err)
-			assert.Equal(t, plaintext, out)
+			require.Equal(t, plaintext, out)
 
 			out, err = codec.Decode(enc, plaintext)
 			require.NoError(t, err)
-			assert.Equal(t, plaintext, out)
+			require.Equal(t, plaintext, out)
 		})
 	}
 }
@@ -74,7 +73,7 @@ func TestEncodeDecode_emptyPayload(t *testing.T) {
 
 			decoded, err := codec.Decode(enc.name, compressed)
 			require.NoError(t, err)
-			assert.Equal(t, []byte{}, decoded)
+			require.Equal(t, []byte{}, decoded)
 		})
 	}
 }
@@ -84,7 +83,7 @@ func TestDecode_corruptData(t *testing.T) {
 	for _, enc := range encodings {
 		t.Run(enc.name, func(t *testing.T) {
 			_, err := codec.Decode(enc.name, garbage)
-			assert.Error(t, err)
+			require.Error(t, err)
 		})
 	}
 }
@@ -92,21 +91,21 @@ func TestDecode_corruptData(t *testing.T) {
 func TestEncode_unsupportedEncoding(t *testing.T) {
 	_, err := codec.Encode("compress", plaintext)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "compress")
+	require.Contains(t, err.Error(), "compress")
 }
 
 func TestDecode_unsupportedEncoding(t *testing.T) {
 	_, err := codec.Decode("compress", plaintext)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "compress")
+	require.Contains(t, err.Error(), "compress")
 }
 
 func TestNegotiateIdentity(t *testing.T) {
 	var h fakeHeaderSetter
 	codec.NegotiateIdentity(&h)
 	require.Len(t, h.calls, 1)
-	assert.Equal(t, "accept-encoding", h.calls[0][0])
-	assert.Equal(t, "identity", h.calls[0][1])
+	require.Equal(t, "accept-encoding", h.calls[0][0])
+	require.Equal(t, "identity", h.calls[0][1])
 }
 
 type fakeHeaderSetter struct {
