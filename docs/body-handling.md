@@ -236,15 +236,3 @@ modules ABI model and is a separate future project (`transit-bridge`).
 The current `Register*` functions are already the stable interface this bridge
 would target. No changes to transit are needed to keep that door open.
 
----
-
-## e2e validation plan
-
-- **`e2e/filters/body.go`**: `e2e-body` filter using `RegisterWithBody`:
-  - GET path: body handler called with `Data: nil, EndStream: true` (no body)
-  - POST path: body handler called with full body bytes
-  - Asserts via response header echo or sink POST
-- **`e2e/filters/mutable_body.go`**: `e2e-mutable-body` filter using
-  `RegisterWithMutableBody`, replaces request body, upstream sees new content
-- **`e2e/filters/codec_body.go`**: `e2e-codec` filter demonstrating
-  `codec.NegotiateIdentity` + `codec.Decode` on response
