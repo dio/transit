@@ -202,6 +202,12 @@ func TestSSE_countersRecorded(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	// Dump all stats containing "sse_tap" to help diagnose key format.
+	if resp2, err2 := http.Get(adminURL + "/stats?filter=sse_tap"); err2 == nil { //nolint:noctx
+		body2, _ := io.ReadAll(resp2.Body)
+		resp2.Body.Close() //nolint:errcheck
+		t.Logf("all sse_tap stats:\n%s", body2)
+	}
 	t.Fatal("timed out waiting for sse_tap_input_tokens > 0 in admin stats")
 }
 
@@ -278,7 +284,8 @@ func startUpstream() int {
 }
 
 // readStat queries the Envoy admin stats endpoint and returns the value of the
-// named counter, or 0 if not found.
+// named counter, or 0 if not found. The name is matched as a suffix of the stat
+// key to handle Envoy scoping (e.g. "listener.X.sse_tap_input_tokens: 42").
 func readStat(t *testing.T, name string) int64 {
 	t.Helper()
 	resp, err := http.Get(adminURL + "/stats?filter=" + name) //nolint:noctx
@@ -289,11 +296,17 @@ func readStat(t *testing.T, name string) int64 {
 	sc := bufio.NewScanner(resp.Body)
 	for sc.Scan() {
 		line := sc.Text()
-		if !strings.HasPrefix(line, name+":") {
+		idx := strings.Index(line, ": ")
+		if idx < 0 {
 			continue
 		}
+		key := line[:idx]
+		if key != name && !strings.HasSuffix(key, "."+name) {
+			continue
+		}
+		t.Logf("admin stat: %s", line)
 		var v int64
-		fmt.Sscanf(strings.TrimSpace(strings.TrimPrefix(line, name+":")), "%d", &v) //nolint:errcheck
+		fmt.Sscanf(strings.TrimSpace(line[idx+2:]), "%d", &v) //nolint:errcheck
 		return v
 	}
 	return 0
