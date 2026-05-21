@@ -1,7 +1,7 @@
 # e2e/sinks/otelsink
 
-An in-memory OTLP gRPC receiver for e2e tests. A single `Sink` registers both
-`LogsService` and `MetricsService` on one port.
+An in-memory OTLP gRPC receiver for e2e tests. A single `Sink` registers
+`LogsService`, `MetricsService`, and `TraceService` on one port.
 
 ```go
 sink := otelsink.New()
@@ -104,7 +104,8 @@ tag and are exported with their full name unchanged.
 
 ## Design note: dual-service conflict
 
-Both `LogsServiceServer` and `MetricsServiceServer` define a method named
-`Export`. Go does not allow two methods with the same name on one struct, so
-`Sink` uses two thin adapter types (`logsSvc` / `metricsSvc`) that hold a
-pointer to the shared `Sink` and each implement one of the two interfaces.
+`LogsServiceServer`, `MetricsServiceServer`, and `TraceServiceServer` all define
+a method named `Export`. Go does not allow two methods with the same name on one
+struct, so `Sink` uses three thin adapter types (`logsSvc` / `metricsSvc` /
+`tracesSvc`) that each hold a pointer to the shared `Sink` and implement one
+interface.

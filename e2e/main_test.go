@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/dio/transit/e2e/sinks/accessloggersink"
+	"github.com/dio/transit/e2e/sinks/alssink"
 	"github.com/dio/transit/e2e/sinks/otelsink"
 )
 
@@ -46,10 +47,12 @@ var (
 	codecAddr        string
 	metadataAddr     string
 	tracerAddr       string
+	alsAddr          string
 	adminAddr        string
 )
 
 var otelSink *otelsink.Sink
+var alsSink *alssink.Sink
 
 var (
 	envoyCmd    *exec.Cmd
@@ -76,6 +79,7 @@ func TestMain(m *testing.M) {
 	codecUpstreamPort := startGzipUpstream()
 	metadataPort := freePort()
 	tracerPort := freePort()
+	alsPort := freePort()
 	adminPort := freePort()
 
 	echoAddr = fmt.Sprintf("http://localhost:%d", echoPort)
@@ -87,11 +91,16 @@ func TestMain(m *testing.M) {
 	codecAddr = fmt.Sprintf("http://localhost:%d", codecPort)
 	metadataAddr = fmt.Sprintf("http://localhost:%d", metadataPort)
 	tracerAddr = fmt.Sprintf("http://localhost:%d", tracerPort)
+	alsAddr = fmt.Sprintf("http://localhost:%d", alsPort)
 	adminAddr = fmt.Sprintf("http://localhost:%d", adminPort)
 
 	otelSink = otelsink.New()
 	otelSinkPort := otelSink.Start()
 	fmt.Fprintf(os.Stderr, "e2e: OTLP sink at port %d\n", otelSinkPort)
+
+	alsSink = alssink.New()
+	alsSinkPort := alsSink.Start()
+	fmt.Fprintf(os.Stderr, "e2e: ALS sink at port %d\n", alsSinkPort)
 
 	sinkURL := accessloggersink.StartSink()
 	fmt.Fprintf(os.Stderr, "e2e: access logger sink at %s\n", sinkURL)
@@ -131,6 +140,8 @@ func TestMain(m *testing.M) {
 		otelSinkPort:      otelSinkPort,
 		metadataPort:      metadataPort,
 		tracerPort:        tracerPort,
+		alsPort:           alsPort,
+		alsSinkPort:       alsSinkPort,
 		adminPort:         adminPort,
 	})
 
@@ -241,6 +252,8 @@ type envoyPorts struct {
 	otelSinkPort      int
 	metadataPort      int
 	tracerPort        int
+	alsPort           int
+	alsSinkPort       int
 	adminPort         int
 }
 
@@ -550,12 +563,67 @@ static_resources:
                             status: 200
                             body: { inline_string: "tracer-ok" }
 
+    - name: als-e2e
+      address:
+        socket_address: { address: 0.0.0.0, port_value: %d }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: als_e2e
+                access_log:
+                  - name: envoy.access_loggers.http_grpc
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.access_loggers.grpc.v3.HttpGrpcAccessLogConfig
+                      common_config:
+                        log_name: als-e2e
+                        grpc_service:
+                          envoy_grpc:
+                            cluster_name: als-sink
+                http_filters:
+                  - name: e2e-metadata
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: e2e
+                      filter_name: e2e-metadata
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: als_e2e
+                  virtual_hosts:
+                    - name: local
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          direct_response:
+                            status: 200
+                            body: { inline_string: "als-ok" }
+
   clusters:
     - name: codec-upstream
       connect_timeout: 5s
       type: STATIC
       load_assignment:
         cluster_name: codec-upstream
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: 127.0.0.1, port_value: %d }
+
+    - name: als-sink
+      connect_timeout: 5s
+      type: STATIC
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http2_protocol_options: {}
+      load_assignment:
+        cluster_name: als-sink
         endpoints:
           - lb_endpoints:
               - endpoint:
@@ -601,7 +669,7 @@ tracing:
         envoy_grpc:
           cluster_name: otel-collector
       service_name: "transit-e2e"
-`, p.echoPort, p.guardPort, p.accessLoggerPort, p.sinkURL, p.correlatorPort, p.sinkURL, p.bodyPort, p.mutableBodyPort, p.codecPort, p.metadataPort, p.tracerPort, p.codecUpstreamPort, p.otelSinkPort, p.adminPort)
+`, p.echoPort, p.guardPort, p.accessLoggerPort, p.sinkURL, p.correlatorPort, p.sinkURL, p.bodyPort, p.mutableBodyPort, p.codecPort, p.metadataPort, p.tracerPort, p.alsPort, p.codecUpstreamPort, p.alsSinkPort, p.otelSinkPort, p.adminPort)
 
 	f, err := os.CreateTemp("", "transit-e2e-*.yaml")
 	if err != nil {
