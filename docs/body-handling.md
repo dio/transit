@@ -92,38 +92,50 @@ requestContentEnc    string // captured in OnRequestHeaders
 existing: handler call, stopped check
 NEW: capture Content-Type and Content-Encoding from headers
 NEW: if endOfStream && requestBodyHandler != nil:
-         call requestBodyHandler(w, &BodyChunk{Data: nil, EndStream: true,
-             ContentType: f.requestContentType,
-             ContentEncoding: f.requestContentEncoding,
-             Context: &f.context})
+         call requestBodyHandler(w, &BodyChunk{Data: nil, EndStream: true, ...})
+         return Continue   ← no body coming, nothing to hold
+NEW: if bufferBody && requestBodyHandler != nil && !endOfStream:
+         return StopAllAndBuffer  ← hold headers with body so Content-Length
+                                    can be updated after body replacement
 ```
+
+`StopAllAndBuffer` is essential for correctness: it prevents headers from being
+forwarded to upstream until `OnRequestBody` returns `Continue`, at which point
+both headers (with updated `Content-Length`) and body are released together.
+Without it, `Content-Length` would be stale by the time the body is replaced.
 
 ### `OnRequestBody` (new)
 
 ```
 if bufferBody && !endOfStream → return StopAndBuffer
 data:
-  buffered: f.handle.BufferedRequestBody().GetChunks()
+  buffered: BufferedRequestBody().GetChunks()
   streaming: body.GetChunks()
-call requestBodyHandler(w, &BodyChunk{Data: data, EndStream: endOfStream,
-    ContentType: ..., ContentEncoding: ..., Context: &f.context})
+call requestBodyHandler(w, &BodyChunk{...})
+if bufferBody && w.hasRequestBodyReplacement:
+    BufferedRequestBody().Drain(size); Append(replacement)
+    RequestHeaders().Remove("transfer-encoding")
+    RequestHeaders().Set("content-length", len(replacement))
 return Continue
 ```
 
 ### `OnResponseHeaders` fix
 
-After calling the response handler with the headers chunk, if `endOfStream == true`:
-
+After calling the response handler with the headers chunk:
 ```
-call responseHandler(w, &ResponseChunk{Data: nil, EndStream: true,
-    ContentEncoding: ..., ContentType: ..., Context: &f.context})
+if endOfStream:
+    call responseHandler(w, &ResponseChunk{EndStream: true, ...})  ← synthetic
+    return Continue
+if bufferBody:
+    return StopAllAndBuffer  ← hold response headers for Content-Length update
+return Continue
 ```
 
 ### `OnResponseBody` change
 
-Same buffered/streaming split as request. Captures `ContentEncoding` and
-`ContentType` from `f.responseContentEncoding` / `f.responseContentType`
-(stored in `OnResponseHeaders`).
+Same buffered/streaming split and Content-Length update as request side.
+Captures `ContentEncoding` and `ContentType` in `OnResponseHeaders` for use
+in body chunks.
 
 ### New `Writer` header mutation methods
 
