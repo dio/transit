@@ -1,3 +1,13 @@
+// This file registers two e2e filters that exercise body handling:
+//
+//   - e2e-body (streaming): passes body data through unchanged; stores request
+//     body metadata in the per-stream context and echoes it as x-body-len in
+//     response headers. Used by BodySuite to verify body callbacks and context
+//     passing.
+//
+//   - e2e-mutable-body (buffered): replaces the request body with
+//     "replaced:<original>" and echoes the replacement length as x-replaced-len.
+//     Used by MutableBodySuite to verify buffered body replacement.
 package filters
 
 import (

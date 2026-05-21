@@ -1,3 +1,6 @@
+// guard rejects requests that lack an x-api-key header with a 401 local
+// response. Used by GuardSuite to verify SendLocalResponse and the
+// HeadersStatusStop path.
 package filters
 
 import "github.com/dio/transit/up"

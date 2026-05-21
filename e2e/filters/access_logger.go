@@ -1,3 +1,9 @@
+// e2e-logger is a minimal access logger that POSTs a JSON record to a
+// configurable sink URL on each DownstreamEnd event. Used by AccessLoggerSuite
+// to verify GetTimingInfo, GetBytesInfo, GetResponseCode, GetResponseFlags, and
+// GetAttributeString across the access log ABI.
+//
+// Config shape (Envoy YAML typed_config): {"sink_url":"http://..."}
 package filters
 
 import (

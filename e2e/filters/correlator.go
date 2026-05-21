@@ -1,3 +1,16 @@
+// This file implements the HTTP filter ↔ access logger correlation pattern.
+// Two registrations share a package-level sync.Map keyed by x-request-id:
+//
+//   - e2e-correlator (HTTP filter): on response headers, reads the request ID
+//     from AttributeIDRequestId and deposits the status code into the map.
+//
+//   - e2e-correlator-logger (access logger): on DownstreamEnd, reads the same
+//     request ID from GetHeader, pops the partial record, enriches it with
+//     timing/byte/flag data, and POSTs the combined entry to the sink URL.
+//
+// Used by CorrelatorSuite to verify that status_filter (set by the HTTP filter)
+// matches response_code (set by the access logger), proving data flows correctly
+// across both phases. See README.md for the full design rationale.
 package filters
 
 import (

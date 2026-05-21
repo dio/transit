@@ -1,3 +1,11 @@
+// e2e-codec is a buffered response-body filter that decodes a gzip-compressed
+// upstream response and replaces it with the plain-text body. It also calls
+// NegotiateIdentity to hint to the upstream that identity encoding is preferred,
+// and strips the Content-Encoding response header so Go's http.Transport does
+// not attempt a second decompress pass.
+//
+// Used by CodecSuite to verify the full NegotiateIdentity → Decode → SetResponseBody
+// pipeline and the Content-Encoding stripping behaviour.
 package filters
 
 import (
