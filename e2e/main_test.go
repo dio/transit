@@ -56,6 +56,7 @@ var (
 	upstreamFilterAddr    string
 	upstreamAuthAddr      string
 	upstreamAuthGroupAddr string
+	lbPolicyAddr          string
 	adminAddr             string
 )
 
@@ -92,6 +93,7 @@ func TestMain(m *testing.M) {
 	upstreamAuthPort := freePort()
 	upstreamAuthGroupPort := freePort()
 	upstreamFilterUpstreamPort := startPlainUpstream()
+	lbPolicyPort := freePort()
 	adminPort := freePort()
 
 	echoAddr = fmt.Sprintf("http://localhost:%d", echoPort)
@@ -107,6 +109,7 @@ func TestMain(m *testing.M) {
 	upstreamFilterAddr = fmt.Sprintf("http://localhost:%d", upstreamFilterPort)
 	upstreamAuthAddr = fmt.Sprintf("http://localhost:%d", upstreamAuthPort)
 	upstreamAuthGroupAddr = fmt.Sprintf("http://localhost:%d", upstreamAuthGroupPort)
+	lbPolicyAddr = fmt.Sprintf("http://localhost:%d", lbPolicyPort)
 	adminAddr = fmt.Sprintf("http://localhost:%d", adminPort)
 
 	otelSink = otelsink.New()
@@ -161,6 +164,8 @@ func TestMain(m *testing.M) {
 		UpstreamAuthPort:           upstreamAuthPort,
 		UpstreamAuthGroupPort:      upstreamAuthGroupPort,
 		UpstreamFilterUpstreamPort: upstreamFilterUpstreamPort,
+		LbPolicyPort:               lbPolicyPort,
+		LbPolicyUpstreamPort:       upstreamFilterUpstreamPort,
 		AdminPort:                  adminPort,
 	})
 
@@ -296,6 +301,8 @@ type envoyPorts struct {
 	UpstreamAuthPort           int
 	UpstreamAuthGroupPort      int
 	UpstreamFilterUpstreamPort int
+	LbPolicyPort               int
+	LbPolicyUpstreamPort       int
 	AdminPort                  int
 }
 

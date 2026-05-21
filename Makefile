@@ -102,6 +102,10 @@ e2e-sse-tap: $(ENVOY_BIN)
 e2e-request-ui: $(ENVOY_BIN)
 	cd examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./request-ui/e2e/... -v -timeout=120s
 
+.PHONY: e2e-lb-policy
+e2e-lb-policy: $(ENVOY_BIN)
+	cd examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./lb-policy/e2e/... -v -timeout=60s
+
 .PHONY: vet
 vet:
 	go vet ./...

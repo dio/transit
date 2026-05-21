@@ -1,0 +1,49 @@
+static_resources:
+  listeners:
+    - name: lb-policy
+      address:
+        socket_address: { address: 127.0.0.1, port_value: {{.ProxyPort}} }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: lb-policy
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: lb-policy
+                  virtual_hosts:
+                    - name: local
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          route: { cluster: upstream }
+
+  clusters:
+    - name: upstream
+      connect_timeout: 5s
+      type: STATIC
+      lb_policy: LOAD_BALANCING_POLICY_CONFIG
+      load_balancing_policy:
+        policies:
+          - typed_extension_config:
+              name: envoy.load_balancing_policies.dynamic_modules
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.load_balancing_policies.dynamic_modules.v3.DynamicModulesLoadBalancerConfig
+                dynamic_module_config:
+                  name: lb-policy
+                lb_policy_name: first-host
+      load_assignment:
+        cluster_name: upstream
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: 127.0.0.1, port_value: {{.UpstreamPort}} }
+
+admin:
+  address:
+    socket_address: { address: 127.0.0.1, port_value: {{.AdminPort}} }
