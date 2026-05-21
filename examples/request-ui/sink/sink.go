@@ -284,6 +284,9 @@ func (s *Sink) handleStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
+	// Flush headers immediately so clients don't wait for the first event.
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
 
 	ch := s.bcast.subscribe()
 	defer s.bcast.unsubscribe(ch)

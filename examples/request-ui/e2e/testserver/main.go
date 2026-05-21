@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 )
 
 func main() {
@@ -15,28 +16,26 @@ func main() {
 	if addr == "" {
 		addr = "127.0.0.1:11000"
 	}
+	// Route by path suffix so tests can send /{runID}/api/xxx without the server
+	// needing to know the runID prefix.
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]bool{"ok": true}) //nolint:errcheck
-	})
-	mux.HandleFunc("/api/hello", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"message": "hello"}) //nolint:errcheck
-	})
-	mux.HandleFunc("/api/create", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]int{"id": 1}) //nolint:errcheck
-	})
-	mux.HandleFunc("/api/error", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "internal"}) //nolint:errcheck
-	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"path": r.URL.Path}) //nolint:errcheck
+		switch {
+		case strings.HasSuffix(p, "/health"):
+			json.NewEncoder(w).Encode(map[string]bool{"ok": true}) //nolint:errcheck
+		case strings.HasSuffix(p, "/api/hello"):
+			json.NewEncoder(w).Encode(map[string]string{"message": "hello"}) //nolint:errcheck
+		case strings.HasSuffix(p, "/api/create") && r.Method == "POST":
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]int{"id": 1}) //nolint:errcheck
+		case strings.HasSuffix(p, "/api/error"):
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": "internal"}) //nolint:errcheck
+		default:
+			json.NewEncoder(w).Encode(map[string]string{"path": p}) //nolint:errcheck
+		}
 	})
 
 	fmt.Fprintf(os.Stderr, "[testserver] listening on %s\n", addr)

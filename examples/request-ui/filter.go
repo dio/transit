@@ -57,7 +57,6 @@ type reqState struct {
 	upstreamAddress string
 	responseHeaders [][2]string
 	responseBody    string
-	errorDetails    string
 }
 
 var statePool = sync.Pool{New: func() any { return &reqState{} }}
@@ -101,9 +100,6 @@ func Register(name string, s *sink.Sink, pending *PendingRecords) {
 				}
 				if addr, ok := w.GetAttributeString(up.AttributeIDUpstreamAddress); ok {
 					st.upstreamAddress = addr.ToString()
-				}
-				if d, ok := w.GetAttributeString(up.AttributeIDResponseCodeDetails); ok && d.Len > 0 {
-					st.errorDetails = d.ToString()
 				}
 				if c.RecordResponseHeaders && chunk.Headers != nil {
 					st.responseHeaders = copyHeaders(chunk.Headers.GetAll())
@@ -159,7 +155,6 @@ func buildRecord(statusCode int, st *reqState) *sink.Record {
 		RequestBody:     st.requestBody,
 		UpstreamAddress: st.upstreamAddress,
 		ResponseBody:    st.responseBody,
-		ErrorDetails:    st.errorDetails,
 		ResponseCode:    float64(statusCode),
 		UpstreamStatus:  statusStr(statusCode),
 	}

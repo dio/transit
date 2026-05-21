@@ -21,9 +21,9 @@ build:
 test:
 	cd $(ROOT) && go test ./examples/request-ui/...
 
-## e2e: build .so, start testserver + Envoy, run Node.js e2e tests
-e2e: build
-	ENVOY_BIN=$(ENVOY_BIN) bash $(dir $(lastword $(MAKEFILE_LIST)))e2e/run.sh
+## e2e: build .so + testserver, start Envoy, run Go e2e tests
+e2e:
+	cd $(ROOT) && ENVOY_BIN=$(ENVOY_BIN) go test ./examples/request-ui/e2e/... -v -timeout=120s
 
 ## simulate: zero-dependency demo (no Envoy, no Postgres)
 ##           generates synthetic traffic; UI at http://localhost:6062/
