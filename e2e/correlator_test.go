@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dio/transit/e2e/accessloggersink"
+	"github.com/dio/transit/e2e/sinks/accessloggersink"
 	"github.com/stretchr/testify/suite"
 )
 

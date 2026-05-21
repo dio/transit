@@ -1,4 +1,4 @@
-# e2e/otelsink
+# e2e/sinks/otelsink
 
 An in-memory OTLP gRPC receiver for e2e tests. A single `Sink` registers both
 `LogsService` and `MetricsService` on one port.

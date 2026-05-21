@@ -32,8 +32,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dio/transit/e2e/accessloggersink"
-	"github.com/dio/transit/e2e/otelsink"
+	"github.com/dio/transit/e2e/sinks/accessloggersink"
+	"github.com/dio/transit/e2e/sinks/otelsink"
 )
 
 var (
