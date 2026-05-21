@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/dio/transit/e2e/accessloggersink"
+	"github.com/dio/transit/e2e/otelsink"
 )
 
 var (
@@ -43,8 +44,11 @@ var (
 	bodyAddr         string
 	mutableBodyAddr  string
 	codecAddr        string
+	metadataAddr     string
 	adminAddr        string
 )
+
+var otelSink *otelsink.Sink
 
 var (
 	envoyCmd    *exec.Cmd
@@ -69,6 +73,7 @@ func TestMain(m *testing.M) {
 	mutableBodyPort := freePort()
 	codecPort := freePort()
 	codecUpstreamPort := startGzipUpstream()
+	metadataPort := freePort()
 	adminPort := freePort()
 
 	echoAddr = fmt.Sprintf("http://localhost:%d", echoPort)
@@ -78,7 +83,12 @@ func TestMain(m *testing.M) {
 	bodyAddr = fmt.Sprintf("http://localhost:%d", bodyPort)
 	mutableBodyAddr = fmt.Sprintf("http://localhost:%d", mutableBodyPort)
 	codecAddr = fmt.Sprintf("http://localhost:%d", codecPort)
+	metadataAddr = fmt.Sprintf("http://localhost:%d", metadataPort)
 	adminAddr = fmt.Sprintf("http://localhost:%d", adminPort)
+
+	otelSink = otelsink.New()
+	otelSinkPort := otelSink.Start()
+	fmt.Fprintf(os.Stderr, "e2e: OTLP sink at port %d\n", otelSinkPort)
 
 	sinkURL := accessloggersink.StartSink()
 	fmt.Fprintf(os.Stderr, "e2e: access logger sink at %s\n", sinkURL)
@@ -105,7 +115,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "e2e: reusing existing libe2e.so (TRANSIT_SKIP_BUILD=1)")
 	}
 
-	cfgPath := writeEnvoyConfig(sinkURL, echoPort, guardPort, accessLoggerPort, correlatorPort, bodyPort, mutableBodyPort, codecPort, codecUpstreamPort, adminPort)
+	cfgPath := writeEnvoyConfig(sinkURL, echoPort, guardPort, accessLoggerPort, correlatorPort, bodyPort, mutableBodyPort, codecPort, codecUpstreamPort, otelSinkPort, metadataPort, adminPort)
 
 	envoyCmd = exec.Command(bin,
 		"-c", cfgPath,
@@ -201,7 +211,7 @@ func waitReady(timeout time.Duration) bool {
 	return false
 }
 
-func writeEnvoyConfig(sinkURL string, echoPort, guardPort, accessLoggerPort, correlatorPort, bodyPort, mutableBodyPort, codecPort, codecUpstreamPort, adminPort int) string {
+func writeEnvoyConfig(sinkURL string, echoPort, guardPort, accessLoggerPort, correlatorPort, bodyPort, mutableBodyPort, codecPort, codecUpstreamPort, otelSinkPort, metadataPort, adminPort int) string {
 	cfg := fmt.Sprintf(`
 static_resources:
   listeners:
@@ -427,6 +437,53 @@ static_resources:
                         - match: { prefix: "/" }
                           route: { cluster: codec-upstream }
 
+    - name: metadata-e2e
+      address:
+        socket_address: { address: 0.0.0.0, port_value: %d }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: metadata_e2e
+                access_log:
+                  - name: envoy.access_loggers.open_telemetry
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.access_loggers.open_telemetry.v3.OpenTelemetryAccessLogConfig
+                      common_config:
+                        grpc_service:
+                          envoy_grpc:
+                            cluster_name: otel-collector
+                        transport_api_version: V3
+                        log_name: e2e-otel
+                      body:
+                        string_value: "%%DYNAMIC_METADATA(e2e:custom_field)%%"
+                      attributes:
+                        values:
+                          - key: method
+                            value:
+                              string_value: "%%DYNAMIC_METADATA(e2e:method)%%"
+                http_filters:
+                  - name: e2e-metadata
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: e2e
+                      filter_name: e2e-metadata
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: metadata_e2e
+                  virtual_hosts:
+                    - name: local
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          direct_response:
+                            status: 200
+                            body: { inline_string: "metadata-ok" }
+
   clusters:
     - name: codec-upstream
       connect_timeout: 5s
@@ -439,10 +496,26 @@ static_resources:
                   address:
                     socket_address: { address: 127.0.0.1, port_value: %d }
 
+    - name: otel-collector
+      connect_timeout: 5s
+      type: STATIC
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http2_protocol_options: {}
+      load_assignment:
+        cluster_name: otel-collector
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: 127.0.0.1, port_value: %d }
+
 admin:
   address:
     socket_address: { address: 127.0.0.1, port_value: %d }
-`, echoPort, guardPort, accessLoggerPort, sinkURL, correlatorPort, sinkURL, bodyPort, mutableBodyPort, codecPort, codecUpstreamPort, adminPort)
+`, echoPort, guardPort, accessLoggerPort, sinkURL, correlatorPort, sinkURL, bodyPort, mutableBodyPort, codecPort, metadataPort, codecUpstreamPort, otelSinkPort, adminPort)
 
 	f, err := os.CreateTemp("", "transit-e2e-*.yaml")
 	if err != nil {
