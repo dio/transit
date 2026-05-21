@@ -450,12 +450,10 @@ static_resources:
                   - name: envoy.access_loggers.open_telemetry
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.access_loggers.open_telemetry.v3.OpenTelemetryAccessLogConfig
-                      common_config:
-                        grpc_service:
-                          envoy_grpc:
-                            cluster_name: otel-collector
-                        transport_api_version: V3
-                        log_name: e2e-otel
+                      grpc_service:
+                        envoy_grpc:
+                          cluster_name: otel-collector
+                      log_name: e2e-otel
                       body:
                         string_value: "%%DYNAMIC_METADATA(e2e:custom_field)%%"
                       attributes:
