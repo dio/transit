@@ -19,6 +19,21 @@ func Handler(w *up.Writer, r *up.Request) {
 `r` carries the parsed request (method, path, host, and arbitrary headers via `r.Header`).
 `w` provides actions: log, send a local response, and more.
 
+Other registration variants cover the full request/response lifecycle:
+
+| Function | Use case |
+|---|---|
+| `up.Register(name, handler)` | request headers only |
+| `up.RegisterWithResponse(name, onReq, onResp)` | request + response headers |
+| `up.RegisterWithBody(name, onReq, onBody)` | streaming request body |
+| `up.RegisterWithMutableBody(name, onReq, onBody)` | buffered, replaceable request body |
+| `up.RegisterAccessLogger(name, factory)` | access logger (fires after the stream ends) |
+
+`Writer` also exposes span annotation (`w.GetActiveSpan().SetTag(k, v)`), dynamic
+metadata (`w.SetMetadata(ns, key, value)`), and upstream filter support — wire a
+filter via `HttpProtocolOptions.http_filters` on a cluster to run it on the
+upstream side instead of the listener side.
+
 ## Registering
 
 Wire the handler from your module's entry point:
@@ -108,7 +123,7 @@ official SDK  ←  down/abi_impl  ←  up  ←  your handler
 
 `up` is the ergonomic layer: `Register`, `HandlerFunc`, `Writer`, `Request`. It has no CGO.
 
-`down/abi_impl` is the ABI shim: blank-imports the official SDK's HTTP filter `//export` symbols and will add access-logger symbols that the upstream SDK does not yet provide.
+`down/abi_impl` is the ABI shim: blank-imports the official SDK's HTTP filter `//export` symbols and provides the access-logger `//export` symbols that the upstream SDK does not yet include.
 
 Your binary only needs to import `up`. The `down` package is pulled in transitively.
 
