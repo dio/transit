@@ -7,7 +7,7 @@ Two layers:
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  up/compress  — content-encoding decode/encode               │
-│  gzip, deflate, br (brotli), zstd; Accept-Encoding helpers   │
+│  gzip, deflate, br (brotli), zstd; Accept-Encoding helpers    │
 ├──────────────────────────────────────────────────────────────┤
 │  up  — body mechanics                                        │
 │  BodyChunk, RequestBodyHandlerFunc, buffered/streaming,      │
