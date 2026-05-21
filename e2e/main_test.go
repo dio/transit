@@ -49,7 +49,7 @@ var (
 	correlatorAddr     string
 	bodyAddr           string
 	mutableBodyAddr    string
-	codecAddr          string
+	compressAddr          string
 	metadataAddr       string
 	tracerAddr         string
 	alsAddr            string
@@ -82,8 +82,8 @@ func TestMain(m *testing.M) {
 	correlatorPort := freePort()
 	bodyPort := freePort()
 	mutableBodyPort := freePort()
-	codecPort := freePort()
-	codecUpstreamPort := startGzipUpstream()
+	compressPort := freePort()
+	compressUpstreamPort := startGzipUpstream()
 	metadataPort := freePort()
 	tracerPort := freePort()
 	alsPort := freePort()
@@ -98,7 +98,7 @@ func TestMain(m *testing.M) {
 	correlatorAddr = fmt.Sprintf("http://localhost:%d", correlatorPort)
 	bodyAddr = fmt.Sprintf("http://localhost:%d", bodyPort)
 	mutableBodyAddr = fmt.Sprintf("http://localhost:%d", mutableBodyPort)
-	codecAddr = fmt.Sprintf("http://localhost:%d", codecPort)
+	compressAddr = fmt.Sprintf("http://localhost:%d", compressPort)
 	metadataAddr = fmt.Sprintf("http://localhost:%d", metadataPort)
 	tracerAddr = fmt.Sprintf("http://localhost:%d", tracerPort)
 	alsAddr = fmt.Sprintf("http://localhost:%d", alsPort)
@@ -147,8 +147,8 @@ func TestMain(m *testing.M) {
 		CorrelatorPort:             correlatorPort,
 		BodyPort:                   bodyPort,
 		MutableBodyPort:            mutableBodyPort,
-		CodecPort:                  codecPort,
-		CodecUpstreamPort:          codecUpstreamPort,
+		CompressPort:                  compressPort,
+		CompressUpstreamPort:          compressUpstreamPort,
 		OtelSinkPort:               otelSinkPort,
 		MetadataPort:               metadataPort,
 		TracerPort:                 tracerPort,
@@ -281,8 +281,8 @@ type envoyPorts struct {
 	CorrelatorPort             int
 	BodyPort                   int
 	MutableBodyPort            int
-	CodecPort                  int
-	CodecUpstreamPort          int
+	CompressPort                  int
+	CompressUpstreamPort          int
 	OtelSinkPort               int
 	MetadataPort               int
 	TracerPort                 int

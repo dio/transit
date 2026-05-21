@@ -187,7 +187,7 @@ var errorFlags = map[string]bool{
 }
 
 func containsErrorFlag(flags string) bool {
-	for _, token := range strings.Split(flags, ",") {
+	for token := range strings.SplitSeq(flags, ",") {
 		if errorFlags[token] {
 			return true
 		}

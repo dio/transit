@@ -1,14 +1,14 @@
-// Package codec handles Content-Encoding compression for HTTP body inspection.
+// Package compress handles Content-Encoding compression for HTTP body inspection.
 //
 // Typical usage in a response body handler:
 //
-//	decoded, err := codec.Decode(chunk.ContentEncoding, chunk.Data)
+//	decoded, err := compress.Decode(chunk.ContentEncoding, chunk.Data)
 //
 // To prevent upstream from sending compressed responses, call NegotiateIdentity
 // from the request headers handler instead:
 //
-//	func onReq(w *up.Writer, r *up.Request) { codec.NegotiateIdentity(w) }
-package codec
+//	func onReq(w *up.Writer, r *up.Request) { compress.NegotiateIdentity(w) }
+package compress
 
 import (
 	"bytes"
