@@ -130,6 +130,24 @@ func TestNewWriter_returnsWriterBackedByHandle(t *testing.T) {
 	w.Log(shared.LogLevelInfo, "hi")
 }
 
+func TestWriter_SetFilterState_delegatesToHandle(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	handle := newMockHandle(ctrl)
+	handle.EXPECT().SetFilterState("llm.target", []byte("api.openai.com:443"))
+
+	NewWriter(handle).SetFilterState("llm.target", "api.openai.com:443")
+}
+
+func TestWriter_SetUpstreamOverrideHost_delegatesToHandle(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	handle := newMockHandle(ctrl)
+	handle.EXPECT().SetUpstreamOverrideHost("api.openai.com:443", true).Return(true)
+
+	ok := NewWriter(handle).SetUpstreamOverrideHost("api.openai.com:443", true)
+
+	require.True(t, ok)
+}
+
 // --- configFactory ---
 
 func TestConfigFactory_Create_returnsFilterFactory(t *testing.T) {

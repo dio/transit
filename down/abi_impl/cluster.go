@@ -13,7 +13,6 @@ import (
 	"os"
 	"runtime"
 	"sync"
-	"sync/atomic"
 	"unsafe"
 
 	"github.com/dio/transit/down"
@@ -172,15 +171,51 @@ type dymClusterLBHandle struct {
 	lbPtr C.envoy_dynamic_module_type_cluster_lb_envoy_ptr
 }
 
+func (h *dymClusterLBHandle) ClusterName() string {
+	var buf C.envoy_dynamic_module_type_envoy_buffer
+	C.envoy_dynamic_module_callback_cluster_lb_get_cluster_name(h.lbPtr, &buf)
+	return envoyBufferToStringUnsafe(buf)
+}
+
+func (h *dymClusterLBHandle) PriorityCount() int {
+	return int(C.envoy_dynamic_module_callback_cluster_lb_get_priority_set_size(h.lbPtr))
+}
+
+func (h *dymClusterLBHandle) HostCount(priority uint32) int {
+	return int(C.envoy_dynamic_module_callback_cluster_lb_get_hosts_count(
+		h.lbPtr, C.uint32_t(priority)))
+}
+
 func (h *dymClusterLBHandle) HealthyHostCount(priority uint32) int {
 	return int(C.envoy_dynamic_module_callback_cluster_lb_get_healthy_host_count(
 		h.lbPtr, C.uint32_t(priority)))
+}
+
+func (h *dymClusterLBHandle) DegradedHostCount(priority uint32) int {
+	return int(C.envoy_dynamic_module_callback_cluster_lb_get_degraded_hosts_count(
+		h.lbPtr, C.uint32_t(priority)))
+}
+
+func (h *dymClusterLBHandle) Host(priority uint32, index int) down.HostPtr {
+	ptr := C.envoy_dynamic_module_callback_cluster_lb_get_host(
+		h.lbPtr, C.uint32_t(priority), C.size_t(index))
+	return down.HostPtr(unsafe.Pointer(ptr))
 }
 
 func (h *dymClusterLBHandle) HealthyHost(priority uint32, index int) down.HostPtr {
 	ptr := C.envoy_dynamic_module_callback_cluster_lb_get_healthy_host(
 		h.lbPtr, C.uint32_t(priority), C.size_t(index))
 	return down.HostPtr(unsafe.Pointer(ptr))
+}
+
+func (h *dymClusterLBHandle) HostAddress(priority uint32, index int) (string, bool) {
+	var buf C.envoy_dynamic_module_type_envoy_buffer
+	ok := bool(C.envoy_dynamic_module_callback_cluster_lb_get_host_address(
+		h.lbPtr, C.uint32_t(priority), C.size_t(index), &buf))
+	if !ok {
+		return "", false
+	}
+	return envoyBufferToStringUnsafe(buf), true
 }
 
 func (h *dymClusterLBHandle) HealthyHostAddress(priority uint32, index int) (string, bool) {
@@ -193,6 +228,11 @@ func (h *dymClusterLBHandle) HealthyHostAddress(priority uint32, index int) (str
 	return envoyBufferToStringUnsafe(buf), true
 }
 
+func (h *dymClusterLBHandle) HostWeight(priority uint32, index int) uint32 {
+	return uint32(C.envoy_dynamic_module_callback_cluster_lb_get_host_weight(
+		h.lbPtr, C.uint32_t(priority), C.size_t(index)))
+}
+
 func (h *dymClusterLBHandle) HealthyHostWeight(priority uint32, index int) uint32 {
 	return uint32(C.envoy_dynamic_module_callback_cluster_lb_get_healthy_host_weight(
 		h.lbPtr, C.uint32_t(priority), C.size_t(index)))
@@ -201,6 +241,14 @@ func (h *dymClusterLBHandle) HealthyHostWeight(priority uint32, index int) uint3
 func (h *dymClusterLBHandle) HostHealth(priority uint32, index int) down.HostHealth {
 	return down.HostHealth(C.envoy_dynamic_module_callback_cluster_lb_get_host_health(
 		h.lbPtr, C.uint32_t(priority), C.size_t(index)))
+}
+
+func (h *dymClusterLBHandle) HostHealthByAddress(addr string) (down.HostHealth, bool) {
+	var health C.envoy_dynamic_module_type_host_health
+	ok := bool(C.envoy_dynamic_module_callback_cluster_lb_get_host_health_by_address(
+		h.lbPtr, stringToModuleBuffer(addr), &health))
+	runtime.KeepAlive(addr)
+	return down.HostHealth(health), ok
 }
 
 func (h *dymClusterLBHandle) HostStat(priority uint32, index int, stat down.HostStat) uint64 {
@@ -226,6 +274,89 @@ func (h *dymClusterLBHandle) MemberUpdateHostAddress(index int, isAdded bool) (s
 	return envoyBufferToStringUnsafe(buf), true
 }
 
+func (h *dymClusterLBHandle) HostLocality(priority uint32, index int) (string, string, string, bool) {
+	var region, zone, subZone C.envoy_dynamic_module_type_envoy_buffer
+	ok := bool(C.envoy_dynamic_module_callback_cluster_lb_get_host_locality(
+		h.lbPtr, C.uint32_t(priority), C.size_t(index), &region, &zone, &subZone))
+	if !ok {
+		return "", "", "", false
+	}
+	return envoyBufferToStringUnsafe(region),
+		envoyBufferToStringUnsafe(zone),
+		envoyBufferToStringUnsafe(subZone),
+		true
+}
+
+func (h *dymClusterLBHandle) SetHostData(priority uint32, index int, data uintptr) bool {
+	return bool(C.envoy_dynamic_module_callback_cluster_lb_set_host_data(
+		h.lbPtr, C.uint32_t(priority), C.size_t(index), C.uintptr_t(data)))
+}
+
+func (h *dymClusterLBHandle) GetHostData(priority uint32, index int) (uintptr, bool) {
+	var data C.uintptr_t
+	ok := bool(C.envoy_dynamic_module_callback_cluster_lb_get_host_data(
+		h.lbPtr, C.uint32_t(priority), C.size_t(index), &data))
+	return uintptr(data), ok
+}
+
+func (h *dymClusterLBHandle) HostMetadataString(priority uint32, index int, filterName, key string) (string, bool) {
+	var buf C.envoy_dynamic_module_type_envoy_buffer
+	ok := bool(C.envoy_dynamic_module_callback_cluster_lb_get_host_metadata_string(
+		h.lbPtr, C.uint32_t(priority), C.size_t(index),
+		stringToModuleBuffer(filterName), stringToModuleBuffer(key), &buf))
+	runtime.KeepAlive(filterName)
+	runtime.KeepAlive(key)
+	if !ok {
+		return "", false
+	}
+	return envoyBufferToStringUnsafe(buf), true
+}
+
+func (h *dymClusterLBHandle) HostMetadataNumber(priority uint32, index int, filterName, key string) (float64, bool) {
+	var out C.double
+	ok := bool(C.envoy_dynamic_module_callback_cluster_lb_get_host_metadata_number(
+		h.lbPtr, C.uint32_t(priority), C.size_t(index),
+		stringToModuleBuffer(filterName), stringToModuleBuffer(key), &out))
+	runtime.KeepAlive(filterName)
+	runtime.KeepAlive(key)
+	return float64(out), ok
+}
+
+func (h *dymClusterLBHandle) HostMetadataBool(priority uint32, index int, filterName, key string) (bool, bool) {
+	var out C.bool
+	ok := bool(C.envoy_dynamic_module_callback_cluster_lb_get_host_metadata_bool(
+		h.lbPtr, C.uint32_t(priority), C.size_t(index),
+		stringToModuleBuffer(filterName), stringToModuleBuffer(key), &out))
+	runtime.KeepAlive(filterName)
+	runtime.KeepAlive(key)
+	return bool(out), ok
+}
+
+func (h *dymClusterLBHandle) LocalityCount(priority uint32) int {
+	return int(C.envoy_dynamic_module_callback_cluster_lb_get_locality_count(
+		h.lbPtr, C.uint32_t(priority)))
+}
+
+func (h *dymClusterLBHandle) LocalityHostCount(priority uint32, localityIndex int) int {
+	return int(C.envoy_dynamic_module_callback_cluster_lb_get_locality_host_count(
+		h.lbPtr, C.uint32_t(priority), C.size_t(localityIndex)))
+}
+
+func (h *dymClusterLBHandle) LocalityHostAddress(priority uint32, localityIndex, hostIndex int) (string, bool) {
+	var buf C.envoy_dynamic_module_type_envoy_buffer
+	ok := bool(C.envoy_dynamic_module_callback_cluster_lb_get_locality_host_address(
+		h.lbPtr, C.uint32_t(priority), C.size_t(localityIndex), C.size_t(hostIndex), &buf))
+	if !ok {
+		return "", false
+	}
+	return envoyBufferToStringUnsafe(buf), true
+}
+
+func (h *dymClusterLBHandle) LocalityWeight(priority uint32, localityIndex int) uint32 {
+	return uint32(C.envoy_dynamic_module_callback_cluster_lb_get_locality_weight(
+		h.lbPtr, C.uint32_t(priority), C.size_t(localityIndex)))
+}
+
 // =============================================================================
 // dymClusterLBContext — implements down.ClusterLBContext (stack-allocated per call)
 // =============================================================================
@@ -235,9 +366,37 @@ type dymClusterLBContext struct {
 	lbPtr  C.envoy_dynamic_module_type_cluster_lb_envoy_ptr
 }
 
+func (c *dymClusterLBContext) GetAllHeaders() [][2]string {
+	n := int(C.envoy_dynamic_module_callback_cluster_lb_context_get_downstream_headers_size(c.ctxPtr))
+	if n == 0 {
+		return nil
+	}
+	raw := make([]C.envoy_dynamic_module_type_envoy_http_header, n)
+	ok := bool(C.envoy_dynamic_module_callback_cluster_lb_context_get_downstream_headers(c.ctxPtr, &raw[0]))
+	if !ok {
+		return nil
+	}
+	out := make([][2]string, n)
+	for i, h := range raw {
+		out[i] = envoyHTTPHeaderToPair(h)
+	}
+	return out
+}
+
 func (c *dymClusterLBContext) GetFilterState(key string) (string, bool) {
 	var buf C.envoy_dynamic_module_type_envoy_buffer
 	ok := bool(C.envoy_dynamic_module_callback_cluster_lb_context_get_filter_state_bytes(
+		c.ctxPtr, stringToModuleBuffer(key), &buf))
+	runtime.KeepAlive(key)
+	if !ok {
+		return "", false
+	}
+	return envoyBufferToStringUnsafe(buf), true
+}
+
+func (c *dymClusterLBContext) GetFilterStateTyped(key string) (string, bool) {
+	var buf C.envoy_dynamic_module_type_envoy_buffer
+	ok := bool(C.envoy_dynamic_module_callback_cluster_lb_context_get_filter_state_typed(
 		c.ctxPtr, stringToModuleBuffer(key), &buf))
 	runtime.KeepAlive(key)
 	if !ok {
@@ -301,12 +460,8 @@ func (c *dymClusterLBContext) ShouldSelectAnotherHost(lb down.ClusterLBHandle, p
 func (c *dymClusterLBContext) NewCompletion() *down.ClusterLBCompletion {
 	lbPtr := c.lbPtr
 	ctxPtr := c.ctxPtr
-	var cancelled uint32
 	comp := &down.ClusterLBCompletion{}
 	comp.SetCompleteFn(func(host down.HostPtr, errDetail string) {
-		if atomic.LoadUint32(&cancelled) != 0 {
-			return
-		}
 		hostPtr := C.envoy_dynamic_module_type_cluster_host_envoy_ptr(
 			unsafe.Pointer(host))
 		detail := errDetail
@@ -314,9 +469,6 @@ func (c *dymClusterLBContext) NewCompletion() *down.ClusterLBCompletion {
 		C.envoy_dynamic_module_callback_cluster_lb_async_host_selection_complete(
 			lbPtr, ctxPtr, hostPtr, buf)
 		runtime.KeepAlive(detail)
-	})
-	comp.SetCancelFn(func() {
-		atomic.StoreUint32(&cancelled, 1)
 	})
 	return comp
 }
@@ -510,8 +662,11 @@ func envoy_dynamic_module_on_cluster_lb_choose_host(
 	host, completion := w.lb.ChooseHost(&lbHandle, &ctx)
 	if completion != nil {
 		aw := &asyncHandleWrapper{completion: completion}
-		*asyncHandleOut = C.envoy_dynamic_module_type_cluster_lb_async_handle_module_ptr(
-			clusterAsyncManager.record(aw))
+		ptr := clusterAsyncManager.record(aw)
+		completion.SetFinishFn(func() {
+			clusterAsyncManager.remove(ptr)
+		})
+		*asyncHandleOut = C.envoy_dynamic_module_type_cluster_lb_async_handle_module_ptr(ptr)
 		return
 	}
 	if host != nil {
@@ -534,9 +689,9 @@ func envoy_dynamic_module_on_cluster_lb_cancel_host_selection(
 	if aw == nil {
 		return
 	}
-	aw.completion.Cancel()
-	lbW.lb.CancelHostSelection(aw.completion)
-	clusterAsyncManager.remove(ptr)
+	if aw.completion.Cancel() {
+		lbW.lb.CancelHostSelection(aw.completion)
+	}
 }
 
 //export envoy_dynamic_module_on_cluster_lb_on_host_membership_update

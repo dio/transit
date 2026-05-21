@@ -281,34 +281,116 @@ type HostSpec struct {
 // =============================================================================
 
 // ClusterLBCompletion is the async handle returned by ClusterLB.ChooseHost.
-// Call Complete exactly once to deliver the result, unless CancelHostSelection
-// is called first.
+// Complete and Cancel are idempotent; only the first terminal action wins.
 type ClusterLBCompletion struct {
+	mu         sync.Mutex
+	done       bool
 	completeFn func(host HostPtr, errDetail string)
 	cancelFn   func()
+	finishFn   func()
 }
 
-// Complete delivers the async host selection result. host == 0 signals failure.
-// Must not be called after CancelHostSelection.
-func (c *ClusterLBCompletion) Complete(host HostPtr, errDetail string) {
-	c.completeFn(host, errDetail)
+// Complete delivers the async host selection result. host == nil signals failure.
+// It returns true if this call completed the selection and false if completion
+// had already been cancelled or completed.
+func (c *ClusterLBCompletion) Complete(host HostPtr, errDetail string) bool {
+	if c == nil {
+		return false
+	}
+	completeFn, finishFn, ok := c.finish()
+	if !ok {
+		return false
+	}
+	if completeFn != nil {
+		completeFn(host, errDetail)
+	}
+	if finishFn != nil {
+		finishFn()
+	}
+	return true
 }
 
 // SetCompleteFn injects the C callback closure. Called by down/abi_impl only.
-func (c *ClusterLBCompletion) SetCompleteFn(fn func(HostPtr, string)) { c.completeFn = fn }
+func (c *ClusterLBCompletion) SetCompleteFn(fn func(HostPtr, string)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.completeFn = fn
+}
 
 // SetCancelFn injects the cancel closure. Called by down/abi_impl only.
-func (c *ClusterLBCompletion) SetCancelFn(fn func()) { c.cancelFn = fn }
+func (c *ClusterLBCompletion) SetCancelFn(fn func()) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cancelFn = fn
+}
+
+// SetFinishFn injects cleanup for the async handle. Called by down/abi_impl only.
+func (c *ClusterLBCompletion) SetFinishFn(fn func()) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	done := c.done
+	if !done {
+		c.finishFn = fn
+	}
+	c.mu.Unlock()
+	if done && fn != nil {
+		fn()
+	}
+}
 
 // Cancel is called by abi_impl before CancelHostSelection to guard Complete
 // against being called after the async handle has been removed.
-func (c *ClusterLBCompletion) Cancel() { c.cancelFn() }
+func (c *ClusterLBCompletion) Cancel() bool {
+	if c == nil {
+		return false
+	}
+	cancelFn, finishFn, ok := c.cancel()
+	if !ok {
+		return false
+	}
+	if cancelFn != nil {
+		cancelFn()
+	}
+	if finishFn != nil {
+		finishFn()
+	}
+	return true
+}
+
+func (c *ClusterLBCompletion) finish() (func(HostPtr, string), func(), bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.done {
+		return nil, nil, false
+	}
+	c.done = true
+	return c.completeFn, c.finishFn, true
+}
+
+func (c *ClusterLBCompletion) cancel() (func(), func(), bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.done {
+		return nil, nil, false
+	}
+	c.done = true
+	return c.cancelFn, c.finishFn, true
+}
 
 // ClusterLBContext provides per-request information inside ClusterLB.ChooseHost.
 type ClusterLBContext interface {
+	// GetAllHeaders returns all downstream request headers.
+	GetAllHeaders() [][2]string
+
 	// GetFilterState returns a string filter state value written by an earlier
 	// HTTP filter via Writer.SetFilterState.
 	GetFilterState(key string) (string, bool)
+
+	// GetFilterStateTyped returns the serialized value of a typed filter-state
+	// object. Prefer GetFilterState for raw string state written by Writer.
+	GetFilterStateTyped(key string) (string, bool)
 
 	// GetOverrideHost returns the host address and strict flag set by an HTTP
 	// filter via Writer.SetUpstreamOverrideHost.
@@ -339,20 +421,44 @@ type ClusterLBContext interface {
 // ClusterLBHandle gives a ClusterLB access to its cluster's host set.
 // Valid for the duration of the ChooseHost call (and host-membership callbacks).
 type ClusterLBHandle interface {
+	// ClusterName returns the owning cluster's name.
+	ClusterName() string
+
+	// PriorityCount returns the number of priority levels.
+	PriorityCount() int
+
+	// HostCount returns the number of all hosts at the given priority.
+	HostCount(priority uint32) int
+
 	// HealthyHostCount returns the number of healthy hosts at the given priority.
 	HealthyHostCount(priority uint32) int
+
+	// DegradedHostCount returns the number of degraded hosts at the given priority.
+	DegradedHostCount(priority uint32) int
+
+	// Host returns the host pointer at index within all hosts.
+	Host(priority uint32, index int) HostPtr
 
 	// HealthyHost returns the host pointer at index within healthy hosts.
 	HealthyHost(priority uint32, index int) HostPtr
 
+	// HostAddress returns the address string of the host at index within all hosts.
+	HostAddress(priority uint32, index int) (string, bool)
+
 	// HealthyHostAddress returns the address string of the healthy host at index.
 	HealthyHostAddress(priority uint32, index int) (string, bool)
+
+	// HostWeight returns the LB weight of the host at index within all hosts.
+	HostWeight(priority uint32, index int) uint32
 
 	// HealthyHostWeight returns the LB weight of the healthy host at index.
 	HealthyHostWeight(priority uint32, index int) uint32
 
 	// HostHealth returns the health of the host at index within all hosts.
 	HostHealth(priority uint32, index int) HostHealth
+
+	// HostHealthByAddress performs an O(1) address lookup and returns host health.
+	HostHealthByAddress(addr string) (HostHealth, bool)
 
 	// HostStat returns a live Envoy counter for the healthy host at index.
 	HostStat(priority uint32, index int, stat HostStat) uint64
@@ -364,6 +470,24 @@ type ClusterLBHandle interface {
 	// MemberUpdateHostAddress returns the address of the added (isAdded=true)
 	// or removed (isAdded=false) host at index during OnHostMembershipUpdate.
 	MemberUpdateHostAddress(index int, isAdded bool) (string, bool)
+
+	// HostLocality returns region, zone, and sub-zone metadata for a host.
+	HostLocality(priority uint32, index int) (region, zone, subZone string, ok bool)
+
+	// SetHostData stores per-worker opaque data on a host.
+	SetHostData(priority uint32, index int, data uintptr) bool
+
+	// GetHostData retrieves per-worker opaque data stored on a host.
+	GetHostData(priority uint32, index int) (uintptr, bool)
+
+	HostMetadataString(priority uint32, index int, filterName, key string) (string, bool)
+	HostMetadataNumber(priority uint32, index int, filterName, key string) (float64, bool)
+	HostMetadataBool(priority uint32, index int, filterName, key string) (bool, bool)
+
+	LocalityCount(priority uint32) int
+	LocalityHostCount(priority uint32, localityIndex int) int
+	LocalityHostAddress(priority uint32, localityIndex, hostIndex int) (string, bool)
+	LocalityWeight(priority uint32, localityIndex int) uint32
 }
 
 // ClusterLB is the per-worker-thread load balancer created by ClusterFactory.
@@ -494,6 +618,7 @@ func GetClusterFactory(name string) ClusterFactory {
 // Note: filter-state and downstream-SNI are unavailable in LB Policy context;
 // use the Cluster Extension (ClusterLBContext) if those are needed.
 type LBContext interface {
+	GetAllHeaders() [][2]string
 	GetOverrideHost() (addr string, strict bool)
 	GetHeader(name string) (string, bool)
 	ComputeHashKey() (uint64, bool)
@@ -503,12 +628,29 @@ type LBContext interface {
 
 // LBHandle gives an LBPolicy access to the cluster's host set.
 type LBHandle interface {
+	ClusterName() string
+	PriorityCount() int
+	HostCount(priority uint32) int
 	HealthyHostCount(priority uint32) int
+	DegradedHostCount(priority uint32) int
+	HostAddress(priority uint32, index int) (string, bool)
 	HealthyHostAddress(priority uint32, index int) (string, bool)
+	HostWeight(priority uint32, index int) uint32
 	HealthyHostWeight(priority uint32, index int) uint32
 	HostHealth(priority uint32, index int) HostHealth
+	HostHealthByAddress(addr string) (HostHealth, bool)
 	HostStat(priority uint32, index int, stat HostStat) uint64
 	MemberUpdateHostAddress(index int, isAdded bool) (string, bool)
+	HostLocality(priority uint32, index int) (region, zone, subZone string, ok bool)
+	SetHostData(priority uint32, index int, data uintptr) bool
+	GetHostData(priority uint32, index int) (uintptr, bool)
+	HostMetadataString(priority uint32, index int, filterName, key string) (string, bool)
+	HostMetadataNumber(priority uint32, index int, filterName, key string) (float64, bool)
+	HostMetadataBool(priority uint32, index int, filterName, key string) (bool, bool)
+	LocalityCount(priority uint32) int
+	LocalityHostCount(priority uint32, localityIndex int) int
+	LocalityHostAddress(priority uint32, localityIndex, hostIndex int) (string, bool)
+	LocalityWeight(priority uint32, localityIndex int) uint32
 }
 
 // LBPolicy is the per-worker-thread load balancer for the LB Policy extension.

@@ -73,10 +73,16 @@ func bytesToModuleBuffer(b []byte) C.envoy_dynamic_module_type_module_buffer {
 }
 
 func envoyBufferToStringUnsafe(buf C.envoy_dynamic_module_type_envoy_buffer) string {
+	if buf.length == 0 {
+		return ""
+	}
 	return unsafe.String((*byte)(unsafe.Pointer(buf.ptr)), buf.length)
 }
 
 func envoyBufferToBytesUnsafe(buf C.envoy_dynamic_module_type_envoy_buffer) []byte {
+	if buf.length == 0 {
+		return nil
+	}
 	return unsafe.Slice((*byte)(unsafe.Pointer(buf.ptr)), buf.length)
 }
 
@@ -85,6 +91,17 @@ func envoyBufferToUnsafeEnvoyBuffer(buf C.envoy_dynamic_module_type_envoy_buffer
 		Ptr: (*byte)(unsafe.Pointer(buf.ptr)),
 		Len: uint64(buf.length),
 	}
+}
+
+func envoyHTTPHeaderToPair(h C.envoy_dynamic_module_type_envoy_http_header) [2]string {
+	var key, value string
+	if h.key_length > 0 {
+		key = unsafe.String((*byte)(unsafe.Pointer(h.key_ptr)), h.key_length)
+	}
+	if h.value_length > 0 {
+		value = unsafe.String((*byte)(unsafe.Pointer(h.value_ptr)), h.value_length)
+	}
+	return [2]string{key, value}
 }
 
 func hostLog(level shared.LogLevel, format string, args []any) {

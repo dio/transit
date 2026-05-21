@@ -65,6 +65,18 @@ func (w *Writer) RemoveRequestHeader(name string) {
 	w.handle.RequestHeaders().Remove(name)
 }
 
+// SetFilterState stores raw per-stream filter state for later filters, access
+// loggers, or upstream selection callbacks.
+func (w *Writer) SetFilterState(key, value string) {
+	w.handle.SetFilterState(key, []byte(value))
+}
+
+// SetUpstreamOverrideHost asks Envoy's upstream load balancer to prefer host.
+// When strict is true, Envoy fails the request if host is unavailable.
+func (w *Writer) SetUpstreamOverrideHost(host string, strict bool) bool {
+	return w.handle.SetUpstreamOverrideHost(host, strict)
+}
+
 // SetResponseHeader sets a response header. Valid during response-phase callbacks.
 func (w *Writer) SetResponseHeader(name, value string) {
 	w.handle.ResponseHeaders().Set(name, value)
