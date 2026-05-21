@@ -1,0 +1,575 @@
+package abi_impl
+
+/*
+#include "abi.h"
+
+static inline void transit_call_event_cb(envoy_dynamic_module_type_event_cb cb, void* ctx) {
+    cb(ctx);
+}
+*/
+import "C"
+import (
+	"fmt"
+	"os"
+	"runtime"
+	"sync"
+	"sync/atomic"
+	"unsafe"
+
+	"github.com/dio/transit/down"
+)
+
+// =============================================================================
+// Wrapper types
+// =============================================================================
+
+type clusterConfigWrapper struct {
+	configFactory down.ClusterConfigFactory
+	configEnvoy   C.envoy_dynamic_module_type_cluster_config_envoy_ptr
+}
+
+type clusterWrapper struct {
+	cluster down.Cluster
+	handle  *clusterHandleImpl
+}
+
+type clusterLBWrapper struct {
+	lb      down.ClusterLB
+	lbEnvoy C.envoy_dynamic_module_type_cluster_lb_envoy_ptr
+}
+
+type asyncHandleWrapper struct {
+	completion *down.ClusterLBCompletion
+}
+
+var (
+	clusterConfigManager = newManager[clusterConfigWrapper]()
+	clusterManager       = newManager[clusterWrapper]()
+	clusterLBManager     = newManager[clusterLBWrapper]()
+	clusterAsyncManager  = newManager[asyncHandleWrapper]()
+)
+
+// =============================================================================
+// clusterHandleImpl — implements down.ClusterHandle
+// =============================================================================
+
+type clusterHandleImpl struct {
+	envoyPtr     C.envoy_dynamic_module_type_cluster_envoy_ptr
+	schedulerPtr C.envoy_dynamic_module_type_cluster_scheduler_module_ptr
+	mu           sync.Mutex
+	nextID       uint64
+	pending      map[uint64]func()
+}
+
+func newClusterHandle(envoyPtr C.envoy_dynamic_module_type_cluster_envoy_ptr) *clusterHandleImpl {
+	h := &clusterHandleImpl{
+		envoyPtr: envoyPtr,
+		pending:  make(map[uint64]func()),
+	}
+	h.schedulerPtr = C.envoy_dynamic_module_callback_cluster_scheduler_new(envoyPtr)
+	return h
+}
+
+func (h *clusterHandleImpl) destroy() {
+	if h.schedulerPtr != nil {
+		C.envoy_dynamic_module_callback_cluster_scheduler_delete(h.schedulerPtr)
+		h.schedulerPtr = nil
+	}
+}
+
+func (h *clusterHandleImpl) AddHosts(specs []down.HostSpec) []down.HostPtr {
+	n := len(specs)
+	if n == 0 {
+		return nil
+	}
+	addrs := make([]C.envoy_dynamic_module_type_module_buffer, n)
+	weights := make([]C.uint32_t, n)
+	empty := make([]C.envoy_dynamic_module_type_module_buffer, n) // locality zeros
+	results := make([]C.envoy_dynamic_module_type_cluster_host_envoy_ptr, n)
+
+	rawAddrs := make([]string, n)
+	for i, s := range specs {
+		rawAddrs[i] = s.Address
+		addrs[i] = stringToModuleBuffer(rawAddrs[i])
+		w := s.Weight
+		if w == 0 {
+			w = 1
+		}
+		weights[i] = C.uint32_t(w)
+	}
+
+	C.envoy_dynamic_module_callback_cluster_add_hosts(
+		h.envoyPtr, 0,
+		&addrs[0], &weights[0],
+		&empty[0], &empty[0], &empty[0],
+		nil, 0,
+		C.size_t(n),
+		&results[0],
+	)
+	runtime.KeepAlive(rawAddrs)
+
+	out := make([]down.HostPtr, n)
+	for i, r := range results {
+		out[i] = down.HostPtr(unsafe.Pointer(r))
+	}
+	return out
+}
+
+func (h *clusterHandleImpl) RemoveHosts(hosts []down.HostPtr) {
+	if len(hosts) == 0 {
+		return
+	}
+	ptrs := make([]C.envoy_dynamic_module_type_cluster_host_envoy_ptr, len(hosts))
+	for i, hp := range hosts {
+		ptrs[i] = C.envoy_dynamic_module_type_cluster_host_envoy_ptr(unsafe.Pointer(hp))
+	}
+	C.envoy_dynamic_module_callback_cluster_remove_hosts(h.envoyPtr, &ptrs[0], C.size_t(len(ptrs)))
+}
+
+func (h *clusterHandleImpl) UpdateHostHealth(host down.HostPtr, health down.HostHealth) {
+	C.envoy_dynamic_module_callback_cluster_update_host_health(
+		h.envoyPtr,
+		C.envoy_dynamic_module_type_cluster_host_envoy_ptr(unsafe.Pointer(host)),
+		C.envoy_dynamic_module_type_host_health(health),
+	)
+}
+
+func (h *clusterHandleImpl) FindHostByAddress(addr string) down.HostPtr {
+	buf := stringToModuleBuffer(addr)
+	ptr := C.envoy_dynamic_module_callback_cluster_find_host_by_address(h.envoyPtr, buf)
+	runtime.KeepAlive(addr)
+	return down.HostPtr(unsafe.Pointer(ptr))
+}
+
+func (h *clusterHandleImpl) PreInitComplete() {
+	C.envoy_dynamic_module_callback_cluster_pre_init_complete(h.envoyPtr)
+}
+
+func (h *clusterHandleImpl) Schedule(fn func()) {
+	h.mu.Lock()
+	id := h.nextID
+	h.nextID++
+	h.pending[id] = fn
+	h.mu.Unlock()
+	C.envoy_dynamic_module_callback_cluster_scheduler_commit(h.schedulerPtr, C.uint64_t(id))
+}
+
+func (h *clusterHandleImpl) runPending(id uint64) {
+	h.mu.Lock()
+	fn := h.pending[id]
+	delete(h.pending, id)
+	h.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
+}
+
+// =============================================================================
+// dymClusterLBHandle — implements down.ClusterLBHandle (stack-allocated per call)
+// =============================================================================
+
+type dymClusterLBHandle struct {
+	lbPtr C.envoy_dynamic_module_type_cluster_lb_envoy_ptr
+}
+
+func (h *dymClusterLBHandle) HealthyHostCount(priority uint32) int {
+	return int(C.envoy_dynamic_module_callback_cluster_lb_get_healthy_host_count(
+		h.lbPtr, C.uint32_t(priority)))
+}
+
+func (h *dymClusterLBHandle) HealthyHost(priority uint32, index int) down.HostPtr {
+	ptr := C.envoy_dynamic_module_callback_cluster_lb_get_healthy_host(
+		h.lbPtr, C.uint32_t(priority), C.size_t(index))
+	return down.HostPtr(unsafe.Pointer(ptr))
+}
+
+func (h *dymClusterLBHandle) HealthyHostAddress(priority uint32, index int) (string, bool) {
+	var buf C.envoy_dynamic_module_type_envoy_buffer
+	ok := bool(C.envoy_dynamic_module_callback_cluster_lb_get_healthy_host_address(
+		h.lbPtr, C.uint32_t(priority), C.size_t(index), &buf))
+	if !ok {
+		return "", false
+	}
+	return envoyBufferToStringUnsafe(buf), true
+}
+
+func (h *dymClusterLBHandle) HealthyHostWeight(priority uint32, index int) uint32 {
+	return uint32(C.envoy_dynamic_module_callback_cluster_lb_get_healthy_host_weight(
+		h.lbPtr, C.uint32_t(priority), C.size_t(index)))
+}
+
+func (h *dymClusterLBHandle) HostHealth(priority uint32, index int) down.HostHealth {
+	return down.HostHealth(C.envoy_dynamic_module_callback_cluster_lb_get_host_health(
+		h.lbPtr, C.uint32_t(priority), C.size_t(index)))
+}
+
+func (h *dymClusterLBHandle) HostStat(priority uint32, index int, stat down.HostStat) uint64 {
+	return uint64(C.envoy_dynamic_module_callback_cluster_lb_get_host_stat(
+		h.lbPtr, C.uint32_t(priority), C.size_t(index),
+		C.envoy_dynamic_module_type_host_stat(stat)))
+}
+
+func (h *dymClusterLBHandle) FindHostByAddress(addr string) down.HostPtr {
+	buf := stringToModuleBuffer(addr)
+	ptr := C.envoy_dynamic_module_callback_cluster_lb_find_host_by_address(h.lbPtr, buf)
+	runtime.KeepAlive(addr)
+	return down.HostPtr(unsafe.Pointer(ptr))
+}
+
+func (h *dymClusterLBHandle) MemberUpdateHostAddress(index int, isAdded bool) (string, bool) {
+	var buf C.envoy_dynamic_module_type_envoy_buffer
+	ok := bool(C.envoy_dynamic_module_callback_cluster_lb_get_member_update_host_address(
+		h.lbPtr, C.size_t(index), C.bool(isAdded), &buf))
+	if !ok {
+		return "", false
+	}
+	return envoyBufferToStringUnsafe(buf), true
+}
+
+// =============================================================================
+// dymClusterLBContext — implements down.ClusterLBContext (stack-allocated per call)
+// =============================================================================
+
+type dymClusterLBContext struct {
+	ctxPtr C.envoy_dynamic_module_type_cluster_lb_context_envoy_ptr
+	lbPtr  C.envoy_dynamic_module_type_cluster_lb_envoy_ptr
+}
+
+func (c *dymClusterLBContext) GetFilterState(key string) (string, bool) {
+	var buf C.envoy_dynamic_module_type_envoy_buffer
+	ok := bool(C.envoy_dynamic_module_callback_cluster_lb_context_get_filter_state_bytes(
+		c.ctxPtr, stringToModuleBuffer(key), &buf))
+	runtime.KeepAlive(key)
+	if !ok {
+		return "", false
+	}
+	return envoyBufferToStringUnsafe(buf), true
+}
+
+func (c *dymClusterLBContext) GetOverrideHost() (string, bool) {
+	var addrBuf C.envoy_dynamic_module_type_envoy_buffer
+	var strict C.bool
+	ok := bool(C.envoy_dynamic_module_callback_cluster_lb_context_get_override_host(
+		c.ctxPtr, &addrBuf, &strict))
+	if !ok {
+		return "", false
+	}
+	return envoyBufferToStringUnsafe(addrBuf), bool(strict)
+}
+
+func (c *dymClusterLBContext) GetHeader(name string) (string, bool) {
+	var val C.envoy_dynamic_module_type_envoy_buffer
+	ok := bool(C.envoy_dynamic_module_callback_cluster_lb_context_get_downstream_header(
+		c.ctxPtr, stringToModuleBuffer(name), &val, 0, nil))
+	runtime.KeepAlive(name)
+	if !ok {
+		return "", false
+	}
+	return envoyBufferToStringUnsafe(val), true
+}
+
+func (c *dymClusterLBContext) GetDownstreamSNI() (string, bool) {
+	var buf C.envoy_dynamic_module_type_envoy_buffer
+	ok := bool(C.envoy_dynamic_module_callback_cluster_lb_context_get_downstream_connection_sni(
+		c.ctxPtr, &buf))
+	if !ok {
+		return "", false
+	}
+	return envoyBufferToStringUnsafe(buf), true
+}
+
+func (c *dymClusterLBContext) ComputeHashKey() (uint64, bool) {
+	var h C.uint64_t
+	ok := bool(C.envoy_dynamic_module_callback_cluster_lb_context_compute_hash_key(c.ctxPtr, &h))
+	return uint64(h), ok
+}
+
+func (c *dymClusterLBContext) GetHostSelectionRetryCount() uint32 {
+	return uint32(C.envoy_dynamic_module_callback_cluster_lb_context_get_host_selection_retry_count(
+		c.ctxPtr))
+}
+
+func (c *dymClusterLBContext) ShouldSelectAnotherHost(lb down.ClusterLBHandle, priority uint32, index int) bool {
+	h, ok := lb.(*dymClusterLBHandle)
+	if !ok {
+		return false
+	}
+	return bool(C.envoy_dynamic_module_callback_cluster_lb_context_should_select_another_host(
+		h.lbPtr, c.ctxPtr, C.uint32_t(priority), C.size_t(index)))
+}
+
+func (c *dymClusterLBContext) NewCompletion() *down.ClusterLBCompletion {
+	lbPtr := c.lbPtr
+	ctxPtr := c.ctxPtr
+	var cancelled uint32
+	comp := &down.ClusterLBCompletion{}
+	comp.SetCompleteFn(func(host down.HostPtr, errDetail string) {
+		if atomic.LoadUint32(&cancelled) != 0 {
+			return
+		}
+		hostPtr := C.envoy_dynamic_module_type_cluster_host_envoy_ptr(
+			unsafe.Pointer(host))
+		detail := errDetail
+		buf := stringToModuleBuffer(detail)
+		C.envoy_dynamic_module_callback_cluster_lb_async_host_selection_complete(
+			lbPtr, ctxPtr, hostPtr, buf)
+		runtime.KeepAlive(detail)
+	})
+	comp.SetCancelFn(func() {
+		atomic.StoreUint32(&cancelled, 1)
+	})
+	return comp
+}
+
+// =============================================================================
+// ABI export functions
+// =============================================================================
+
+//export envoy_dynamic_module_on_cluster_config_new
+func envoy_dynamic_module_on_cluster_config_new(
+	configEnvoyPtr C.envoy_dynamic_module_type_cluster_config_envoy_ptr,
+	name C.envoy_dynamic_module_type_envoy_buffer,
+	config C.envoy_dynamic_module_type_envoy_buffer,
+) C.envoy_dynamic_module_type_cluster_config_module_ptr {
+	nameStr := envoyBufferToStringUnsafe(name)
+	factory := down.GetClusterFactory(nameStr)
+	if factory == nil {
+		fmt.Fprintf(os.Stderr, "[transit] cluster %q: no factory registered\n", nameStr)
+		return nil
+	}
+	configFactory, err := factory.Create(envoyBufferToBytesUnsafe(config))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[transit] cluster %q: Create failed: %v\n", nameStr, err)
+		return nil
+	}
+	w := &clusterConfigWrapper{configFactory: configFactory, configEnvoy: configEnvoyPtr}
+	return C.envoy_dynamic_module_type_cluster_config_module_ptr(clusterConfigManager.record(w))
+}
+
+//export envoy_dynamic_module_on_cluster_config_destroy
+func envoy_dynamic_module_on_cluster_config_destroy(
+	configModulePtr C.envoy_dynamic_module_type_cluster_config_module_ptr,
+) {
+	ptr := unsafe.Pointer(configModulePtr)
+	w := clusterConfigManager.unwrap(ptr)
+	if w == nil {
+		return
+	}
+	w.configFactory.Close()
+	clusterConfigManager.remove(ptr)
+}
+
+//export envoy_dynamic_module_on_cluster_new
+func envoy_dynamic_module_on_cluster_new(
+	configModulePtr C.envoy_dynamic_module_type_cluster_config_module_ptr,
+	clusterEnvoyPtr C.envoy_dynamic_module_type_cluster_envoy_ptr,
+) C.envoy_dynamic_module_type_cluster_module_ptr {
+	cw := clusterConfigManager.unwrap(unsafe.Pointer(configModulePtr))
+	if cw == nil {
+		return nil
+	}
+	h := newClusterHandle(clusterEnvoyPtr)
+	cluster := cw.configFactory.NewCluster(h)
+	if cluster == nil {
+		h.destroy()
+		return nil
+	}
+	w := &clusterWrapper{cluster: cluster, handle: h}
+	return C.envoy_dynamic_module_type_cluster_module_ptr(clusterManager.record(w))
+}
+
+//export envoy_dynamic_module_on_cluster_init
+func envoy_dynamic_module_on_cluster_init(
+	_ C.envoy_dynamic_module_type_cluster_envoy_ptr,
+	clusterModulePtr C.envoy_dynamic_module_type_cluster_module_ptr,
+) {
+	w := clusterManager.unwrap(unsafe.Pointer(clusterModulePtr))
+	if w == nil {
+		return
+	}
+	w.cluster.Init(w.handle)
+}
+
+//export envoy_dynamic_module_on_cluster_destroy
+func envoy_dynamic_module_on_cluster_destroy(
+	clusterModulePtr C.envoy_dynamic_module_type_cluster_module_ptr,
+) {
+	ptr := unsafe.Pointer(clusterModulePtr)
+	w := clusterManager.unwrap(ptr)
+	if w == nil {
+		return
+	}
+	w.cluster.Close()
+	w.handle.destroy()
+	clusterManager.remove(ptr)
+}
+
+//export envoy_dynamic_module_on_cluster_server_initialized
+func envoy_dynamic_module_on_cluster_server_initialized(
+	_ C.envoy_dynamic_module_type_cluster_envoy_ptr,
+	clusterModulePtr C.envoy_dynamic_module_type_cluster_module_ptr,
+) {
+	w := clusterManager.unwrap(unsafe.Pointer(clusterModulePtr))
+	if w == nil {
+		return
+	}
+	w.cluster.ServerInitialized(w.handle)
+}
+
+//export envoy_dynamic_module_on_cluster_drain_started
+func envoy_dynamic_module_on_cluster_drain_started(
+	_ C.envoy_dynamic_module_type_cluster_envoy_ptr,
+	clusterModulePtr C.envoy_dynamic_module_type_cluster_module_ptr,
+) {
+	w := clusterManager.unwrap(unsafe.Pointer(clusterModulePtr))
+	if w == nil {
+		return
+	}
+	w.cluster.DrainStarted(w.handle)
+}
+
+//export envoy_dynamic_module_on_cluster_shutdown
+func envoy_dynamic_module_on_cluster_shutdown(
+	_ C.envoy_dynamic_module_type_cluster_envoy_ptr,
+	clusterModulePtr C.envoy_dynamic_module_type_cluster_module_ptr,
+	completionCallback C.envoy_dynamic_module_type_event_cb,
+	completionContext unsafe.Pointer,
+) {
+	w := clusterManager.unwrap(unsafe.Pointer(clusterModulePtr))
+	if w == nil {
+		C.transit_call_event_cb(completionCallback, completionContext)
+		return
+	}
+	cb := completionCallback
+	ctx := completionContext
+	w.cluster.Shutdown(w.handle, func() {
+		C.transit_call_event_cb(cb, ctx)
+	})
+}
+
+//export envoy_dynamic_module_on_cluster_scheduled
+func envoy_dynamic_module_on_cluster_scheduled(
+	_ C.envoy_dynamic_module_type_cluster_envoy_ptr,
+	clusterModulePtr C.envoy_dynamic_module_type_cluster_module_ptr,
+	eventID C.uint64_t,
+) {
+	w := clusterManager.unwrap(unsafe.Pointer(clusterModulePtr))
+	if w == nil {
+		return
+	}
+	w.handle.runPending(uint64(eventID))
+}
+
+//export envoy_dynamic_module_on_cluster_lb_new
+func envoy_dynamic_module_on_cluster_lb_new(
+	clusterModulePtr C.envoy_dynamic_module_type_cluster_module_ptr,
+	lbEnvoyPtr C.envoy_dynamic_module_type_cluster_lb_envoy_ptr,
+) C.envoy_dynamic_module_type_cluster_lb_module_ptr {
+	cw := clusterManager.unwrap(unsafe.Pointer(clusterModulePtr))
+	if cw == nil {
+		return nil
+	}
+	lb := cw.cluster.NewClusterLB()
+	if lb == nil {
+		return nil
+	}
+	w := &clusterLBWrapper{lb: lb, lbEnvoy: lbEnvoyPtr}
+	return C.envoy_dynamic_module_type_cluster_lb_module_ptr(clusterLBManager.record(w))
+}
+
+//export envoy_dynamic_module_on_cluster_lb_destroy
+func envoy_dynamic_module_on_cluster_lb_destroy(
+	lbModulePtr C.envoy_dynamic_module_type_cluster_lb_module_ptr,
+) {
+	ptr := unsafe.Pointer(lbModulePtr)
+	w := clusterLBManager.unwrap(ptr)
+	if w == nil {
+		return
+	}
+	w.lb.Close()
+	clusterLBManager.remove(ptr)
+}
+
+//export envoy_dynamic_module_on_cluster_lb_choose_host
+func envoy_dynamic_module_on_cluster_lb_choose_host(
+	lbModulePtr C.envoy_dynamic_module_type_cluster_lb_module_ptr,
+	contextEnvoyPtr C.envoy_dynamic_module_type_cluster_lb_context_envoy_ptr,
+	hostOut *C.envoy_dynamic_module_type_cluster_host_envoy_ptr,
+	asyncHandleOut *C.envoy_dynamic_module_type_cluster_lb_async_handle_module_ptr,
+) {
+	*hostOut = nil
+	*asyncHandleOut = nil
+
+	w := clusterLBManager.unwrap(unsafe.Pointer(lbModulePtr))
+	if w == nil {
+		return
+	}
+	lbHandle := dymClusterLBHandle{lbPtr: w.lbEnvoy}
+	ctx := dymClusterLBContext{ctxPtr: contextEnvoyPtr, lbPtr: w.lbEnvoy}
+
+	host, completion := w.lb.ChooseHost(&lbHandle, &ctx)
+	if completion != nil {
+		aw := &asyncHandleWrapper{completion: completion}
+		*asyncHandleOut = C.envoy_dynamic_module_type_cluster_lb_async_handle_module_ptr(
+			clusterAsyncManager.record(aw))
+		return
+	}
+	if host != nil {
+		*hostOut = C.envoy_dynamic_module_type_cluster_host_envoy_ptr(
+			unsafe.Pointer(host))
+	}
+}
+
+//export envoy_dynamic_module_on_cluster_lb_cancel_host_selection
+func envoy_dynamic_module_on_cluster_lb_cancel_host_selection(
+	lbModulePtr C.envoy_dynamic_module_type_cluster_lb_module_ptr,
+	asyncHandlePtr C.envoy_dynamic_module_type_cluster_lb_async_handle_module_ptr,
+) {
+	lbW := clusterLBManager.unwrap(unsafe.Pointer(lbModulePtr))
+	if lbW == nil {
+		return
+	}
+	ptr := unsafe.Pointer(asyncHandlePtr)
+	aw := clusterAsyncManager.unwrap(ptr)
+	if aw == nil {
+		return
+	}
+	aw.completion.Cancel()
+	lbW.lb.CancelHostSelection(aw.completion)
+	clusterAsyncManager.remove(ptr)
+}
+
+//export envoy_dynamic_module_on_cluster_lb_on_host_membership_update
+func envoy_dynamic_module_on_cluster_lb_on_host_membership_update(
+	lbEnvoyPtr C.envoy_dynamic_module_type_cluster_lb_envoy_ptr,
+	lbModulePtr C.envoy_dynamic_module_type_cluster_lb_module_ptr,
+	numHostsAdded C.size_t,
+	numHostsRemoved C.size_t,
+) {
+	w := clusterLBManager.unwrap(unsafe.Pointer(lbModulePtr))
+	if w == nil {
+		return
+	}
+	lbHandle := dymClusterLBHandle{lbPtr: lbEnvoyPtr}
+	w.lb.OnHostMembershipUpdate(&lbHandle, int(numHostsAdded), int(numHostsRemoved))
+}
+
+// =============================================================================
+// Stubs for optional ABI exports Envoy may call
+// =============================================================================
+
+//export envoy_dynamic_module_on_cluster_http_callout_done
+func envoy_dynamic_module_on_cluster_http_callout_done(
+	clusterEnvoyPtr C.envoy_dynamic_module_type_cluster_envoy_ptr,
+	clusterModPtr C.envoy_dynamic_module_type_cluster_module_ptr,
+	calloutID C.uint64_t,
+	calloutResult C.envoy_dynamic_module_type_http_callout_result,
+	respHeaders *C.envoy_dynamic_module_type_envoy_http_header,
+	respHeadersSize C.size_t,
+	bodyChunks *C.envoy_dynamic_module_type_envoy_buffer,
+	bodyChunksSize C.size_t,
+) {
+	// Required symbol; transit does not use cluster HTTP callouts.
+	// Envoy returns CannotCreateRequest if the module calls
+	// envoy_dynamic_module_callback_cluster_http_callout without this hook.
+}

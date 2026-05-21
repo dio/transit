@@ -44,16 +44,18 @@ const (
 	AttributeIDDestinationAddress = shared.AttributeIDDestinationAddress
 	AttributeIDDestinationPort    = shared.AttributeIDDestinationPort
 	AttributeIDConnectionId       = shared.AttributeIDConnectionId
-	AttributeIDConnectionMtls     = shared.AttributeIDConnectionMtls
+
+	// MTLS / TLS — acronyms use all-caps per Go conventions (changed in SDK 1.39-dev).
+	AttributeIDConnectionMTLS       = shared.AttributeIDConnectionMTLS
+	AttributeIDConnectionTLSVersion = shared.AttributeIDConnectionTLSVersion
 
 	AttributeIDConnectionRequestedServerName         = shared.AttributeIDConnectionRequestedServerName
-	AttributeIDConnectionTlsVersion                  = shared.AttributeIDConnectionTlsVersion
 	AttributeIDConnectionSubjectLocalCertificate     = shared.AttributeIDConnectionSubjectLocalCertificate
 	AttributeIDConnectionSubjectPeerCertificate      = shared.AttributeIDConnectionSubjectPeerCertificate
-	AttributeIDConnectionDnsSanLocalCertificate      = shared.AttributeIDConnectionDnsSanLocalCertificate
-	AttributeIDConnectionDnsSanPeerCertificate       = shared.AttributeIDConnectionDnsSanPeerCertificate
-	AttributeIDConnectionUriSanLocalCertificate      = shared.AttributeIDConnectionUriSanLocalCertificate
-	AttributeIDConnectionUriSanPeerCertificate       = shared.AttributeIDConnectionUriSanPeerCertificate
+	AttributeIDConnectionDNSSanLocalCertificate      = shared.AttributeIDConnectionDNSSanLocalCertificate
+	AttributeIDConnectionDNSSanPeerCertificate       = shared.AttributeIDConnectionDNSSanPeerCertificate
+	AttributeIDConnectionURISanLocalCertificate      = shared.AttributeIDConnectionURISanLocalCertificate
+	AttributeIDConnectionURISanPeerCertificate       = shared.AttributeIDConnectionURISanPeerCertificate
 	AttributeIDConnectionSha256PeerCertificateDigest = shared.AttributeIDConnectionSha256PeerCertificateDigest
 	AttributeIDConnectionTransportFailureReason      = shared.AttributeIDConnectionTransportFailureReason
 	AttributeIDConnectionTerminationDetails          = shared.AttributeIDConnectionTerminationDetails
@@ -61,26 +63,41 @@ const (
 
 // Upstream attributes.
 const (
-	AttributeIDUpstreamAddress                     = shared.AttributeIDUpstreamAddress
-	AttributeIDUpstreamPort                        = shared.AttributeIDUpstreamPort
-	AttributeIDUpstreamLocalAddress                = shared.AttributeIDUpstreamLocalAddress
-	AttributeIDUpstreamTransportFailureReason      = shared.AttributeIDUpstreamTransportFailureReason
-	AttributeIDUpstreamRequestAttemptCount         = shared.AttributeIDUpstreamRequestAttemptCount
-	AttributeIDUpstreamCxPoolReadyDuration         = shared.AttributeIDUpstreamCxPoolReadyDuration
-	AttributeIDUpstreamLocality                    = shared.AttributeIDUpstreamLocality
-	AttributeIDUpstreamTlsVersion                  = shared.AttributeIDUpstreamTlsVersion
+	AttributeIDUpstreamAddress                = shared.AttributeIDUpstreamAddress
+	AttributeIDUpstreamPort                   = shared.AttributeIDUpstreamPort
+	AttributeIDUpstreamLocalAddress           = shared.AttributeIDUpstreamLocalAddress
+	AttributeIDUpstreamTransportFailureReason = shared.AttributeIDUpstreamTransportFailureReason
+	AttributeIDUpstreamRequestAttemptCount    = shared.AttributeIDUpstreamRequestAttemptCount
+	AttributeIDUpstreamCxPoolReadyDuration    = shared.AttributeIDUpstreamCxPoolReadyDuration
+	AttributeIDUpstreamLocality               = shared.AttributeIDUpstreamLocality
+
+	// TLS / DNS / URI — acronyms use all-caps per Go conventions (changed in SDK 1.39-dev).
+	AttributeIDUpstreamTLSVersion                  = shared.AttributeIDUpstreamTLSVersion
 	AttributeIDUpstreamSubjectLocalCertificate     = shared.AttributeIDUpstreamSubjectLocalCertificate
 	AttributeIDUpstreamSubjectPeerCertificate      = shared.AttributeIDUpstreamSubjectPeerCertificate
-	AttributeIDUpstreamDnsSanLocalCertificate      = shared.AttributeIDUpstreamDnsSanLocalCertificate
-	AttributeIDUpstreamDnsSanPeerCertificate       = shared.AttributeIDUpstreamDnsSanPeerCertificate
-	AttributeIDUpstreamUriSanLocalCertificate      = shared.AttributeIDUpstreamUriSanLocalCertificate
-	AttributeIDUpstreamUriSanPeerCertificate       = shared.AttributeIDUpstreamUriSanPeerCertificate
+	AttributeIDUpstreamDNSSanLocalCertificate      = shared.AttributeIDUpstreamDNSSanLocalCertificate
+	AttributeIDUpstreamDNSSanPeerCertificate       = shared.AttributeIDUpstreamDNSSanPeerCertificate
+	AttributeIDUpstreamURISanLocalCertificate      = shared.AttributeIDUpstreamURISanLocalCertificate
+	AttributeIDUpstreamURISanPeerCertificate       = shared.AttributeIDUpstreamURISanPeerCertificate
 	AttributeIDUpstreamSha256PeerCertificateDigest = shared.AttributeIDUpstreamSha256PeerCertificateDigest
 )
 
 // XDS / metadata attributes.
 const (
-	AttributeIDXdsNode            = shared.AttributeIDXdsNode
-	AttributeIDXdsClusterName     = shared.AttributeIDXdsClusterName
-	AttributeIDXdsClusterMetadata = shared.AttributeIDXdsClusterMetadata
+	AttributeIDXdsNode                 = shared.AttributeIDXdsNode
+	AttributeIDXdsClusterName          = shared.AttributeIDXdsClusterName
+	AttributeIDXdsClusterMetadata      = shared.AttributeIDXdsClusterMetadata
+	AttributeIDXdsFilterChainName      = shared.AttributeIDXdsFilterChainName
+	AttributeIDXdsListenerDirection    = shared.AttributeIDXdsListenerDirection
+	AttributeIDXdsListenerMetadata     = shared.AttributeIDXdsListenerMetadata
+	AttributeIDXdsRouteMetadata        = shared.AttributeIDXdsRouteMetadata
+	AttributeIDXdsRouteName            = shared.AttributeIDXdsRouteName
+	AttributeIDXdsVirtualHostName      = shared.AttributeIDXdsVirtualHostName
+	AttributeIDXdsVirtualHostMetadata  = shared.AttributeIDXdsVirtualHostMetadata
+	AttributeIDXdsUpstreamHostMetadata = shared.AttributeIDXdsUpstreamHostMetadata
+)
+
+// Health check attribute.
+const (
+	AttributeIDHealthCheck = shared.AttributeIDHealthCheck
 )

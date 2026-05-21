@@ -8,7 +8,6 @@ import (
 
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared/fake"
-	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared/mocks"
 )
 
 // --- newRequest ---
@@ -101,7 +100,7 @@ func TestResponseChunk_AllHeaders_nil(t *testing.T) {
 
 func TestWriter_Log_delegatesToHandle(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 	handle.EXPECT().Log(shared.LogLevelError, "msg: %s", "arg")
 
 	w := &Writer{handle: handle}
@@ -115,7 +114,7 @@ func TestWriter_Log_allLevels(t *testing.T) {
 	}
 	for _, level := range levels {
 		ctrl := gomock.NewController(t)
-		handle := mocks.NewMockHttpFilterHandle(ctrl)
+		handle := newMockHandle(ctrl)
 		handle.EXPECT().Log(level, "test", gomock.Any())
 		NewWriter(handle).Log(level, "test")
 	}
@@ -123,7 +122,7 @@ func TestWriter_Log_allLevels(t *testing.T) {
 
 func TestNewWriter_returnsWriterBackedByHandle(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 	handle.EXPECT().Log(shared.LogLevelInfo, "hi")
 
 	w := NewWriter(handle)
@@ -167,7 +166,7 @@ func TestConfigFactory_CreatePerRoute_returnsNil(t *testing.T) {
 
 func TestFilterFactory_Create_returnsFilter(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 
 	ff := &filterFactory{handler: func(w *Writer, r *Request) {}}
 	f := ff.Create(handle)
@@ -178,7 +177,7 @@ func TestFilterFactory_Create_returnsFilter(t *testing.T) {
 
 func TestFilterFactory_Create_wiredToHandle(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 	handle.EXPECT().Log(shared.LogLevelWarn, "check")
 
 	ff := &filterFactory{handler: func(w *Writer, r *Request) {
@@ -192,7 +191,7 @@ func TestFilterFactory_Create_wiredToHandle(t *testing.T) {
 
 func TestFilter_OnRequestHeaders_returnsStatusContinue(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 
 	f := &filter{handle: handle, handler: func(w *Writer, r *Request) {}}
 	status := f.OnRequestHeaders(fake.NewFakeHeaderMap(nil), false)
@@ -201,7 +200,7 @@ func TestFilter_OnRequestHeaders_returnsStatusContinue(t *testing.T) {
 
 func TestFilter_OnRequestHeaders_passesRequestFields(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 
 	var got Request
 	f := &filter{handle: handle, handler: func(w *Writer, r *Request) { got = *r }}
@@ -220,7 +219,7 @@ func TestFilter_OnRequestHeaders_passesRequestFields(t *testing.T) {
 
 func TestFilter_OnRequestHeaders_writerDelegatesToHandle(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 	handle.EXPECT().Log(shared.LogLevelInfo, "test: %d", 42)
 
 	f := &filter{
@@ -232,7 +231,7 @@ func TestFilter_OnRequestHeaders_writerDelegatesToHandle(t *testing.T) {
 
 func TestFilter_OnRequestHeaders_endOfStreamFlagIgnored(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 
 	calls := 0
 	f := &filter{handle: handle, handler: func(w *Writer, r *Request) { calls++ }}
@@ -274,7 +273,7 @@ func TestRequest_Header_caseInsensitive(t *testing.T) {
 
 func TestWriter_SendLocalResponse_delegatesToHandle(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 	handle.EXPECT().SendLocalResponse(uint32(401), gomock.Any(), []byte(`{"error":"no key"}`), "")
 
 	w := &Writer{handle: handle}
@@ -284,7 +283,7 @@ func TestWriter_SendLocalResponse_delegatesToHandle(t *testing.T) {
 
 func TestWriter_SendLocalResponse_setsStoppedFlag(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 	handle.EXPECT().SendLocalResponse(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any())
 
 	w := NewWriter(handle)
@@ -295,7 +294,7 @@ func TestWriter_SendLocalResponse_setsStoppedFlag(t *testing.T) {
 
 func TestFilter_OnRequestHeaders_stopsAfterLocalResponse(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 	handle.EXPECT().SendLocalResponse(uint32(401), gomock.Any(), gomock.Any(), gomock.Any())
 
 	f := &filter{

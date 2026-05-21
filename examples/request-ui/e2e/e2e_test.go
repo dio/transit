@@ -10,11 +10,11 @@
 //
 // Run:
 //
-//	make e2e
+//	make e2e-request-ui
 //
-// Or directly (from the transit module root):
+// Or directly (from the examples/ directory):
 //
-//	ENVOY_BIN=.bin/envoy go test ./examples/request-ui/e2e/... -v -timeout=120s
+//	ENVOY_BIN=../.bin/envoy GOWORK=off go test ./request-ui/e2e/... -v -timeout=120s
 //
 // Set TRANSIT_SKIP_BUILD=1 to reuse an already-compiled .so.
 package e2e
@@ -46,16 +46,17 @@ var (
 )
 
 var (
-	envoyCmd    *exec.Cmd
-	testsvr     *exec.Cmd
-	projectRoot string
+	envoyCmd     *exec.Cmd
+	testsvr      *exec.Cmd
+	examplesRoot string
 )
 
 // ── TestMain ─────────────────────────────────────────────────────────────────
 
 func TestMain(m *testing.M) {
 	_, file, _, _ := runtime.Caller(0)
-	projectRoot = filepath.Join(filepath.Dir(file), "../../../")
+	// examples/request-ui/e2e/e2e_test.go → examples/
+	examplesRoot = filepath.Join(filepath.Dir(file), "../../")
 
 	bin := envoyBin()
 	if _, err := os.Stat(bin); err != nil {
@@ -63,7 +64,7 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 
-	exampleDir := filepath.Join(projectRoot, "examples/request-ui")
+	exampleDir := filepath.Join(examplesRoot, "request-ui")
 	soPath := filepath.Join(exampleDir, "librequest-ui.so")
 	e2eDir := filepath.Join(exampleDir, "e2e")
 
@@ -71,8 +72,8 @@ func TestMain(m *testing.M) {
 	if os.Getenv("TRANSIT_SKIP_BUILD") == "" {
 		fmt.Fprintln(os.Stderr, "e2e: building librequest-ui.so ...")
 		cmd := exec.Command("go", "build", "-trimpath", "-buildmode=c-shared",
-			"-o", soPath, "./examples/request-ui/cmd")
-		cmd.Dir = projectRoot
+			"-o", soPath, "./request-ui/cmd")
+		cmd.Dir = examplesRoot
 		cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
 		cmd.Stdout = os.Stderr
 		cmd.Stderr = os.Stderr
@@ -97,8 +98,8 @@ func TestMain(m *testing.M) {
 	}
 	fmt.Fprintln(os.Stderr, "e2e: building testserver ...")
 	buildCmd := exec.Command("go", "build", "-o", testsvBin,
-		"./examples/request-ui/e2e/testserver")
-	buildCmd.Dir = projectRoot
+		"./request-ui/e2e/testserver")
+	buildCmd.Dir = examplesRoot
 	buildCmd.Stdout = os.Stderr
 	buildCmd.Stderr = os.Stderr
 	if err := buildCmd.Run(); err != nil {
@@ -439,7 +440,7 @@ func envoyBin() string {
 	if b := os.Getenv("ENVOY_BIN"); b != "" {
 		return b
 	}
-	return filepath.Join(projectRoot, ".bin/envoy")
+	return filepath.Join(examplesRoot, "../.bin/envoy")
 }
 
 func freePort() int {

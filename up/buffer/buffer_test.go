@@ -35,7 +35,7 @@ func TestRing_Write_exactCapacity(t *testing.T) {
 
 func TestRing_Write_overflow_retainsLastN(t *testing.T) {
 	rb := buffer.NewRing(4)
-	rb.Write([]byte("abcde")) // 5 bytes into a 4-byte ring
+	rb.Write([]byte("abcde"))     // 5 bytes into a 4-byte ring
 	require.Equal(t, 4, rb.Len()) // check before Bytes()
 	require.Equal(t, []byte("bcde"), rb.Bytes())
 }

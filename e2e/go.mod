@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	github.com/dio/transit v0.0.0
-	github.com/envoyproxy/envoy/source/extensions/dynamic_modules v0.0.0-20260519194112-86ae80bcd188
+	github.com/envoyproxy/envoy/source/extensions/dynamic_modules v0.0.0-20260521012914-4616750da8df
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/proto/otlp v1.10.0
@@ -18,6 +18,7 @@ require (
 	github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.28.0 // indirect
 	github.com/klauspost/compress v1.18.6 // indirect
+	github.com/kr/text v0.2.0 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	golang.org/x/net v0.51.0 // indirect

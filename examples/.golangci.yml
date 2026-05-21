@@ -1,0 +1,36 @@
+version: "2"
+
+formatters:
+  enable:
+    - gofmt
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - nilerr
+    - prealloc
+    - unparam
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+  govet:
+    enable-all: true
+    disable:
+      - shadow
+      - fieldalignment
+
+issues:
+  exclusions:
+    rules:
+      - path: "_test\\.go"
+        linters:
+          - errcheck
+      - path: "e2e/"
+        linters:
+          - unparam

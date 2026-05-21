@@ -13,6 +13,14 @@ import (
 	"github.com/dio/transit/up"
 )
 
+type mockHandle struct{ *mocks.MockHttpFilterHandle }
+
+func (h *mockHandle) GetAttributeNumber(_ shared.AttributeID) (float64, bool) { return 0, false }
+
+func newMockHandle(ctrl *gomock.Controller) *mockHandle {
+	return &mockHandle{mocks.NewMockHttpFilterHandle(ctrl)}
+}
+
 func TestHandler_logsMethodAndPath(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
@@ -20,7 +28,7 @@ func TestHandler_logsMethodAndPath(t *testing.T) {
 	var gotFormat string
 	var gotArgs []any
 
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 	handle.EXPECT().
 		Log(shared.LogLevelWarn, gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(level shared.LogLevel, format string, args ...any) {

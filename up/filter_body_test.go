@@ -13,6 +13,18 @@ import (
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
+// mockHandle wraps the SDK mock and fixes GetAttributeNumber's return type.
+// The SDK mock was generated against the old interface (uint64) but shared now
+// returns float64. The wrapper satisfies the current interface; no test in this
+// file exercises GetAttributeNumber, so the no-op stub is sufficient.
+type mockHandle struct{ *mocks.MockHttpFilterHandle }
+
+func (h *mockHandle) GetAttributeNumber(_ shared.AttributeID) (float64, bool) { return 0, false }
+
+func newMockHandle(ctrl *gomock.Controller) *mockHandle {
+	return &mockHandle{mocks.NewMockHttpFilterHandle(ctrl)}
+}
+
 func noopHandler(_ *Writer, _ *Request) {}
 
 func newFilterWithBody(handle shared.HttpFilterHandle, rb RequestBodyHandlerFunc) *filter {
@@ -38,7 +50,7 @@ func newFilterWithResponseBuffered(handle shared.HttpFilterHandle, r ResponseHan
 // point regardless of whether a real body exists.
 func TestFilter_OnRequestHeaders_bodyHandler_endOfStream_syntheticCall(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 
 	var got *BodyChunk
 	f := newFilterWithBody(handle, func(_ *Writer, c *BodyChunk) { got = c })
@@ -55,7 +67,7 @@ func TestFilter_OnRequestHeaders_bodyHandler_endOfStream_syntheticCall(t *testin
 // (endOfStream=false); that call will come from OnRequestBody.
 func TestFilter_OnRequestHeaders_bodyHandler_notEndOfStream_noSyntheticCall(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 
 	called := false
 	reqHeaders := fake.NewFakeHeaderMap(nil)
@@ -70,7 +82,7 @@ func TestFilter_OnRequestHeaders_bodyHandler_notEndOfStream_noSyntheticCall(t *t
 // forwarded to the body handler via the BodyChunk fields.
 func TestFilter_OnRequestHeaders_bodyHandler_capturesContentMetadata(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 
 	var got *BodyChunk
 	headers := fake.NewFakeHeaderMap(map[string][]string{
@@ -90,7 +102,7 @@ func TestFilter_OnRequestHeaders_bodyHandler_capturesContentMetadata(t *testing.
 // The filter must return Continue (not StopAllAndBuffer — that freezes the chain).
 func TestFilter_OnRequestHeaders_bufferedMode_stripsLengthHeaders(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 
 	headers := fake.NewFakeHeaderMap(map[string][]string{
 		"content-length":    {"42"},
@@ -111,7 +123,7 @@ func TestFilter_OnRequestHeaders_bufferedMode_stripsLengthHeaders(t *testing.T) 
 // must NOT strip headers (there is no body to replace).
 func TestFilter_OnRequestHeaders_bufferedMode_endOfStream_syntheticCall(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 
 	var got *BodyChunk
 	f := newFilterWithBodyBuffered(handle, func(_ *Writer, c *BodyChunk) { got = c })
@@ -126,7 +138,7 @@ func TestFilter_OnRequestHeaders_bufferedMode_endOfStream_syntheticCall(t *testi
 
 func TestFilter_OnRequestBody_noHandler_returnsContinue(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 	f := &filter{handle: handle, handler: noopHandler}
 
 	status := f.OnRequestBody(fake.NewFakeBodyBuffer([]byte("data")), true)
@@ -136,7 +148,7 @@ func TestFilter_OnRequestBody_noHandler_returnsContinue(t *testing.T) {
 // Streaming mode: non-final chunk must pass through immediately.
 func TestFilter_OnRequestBody_streaming_notEndOfStream_returnsContinue(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 
 	called := false
 	f := newFilterWithBody(handle, func(_ *Writer, _ *BodyChunk) { called = true })
@@ -150,7 +162,7 @@ func TestFilter_OnRequestBody_streaming_notEndOfStream_returnsContinue(t *testin
 // Streaming mode: final chunk delivers data and EndStream=true.
 func TestFilter_OnRequestBody_streaming_endOfStream_callsHandlerWithData(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 
 	var got *BodyChunk
 	f := newFilterWithBody(handle, func(_ *Writer, c *BodyChunk) { got = c })
@@ -164,7 +176,7 @@ func TestFilter_OnRequestBody_streaming_endOfStream_callsHandlerWithData(t *test
 // Buffered mode: non-final chunk must be held — the handler must not fire yet.
 func TestFilter_OnRequestBody_buffered_notEndOfStream_returnsStopAndBuffer(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 
 	called := false
 	f := newFilterWithBodyBuffered(handle, func(_ *Writer, _ *BodyChunk) { called = true })
@@ -179,7 +191,7 @@ func TestFilter_OnRequestBody_buffered_notEndOfStream_returnsStopAndBuffer(t *te
 // full accumulated body from BufferedRequestBody.
 func TestFilter_OnRequestBody_buffered_endOfStream_callsHandlerWithBufferedData(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 	buf := fake.NewFakeBodyBuffer([]byte("full body"))
 	handle.EXPECT().BufferedRequestBody().Return(buf).AnyTimes()
 
@@ -197,7 +209,7 @@ func TestFilter_OnRequestBody_buffered_endOfStream_callsHandlerWithBufferedData(
 // with the replacement, and content-length must be updated.
 func TestFilter_OnRequestBody_buffered_replacement_updatesBufferAndHeader(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 
 	buf := fake.NewFakeBodyBuffer([]byte("original"))
 	reqHeaders := fake.NewFakeHeaderMap(nil)
@@ -218,7 +230,7 @@ func TestFilter_OnRequestBody_buffered_replacement_updatesBufferAndHeader(t *tes
 // Context pointer is the same per-stream slot across the handler and body handler.
 func TestFilter_OnRequestBody_contextSharedWithHandler(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 
 	var ctxFromHeaders *any
 	var ctxFromBody *any
@@ -246,7 +258,7 @@ func TestFilter_OnRequestBody_contextSharedWithHandler(t *testing.T) {
 
 func TestFilter_OnResponseHeaders_noHandler_returnsContinue(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 	f := &filter{handle: handle, handler: noopHandler}
 
 	status := f.OnResponseHeaders(fake.NewFakeHeaderMap(map[string][]string{":status": {"200"}}), false)
@@ -256,7 +268,7 @@ func TestFilter_OnResponseHeaders_noHandler_returnsContinue(t *testing.T) {
 // The response handler must receive the correct HTTP status code.
 func TestFilter_OnResponseHeaders_callsHandlerWithStatusCode(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 
 	var gotStatus int
 	f := newFilterWithResponse(handle, func(_ *Writer, c *ResponseChunk) {
@@ -274,7 +286,7 @@ func TestFilter_OnResponseHeaders_callsHandlerWithStatusCode(t *testing.T) {
 // synthetic body chunk (StatusCode==0, EndStream=true).
 func TestFilter_OnResponseHeaders_endOfStream_syntheticBodyCall(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 
 	var calls []ResponseChunk
 	f := newFilterWithResponse(handle, func(_ *Writer, c *ResponseChunk) {
@@ -293,7 +305,7 @@ func TestFilter_OnResponseHeaders_endOfStream_syntheticBodyCall(t *testing.T) {
 // When endOfStream=false there must be exactly one call (headers only).
 func TestFilter_OnResponseHeaders_notEndOfStream_singleCall(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 
 	calls := 0
 	f := newFilterWithResponse(handle, func(_ *Writer, _ *ResponseChunk) { calls++ })
@@ -306,7 +318,7 @@ func TestFilter_OnResponseHeaders_notEndOfStream_singleCall(t *testing.T) {
 // every ResponseChunk (headers call and body calls).
 func TestFilter_OnResponseHeaders_capturesContentMetadata(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 
 	var chunks []ResponseChunk
 	f := newFilterWithResponse(handle, func(_ *Writer, c *ResponseChunk) {
@@ -331,7 +343,7 @@ func TestFilter_OnResponseHeaders_capturesContentMetadata(t *testing.T) {
 // never sees a stale value if SetResponseBody replaces the body later.
 func TestFilter_OnResponseHeaders_bufferedMode_removesContentLength(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 
 	headers := fake.NewFakeHeaderMap(map[string][]string{
 		":status":        {"200"},
@@ -348,7 +360,7 @@ func TestFilter_OnResponseHeaders_bufferedMode_removesContentLength(t *testing.T
 
 func TestFilter_OnResponseBody_noHandler_returnsContinue(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 	f := &filter{handle: handle, handler: noopHandler}
 
 	status := f.OnResponseBody(fake.NewFakeBodyBuffer([]byte("data")), true)
@@ -358,7 +370,7 @@ func TestFilter_OnResponseBody_noHandler_returnsContinue(t *testing.T) {
 // Streaming mode: each chunk delivered to the handler.
 func TestFilter_OnResponseBody_streaming_callsHandlerWithData(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 
 	var got *ResponseChunk
 	f := newFilterWithResponse(handle, func(_ *Writer, c *ResponseChunk) {
@@ -376,7 +388,7 @@ func TestFilter_OnResponseBody_streaming_callsHandlerWithData(t *testing.T) {
 // Buffered mode: non-final chunk held.
 func TestFilter_OnResponseBody_buffered_notEndOfStream_returnsStopAndBuffer(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 
 	called := false
 	f := newFilterWithResponseBuffered(handle, func(_ *Writer, c *ResponseChunk) {
@@ -394,7 +406,7 @@ func TestFilter_OnResponseBody_buffered_notEndOfStream_returnsStopAndBuffer(t *t
 // Buffered mode: final chunk delivers accumulated body from BufferedResponseBody.
 func TestFilter_OnResponseBody_buffered_endOfStream_callsHandlerWithBufferedData(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 	buf := fake.NewFakeBodyBuffer([]byte("full response"))
 	handle.EXPECT().BufferedResponseBody().Return(buf).AnyTimes()
 
@@ -415,7 +427,7 @@ func TestFilter_OnResponseBody_buffered_endOfStream_callsHandlerWithBufferedData
 // content-length updated.
 func TestFilter_OnResponseBody_buffered_replacement_updatesBufferAndHeader(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	handle := mocks.NewMockHttpFilterHandle(ctrl)
+	handle := newMockHandle(ctrl)
 
 	buf := fake.NewFakeBodyBuffer([]byte("original response"))
 	respHeaders := fake.NewFakeHeaderMap(nil)

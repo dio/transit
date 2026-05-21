@@ -43,20 +43,20 @@ import (
 var envoyConfigTmpl string
 
 var (
-	echoAddr           string
-	guardAddr          string
-	accessLoggerAddr   string
-	correlatorAddr     string
-	bodyAddr           string
-	mutableBodyAddr    string
+	echoAddr              string
+	guardAddr             string
+	accessLoggerAddr      string
+	correlatorAddr        string
+	bodyAddr              string
+	mutableBodyAddr       string
 	compressAddr          string
-	metadataAddr       string
-	tracerAddr         string
-	alsAddr            string
-	upstreamFilterAddr     string
-	upstreamAuthAddr       string
-	upstreamAuthGroupAddr  string
-	adminAddr              string
+	metadataAddr          string
+	tracerAddr            string
+	alsAddr               string
+	upstreamFilterAddr    string
+	upstreamAuthAddr      string
+	upstreamAuthGroupAddr string
+	adminAddr             string
 )
 
 var otelSink *otelsink.Sink
@@ -150,8 +150,8 @@ func TestMain(m *testing.M) {
 		CorrelatorPort:             correlatorPort,
 		BodyPort:                   bodyPort,
 		MutableBodyPort:            mutableBodyPort,
-		CompressPort:                  compressPort,
-		CompressUpstreamPort:          compressUpstreamPort,
+		CompressPort:               compressPort,
+		CompressUpstreamPort:       compressUpstreamPort,
 		OtelSinkPort:               otelSinkPort,
 		MetadataPort:               metadataPort,
 		TracerPort:                 tracerPort,
@@ -285,8 +285,8 @@ type envoyPorts struct {
 	CorrelatorPort             int
 	BodyPort                   int
 	MutableBodyPort            int
-	CompressPort                  int
-	CompressUpstreamPort          int
+	CompressPort               int
+	CompressUpstreamPort       int
 	OtelSinkPort               int
 	MetadataPort               int
 	TracerPort                 int
