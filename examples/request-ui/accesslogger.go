@@ -86,20 +86,20 @@ func (l *alLogger) OnLog(h up.AccessLoggerHandle, logType up.AccessLogType) {
 		return
 	}
 
-	ridBuf, ok := h.GetHeader(up.HttpHeaderTypeRequest, "x-request-id")
+	v, ok := h.GetHeader(up.HttpHeaderTypeRequest, "x-request-id")
 	if !ok {
 		return
 	}
-	key := ridBuf.ToString()
-	if key == "" {
+	requestID := v.ToString()
+	if requestID == "" {
 		return
 	}
 
-	r, ok := l.pending.LoadAndDelete(key)
+	r, ok := l.pending.LoadAndDelete(requestID)
 	if !ok {
 		// DC case: client disconnected before response headers arrived.
 		// The response handler never fired so no record was deposited.
-		r = l.buildMinimalRecord(h, key)
+		r = l.buildMinimalRecord(h, requestID)
 		if r == nil {
 			return
 		}

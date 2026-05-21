@@ -11,6 +11,19 @@ type Request struct {
 	headers    shared.HeaderMap
 }
 
+// AllHeaders returns all request headers as copied Go strings.
+func (r *Request) AllHeaders() [][2]string {
+	if r.headers == nil {
+		return nil
+	}
+	raw := r.headers.GetAll()
+	out := make([][2]string, len(raw))
+	for i, h := range raw {
+		out[i] = [2]string{h[0].ToString(), h[1].ToString()}
+	}
+	return out
+}
+
 // Header returns the first value of the named request header, or "" if absent.
 func (r *Request) Header(name string) string {
 	if r.headers == nil {

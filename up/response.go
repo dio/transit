@@ -22,5 +22,19 @@ type ResponseChunk struct {
 	Context         *any
 }
 
+// AllHeaders returns all response headers as copied Go strings.
+// It is only meaningful when StatusCode is non-zero (the headers call).
+func (c *ResponseChunk) AllHeaders() [][2]string {
+	if c.Headers == nil {
+		return nil
+	}
+	raw := c.Headers.GetAll()
+	out := make([][2]string, len(raw))
+	for i, h := range raw {
+		out[i] = [2]string{h[0].ToString(), h[1].ToString()}
+	}
+	return out
+}
+
 // ResponseHandlerFunc is called for each response event on a stream.
 type ResponseHandlerFunc func(w *Writer, chunk *ResponseChunk)

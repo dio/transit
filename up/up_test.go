@@ -49,6 +49,54 @@ func TestNewRequest_variousMethods(t *testing.T) {
 	}
 }
 
+// --- Request.AllHeaders ---
+
+func TestRequest_AllHeaders(t *testing.T) {
+	headers := fake.NewFakeHeaderMap(map[string][]string{
+		":method":      {"GET"},
+		":path":        {"/hello"},
+		"content-type": {"application/json"},
+	})
+	r := newRequest(headers, "")
+	got := r.AllHeaders()
+	require.Len(t, got, 3)
+	found := map[string]string{}
+	for _, h := range got {
+		found[h[0]] = h[1]
+	}
+	require.Equal(t, "GET", found[":method"])
+	require.Equal(t, "/hello", found[":path"])
+	require.Equal(t, "application/json", found["content-type"])
+}
+
+func TestRequest_AllHeaders_nil(t *testing.T) {
+	r := &Request{}
+	require.Nil(t, r.AllHeaders())
+}
+
+// --- ResponseChunk.AllHeaders ---
+
+func TestResponseChunk_AllHeaders(t *testing.T) {
+	headers := fake.NewFakeHeaderMap(map[string][]string{
+		":status":      {"200"},
+		"content-type": {"text/plain"},
+	})
+	chunk := &ResponseChunk{StatusCode: 200, Headers: headers}
+	got := chunk.AllHeaders()
+	require.Len(t, got, 2)
+	found := map[string]string{}
+	for _, h := range got {
+		found[h[0]] = h[1]
+	}
+	require.Equal(t, "200", found[":status"])
+	require.Equal(t, "text/plain", found["content-type"])
+}
+
+func TestResponseChunk_AllHeaders_nil(t *testing.T) {
+	chunk := &ResponseChunk{}
+	require.Nil(t, chunk.AllHeaders())
+}
+
 // --- Writer ---
 
 func TestWriter_Log_delegatesToHandle(t *testing.T) {

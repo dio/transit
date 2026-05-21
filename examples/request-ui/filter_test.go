@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	requestuisink "github.com/dio/transit/examples/request-ui/sink"
-	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
+	"github.com/dio/transit/up"
 )
 
 // testSink collects records sent by the filter.
@@ -15,14 +15,6 @@ type testSink struct {
 func (s *testSink) Send(r *requestuisink.Record) { s.records = append(s.records, r) }
 
 var _ interface{ Send(*requestuisink.Record) } = (*testSink)(nil)
-
-func strBuf(str string) shared.UnsafeEnvoyBuffer {
-	if str == "" {
-		return shared.UnsafeEnvoyBuffer{}
-	}
-	b := []byte(str)
-	return shared.UnsafeEnvoyBuffer{Ptr: &b[0], Len: uint64(len(b))}
-}
 
 func TestHasError(t *testing.T) {
 	cases := []struct {
@@ -52,17 +44,18 @@ func TestContainsErrorFlag(t *testing.T) {
 		flags string
 		want  bool
 	}{
-		{"UF", true},
-		{"UH", true},
-		{"UC", true},
-		{"UT", true},
-		{"UO", true},
-		{"NR", true},
-		{"DC", false},
-		{"RL", false},
+		{up.ResponseFlagUpstreamConnectionFailure, true},
+		{up.ResponseFlagNoHealthyUpstream, true},
+		{up.ResponseFlagUpstreamConnectionTermination, true},
+		{up.ResponseFlagUpstreamRequestTimeout, true},
+		{up.ResponseFlagUpstreamOverflow, true},
+		{up.ResponseFlagNoRouteFound, true},
+		{up.ResponseFlagDownstreamConnectionTermination, false},
+		{up.ResponseFlagRateLimited, false},
 		{"-", false},
 		{"", false},
-		{"UFDC", true},
+		// multi-flag: comma-separated
+		{up.ResponseFlagUpstreamConnectionFailure + "," + up.ResponseFlagDownstreamConnectionTermination, true},
 	}
 	for _, c := range cases {
 		got := containsErrorFlag(c.flags)
@@ -87,23 +80,6 @@ func TestStatusStr(t *testing.T) {
 		if got != c.want {
 			t.Errorf("statusStr(%d): want %q, got %q", c.code, c.want, got)
 		}
-	}
-}
-
-func TestCopyHeaders(t *testing.T) {
-	raw := [][2]shared.UnsafeEnvoyBuffer{
-		{strBuf("content-type"), strBuf("application/json")},
-		{strBuf(":status"), strBuf("200")},
-	}
-	got := copyHeaders(raw)
-	if len(got) != 2 {
-		t.Fatalf("want 2 headers, got %d", len(got))
-	}
-	if got[0][0] != "content-type" || got[0][1] != "application/json" {
-		t.Errorf("header 0: want content-type/application/json, got %v", got[0])
-	}
-	if got[1][0] != ":status" || got[1][1] != "200" {
-		t.Errorf("header 1: want :status/200, got %v", got[1])
 	}
 }
 

@@ -21,7 +21,6 @@ import (
 
 	"github.com/dio/transit/examples/request-ui/sink"
 	"github.com/dio/transit/up"
-	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
 )
 
 const defaultMaxBody = 4096
@@ -101,8 +100,8 @@ func Register(name string, s *sink.Sink, pending *PendingRecords) {
 				if addr, ok := w.GetAttributeString(up.AttributeIDUpstreamAddress); ok {
 					st.upstreamAddress = addr.ToString()
 				}
-				if c.RecordResponseHeaders && chunk.Headers != nil {
-					st.responseHeaders = copyHeaders(chunk.Headers.GetAll())
+				if c.RecordResponseHeaders {
+					st.responseHeaders = chunk.AllHeaders()
 				}
 
 				if c.RecordResponseBody {
@@ -178,9 +177,18 @@ func hasError(r *sink.Record) bool {
 		r.ResponseCode >= 500
 }
 
+var errorFlags = map[string]bool{
+	up.ResponseFlagUpstreamConnectionFailure:     true,
+	up.ResponseFlagNoHealthyUpstream:             true,
+	up.ResponseFlagUpstreamConnectionTermination: true,
+	up.ResponseFlagUpstreamRequestTimeout:        true,
+	up.ResponseFlagUpstreamOverflow:              true,
+	up.ResponseFlagNoRouteFound:                  true,
+}
+
 func containsErrorFlag(flags string) bool {
-	for _, f := range []string{"UF", "UH", "UC", "UT", "UO", "NR"} {
-		if strings.Contains(flags, f) {
+	for _, token := range strings.Split(flags, ",") {
+		if errorFlags[token] {
 			return true
 		}
 	}
@@ -197,12 +205,4 @@ func statusStr(code int) string {
 		code /= 10
 	}
 	return string(b)
-}
-
-func copyHeaders(raw [][2]shared.UnsafeEnvoyBuffer) [][2]string {
-	out := make([][2]string, len(raw))
-	for i, h := range raw {
-		out[i] = [2]string{h[0].ToString(), h[1].ToString()}
-	}
-	return out
 }
