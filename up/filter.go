@@ -1,6 +1,7 @@
 package up
 
 import (
+	"fmt"
 	"strconv"
 
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
@@ -8,6 +9,7 @@ import (
 
 type configFactory struct {
 	name               string
+	configFn           ConfigFunc
 	handler            HandlerFunc
 	responseHandler    ResponseHandlerFunc
 	requestBodyHandler RequestBodyHandlerFunc
@@ -15,7 +17,23 @@ type configFactory struct {
 	group              *Group
 }
 
-func (f *configFactory) Create(_ shared.HttpFilterConfigHandle, _ []byte) (shared.HttpFilterFactory, error) {
+// configHandleImpl wraps shared.HttpFilterConfigHandle to implement ConfigHandle.
+type configHandleImpl struct{ h shared.HttpFilterConfigHandle }
+
+func (c *configHandleImpl) DefineCounter(name string, tagKeys ...string) (MetricID, error) {
+	id, res := c.h.DefineCounter(name, tagKeys...)
+	if res != shared.MetricsSuccess {
+		return 0, fmt.Errorf("up: DefineCounter %q failed (result=%d)", name, res)
+	}
+	return id, nil
+}
+
+func (f *configFactory) Create(h shared.HttpFilterConfigHandle, _ []byte) (shared.HttpFilterFactory, error) {
+	if f.configFn != nil {
+		if err := f.configFn(&configHandleImpl{h: h}); err != nil {
+			return nil, err
+		}
+	}
 	var stop func()
 	if f.group != nil {
 		f.group.Start()

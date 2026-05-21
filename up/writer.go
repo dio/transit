@@ -94,3 +94,9 @@ func (w *Writer) SetResponseBody(data []byte) {
 	w.responseBodyReplacement = data
 	w.hasResponseBodyReplacement = true
 }
+
+// IncrementCounter adds delta to the counter metric identified by id.
+// id must have been obtained from ConfigHandle.DefineCounter at config time.
+func (w *Writer) IncrementCounter(id MetricID, delta uint64) {
+	w.handle.IncrementCounterValue(id, delta)
+}

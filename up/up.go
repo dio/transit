@@ -6,6 +6,20 @@ import (
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
 )
 
+// MetricID is an opaque handle to an Envoy metric defined at config time via ConfigHandle.
+type MetricID = shared.MetricID
+
+// ConfigHandle is passed to config callbacks at filter config creation time.
+// Use it to define metrics (counters, histograms) once — before any requests arrive.
+type ConfigHandle interface {
+	// DefineCounter defines an Envoy counter metric. tagKeys are optional dimension names.
+	DefineCounter(name string, tagKeys ...string) (MetricID, error)
+}
+
+// ConfigFunc is called once at filter config creation time on the main thread.
+// Use it to define metrics via ConfigHandle.DefineCounter, etc.
+type ConfigFunc func(h ConfigHandle) error
+
 // HandlerFunc is called on every request.
 type HandlerFunc func(w *Writer, r *Request)
 
@@ -96,6 +110,24 @@ func RegisterWithMutableBody(name string, h HandlerFunc, rb RequestBodyHandlerFu
 		responseHandler:    r,
 		requestBodyHandler: rb,
 		bufferBody:         true,
+	})
+}
+
+// RegisterWithConfig registers a named HTTP filter with a config callback, a
+// request handler, and a response observer. The config callback runs once on the
+// main thread when Envoy loads the filter config — use it to define metrics via
+// ConfigHandle.DefineCounter. Must be called from an init() function.
+// Panics on duplicate names.
+func RegisterWithConfig(name string, cfg ConfigFunc, h HandlerFunc, r ResponseHandlerFunc) {
+	if _, ok := registry[name]; ok {
+		panic("up: filter already registered: " + name)
+	}
+	registry[name] = h
+	down.RegisterHttpFilter(name, &configFactory{
+		name:            name,
+		configFn:        cfg,
+		handler:         h,
+		responseHandler: r,
 	})
 }
 
