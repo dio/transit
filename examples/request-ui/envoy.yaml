@@ -1,0 +1,81 @@
+static_resources:
+  listeners:
+    - name: request-ui
+      address:
+        socket_address: { address: 0.0.0.0, port_value: 10000 }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: request_ui
+                generate_request_id: true
+
+                access_log:
+                  - name: envoy.access_loggers.stdout
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                  - name: envoy.access_loggers.dynamic_modules
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.access_loggers.dynamic_modules.v3.DynamicModuleAccessLog
+                      dynamic_module_config:
+                        name: request-ui
+                      logger_name: request-ui
+                      logger_config:
+                        "@type": type.googleapis.com/google.protobuf.StringValue
+                        value: '{}'
+                      log_format:
+                        json_format:
+                          ts:           "%START_TIME%"
+                          request_id:   "%REQ(X-REQUEST-ID)%"
+                          method:       "%REQ(:METHOD)%"
+                          path:         "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%"
+                          status:       "%RESPONSE_CODE%"
+                          flags:        "%RESPONSE_FLAGS%"
+                          duration_ms:  "%DURATION%"
+                          bytes_in:     "%BYTES_RECEIVED%"
+                          bytes_out:    "%BYTES_SENT%"
+                          upstream:     "%UPSTREAM_HOST%"
+                          details:      "%RESPONSE_CODE_DETAILS%"
+
+                http_filters:
+                  - name: request-ui
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: request-ui
+                      filter_name: request-ui
+                      filter_config:
+                        "@type": type.googleapis.com/google.protobuf.StringValue
+                        value: '{}'
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: request_ui
+                  virtual_hosts:
+                    - name: upstream
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          route:
+                            cluster: upstream
+                            timeout: 30s
+
+  clusters:
+    # Replace with your actual service.
+    - name: upstream
+      connect_timeout: 5s
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      load_assignment:
+        cluster_name: upstream
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: upstream, port_value: 8080 }
+
+admin:
+  address:
+    socket_address: { address: 0.0.0.0, port_value: 9901 }
