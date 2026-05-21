@@ -155,10 +155,10 @@ func Decode(encoding string, data []byte) ([]byte, error)
 // Encode compresses data with the given encoding.
 func Encode(encoding string, data []byte) ([]byte, error)
 
-// NegotiateIdentity rewrites Accept-Encoding to "identity" on the outgoing
+// RequestIdentity rewrites Accept-Encoding to "identity" on the outgoing
 // request so the upstream is asked not to compress. Call from the request
 // handler; if the upstream ignores the hint, use Decode in the body handler.
-func NegotiateIdentity(h RequestHeaderSetter)
+func RequestIdentity(h RequestHeaderSetter)
 ```
 
 `RequestHeaderSetter` is satisfied by `*up.Writer`.
@@ -177,7 +177,7 @@ func NegotiateIdentity(h RequestHeaderSetter)
 
 ```go
 func onReqHeaders(w *up.Writer, r *up.Request) {
-    compress.NegotiateIdentity(w)
+    compress.RequestIdentity(w)
 }
 
 func onRespBody(w *up.Writer, chunk *up.ResponseChunk) {

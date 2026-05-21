@@ -56,7 +56,7 @@ All three sinks live under [`sinks/`](sinks/) and expose a consistent pattern:
 | `echo_test.go` | `EchoSuite` | pass-through filter, basic request routing |
 | `guard_test.go` | `GuardSuite` | `SendLocalResponse`, `HeadersStatusStop` |
 | `body_test.go` | `BodySuite` / `MutableBodySuite` | streaming and buffered body handling |
-| `codec_test.go` | `CodecSuite` | gzip decode via `NegotiateIdentity` + `SetResponseBody` |
+| `codec_test.go` | `CodecSuite` | gzip decode via `RequestIdentity` + `SetResponseBody` |
 | `access_logger_test.go` | `AccessLoggerSuite` | dynamic module access logger, `GetTimingInfo` |
 | `correlator_test.go` | `CorrelatorSuite` | HTTP filter ↔ access logger correlation via `sync.Map` |
 | `otel_logs_test.go` | `OtelMetadataSuite` | `SetMetadata` → OTel access log body/attributes |

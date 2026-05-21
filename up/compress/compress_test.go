@@ -100,9 +100,9 @@ func TestDecode_unsupportedEncoding(t *testing.T) {
 	require.Contains(t, err.Error(), "compress")
 }
 
-func TestNegotiateIdentity(t *testing.T) {
+func TestRequestIdentity(t *testing.T) {
 	var h fakeHeaderSetter
-	compress.NegotiateIdentity(&h)
+	compress.RequestIdentity(&h)
 	require.Len(t, h.calls, 1)
 	require.Equal(t, "accept-encoding", h.calls[0][0])
 	require.Equal(t, "identity", h.calls[0][1])

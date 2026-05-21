@@ -10,7 +10,7 @@ import (
 // CompressSuite tests the e2e-compress filter.
 //
 // The upstream always returns "hello codec" compressed with gzip, regardless
-// of Accept-Encoding. The filter calls NegotiateIdentity (which the upstream
+// of Accept-Encoding. The filter calls RequestIdentity (which the upstream
 // ignores), then decodes the gzip response body with compress.Decode and replaces
 // it with the plain text via SetResponseBody. The test client therefore sees
 // the uncompressed string.
@@ -23,7 +23,7 @@ func TestCompress(t *testing.T) {
 }
 
 // TestGet_decodesGzipResponse verifies the full pipeline: gzip upstream →
-// compress filter (NegotiateIdentity + Decode) → plain-text response body.
+// compress filter (RequestIdentity + Decode) → plain-text response body.
 func (s *CompressSuite) TestGet_decodesGzipResponse() {
 	req, _ := http.NewRequest(http.MethodGet, compressAddr+"/", nil)
 	resp := mustDo(s.T(), req)

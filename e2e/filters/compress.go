@@ -1,10 +1,10 @@
 // e2e-compress is a buffered response-body filter that decodes a gzip-compressed
 // upstream response and replaces it with the plain-text body. It also calls
-// NegotiateIdentity to hint to the upstream that identity encoding is preferred,
+// RequestIdentity to hint to the upstream that identity encoding is preferred,
 // and strips the Content-Encoding response header so Go's http.Transport does
 // not attempt a second decompress pass.
 //
-// Used by CodecSuite to verify the full NegotiateIdentity → Decode → SetResponseBody
+// Used by CodecSuite to verify the full RequestIdentity → Decode → SetResponseBody
 // pipeline and the Content-Encoding stripping behaviour.
 package filters
 
@@ -22,7 +22,7 @@ func init() {
 // compress. If the upstream ignores the hint (some CDNs always compress),
 // compressOnResponse decodes the body regardless.
 func compressOnRequest(w *up.Writer, _ *up.Request) {
-	compress.NegotiateIdentity(w)
+	compress.RequestIdentity(w)
 }
 
 // compressOnResponse has two phases:

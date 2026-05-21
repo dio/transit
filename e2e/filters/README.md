@@ -33,7 +33,7 @@ Used by `BodySuite` and `MutableBodySuite`.
 
 ## e2e-codec — [`codec.go`](codec.go)
 
-A buffered response-body filter that calls `NegotiateIdentity`, decodes a
+A buffered response-body filter that calls `RequestIdentity`, decodes a
 gzip-compressed upstream response, strips `Content-Encoding`, and replaces
 the body with the plain-text version via `SetResponseBody`.
 
