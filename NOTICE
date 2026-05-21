@@ -1,0 +1,23 @@
+transit
+Copyright 2026 Dhi Aurrahman and the transit authors
+
+Licensed under Apache License 2.0. See LICENSE for terms.
+
+---
+
+This project includes material derived from the Envoy Proxy project.
+
+  Envoy
+  Copyright The Envoy Project Authors
+  https://github.com/envoyproxy/envoy
+  Licensed under Apache License 2.0
+
+Specifically, the following files are derived from or contain content
+from the Envoy source tree:
+
+  down/abi_impl/access_logger.go
+    Derived from envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/abi/.
+    Implements the access logger ABI not yet present in the upstream SDK.
+    Modifications copyright 2026 Dhi Aurrahman and the transit authors.
+
+The full text of the Apache License 2.0 is available in the LICENSE file.
