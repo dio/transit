@@ -9,7 +9,7 @@ ROOT      := $(shell git rev-parse --show-toplevel)
 ENVOY_BIN ?= $(ROOT)/.bin/envoy
 GOARCH    ?= $(shell go env GOARCH)
 
-.PHONY: build test simulate run clean download-envoy
+.PHONY: build test e2e simulate run clean download-envoy
 
 ## build: compile librequest-ui.so for the current host
 build:
@@ -20,6 +20,10 @@ build:
 ## test: run unit tests (no Envoy required)
 test:
 	cd $(ROOT) && go test ./examples/request-ui/...
+
+## e2e: build .so, start testserver + Envoy, run Node.js e2e tests
+e2e: build
+	ENVOY_BIN=$(ENVOY_BIN) bash $(dir $(lastword $(MAKEFILE_LIST)))e2e/run.sh
 
 ## simulate: zero-dependency demo (no Envoy, no Postgres)
 ##           generates synthetic traffic; UI at http://localhost:6062/
