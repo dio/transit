@@ -43,6 +43,19 @@ func Register(name string, h HandlerFunc) {
 	down.RegisterHttpFilter(name, &configFactory{name: name, handler: h})
 }
 
+// RegisterWithGroup registers a named HTTP filter with a [Group] of background
+// goroutines. The group is started when Envoy loads the filter config and stopped
+// (via [Group.Stop]) when Envoy destroys the filter factory. The handler and the
+// goroutines in g share state via closure — no package-level variables needed.
+// Must be called from an init() function. Panics on duplicate names.
+func RegisterWithGroup(name string, g *Group, h HandlerFunc) {
+	if _, ok := registry[name]; ok {
+		panic("up: filter already registered: " + name)
+	}
+	registry[name] = h
+	down.RegisterHttpFilter(name, &configFactory{name: name, handler: h, group: g})
+}
+
 // RegisterWithResponse registers a named HTTP filter with both a request and a
 // response handler. Must be called from an init() function. Panics on duplicate names.
 func RegisterWithResponse(name string, h HandlerFunc, r ResponseHandlerFunc) {

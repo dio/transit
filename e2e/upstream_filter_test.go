@@ -90,3 +90,31 @@ func (s *UpstreamFilterSuite) TestGet_clientAuthNotForwarded() {
 	s.Require().Empty(resp.Header.Get("x-received-authorization"),
 		"upstream-filter cluster has no auth filter so no Authorization should be injected")
 }
+
+// ── group-based auth injection ───────────────────────────────────────────────
+
+// TestGet_groupAuthHeaderInjected verifies that e2e-upstream-auth-group, which
+// uses up.RegisterWithGroup, injects a header set by a background goroutine.
+// It confirms that group-owned state is visible to the request handler without
+// any package-level variables.
+func (s *UpstreamFilterSuite) TestGet_groupAuthHeaderInjected() {
+	req, _ := http.NewRequest(http.MethodGet, upstreamAuthGroupAddr+"/", nil)
+	resp := mustDo(s.T(), req)
+	resp.Body.Close()
+
+	s.Require().Equal(http.StatusOK, resp.StatusCode)
+	s.Require().Equal("Bearer group-token", resp.Header.Get("x-received-authorization"),
+		"upstream echo should reflect the header injected by the group-based filter")
+}
+
+// TestPost_groupAuthHeaderInjected verifies the group-based injection works for
+// non-GET requests too.
+func (s *UpstreamFilterSuite) TestPost_groupAuthHeaderInjected() {
+	req, _ := http.NewRequest(http.MethodPost, upstreamAuthGroupAddr+"/", nil)
+	resp := mustDo(s.T(), req)
+	resp.Body.Close()
+
+	s.Require().Equal(http.StatusOK, resp.StatusCode)
+	s.Require().Equal("Bearer group-token", resp.Header.Get("x-received-authorization"),
+		"upstream echo should reflect the header injected by the group-based filter")
+}

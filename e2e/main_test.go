@@ -53,9 +53,10 @@ var (
 	metadataAddr       string
 	tracerAddr         string
 	alsAddr            string
-	upstreamFilterAddr string
-	upstreamAuthAddr   string
-	adminAddr          string
+	upstreamFilterAddr     string
+	upstreamAuthAddr       string
+	upstreamAuthGroupAddr  string
+	adminAddr              string
 )
 
 var otelSink *otelsink.Sink
@@ -89,6 +90,7 @@ func TestMain(m *testing.M) {
 	alsPort := freePort()
 	upstreamFilterPort := freePort()
 	upstreamAuthPort := freePort()
+	upstreamAuthGroupPort := freePort()
 	upstreamFilterUpstreamPort := startPlainUpstream()
 	adminPort := freePort()
 
@@ -104,6 +106,7 @@ func TestMain(m *testing.M) {
 	alsAddr = fmt.Sprintf("http://localhost:%d", alsPort)
 	upstreamFilterAddr = fmt.Sprintf("http://localhost:%d", upstreamFilterPort)
 	upstreamAuthAddr = fmt.Sprintf("http://localhost:%d", upstreamAuthPort)
+	upstreamAuthGroupAddr = fmt.Sprintf("http://localhost:%d", upstreamAuthGroupPort)
 	adminAddr = fmt.Sprintf("http://localhost:%d", adminPort)
 
 	otelSink = otelsink.New()
@@ -156,6 +159,7 @@ func TestMain(m *testing.M) {
 		AlsSinkPort:                alsSinkPort,
 		UpstreamFilterPort:         upstreamFilterPort,
 		UpstreamAuthPort:           upstreamAuthPort,
+		UpstreamAuthGroupPort:      upstreamAuthGroupPort,
 		UpstreamFilterUpstreamPort: upstreamFilterUpstreamPort,
 		AdminPort:                  adminPort,
 	})
@@ -290,6 +294,7 @@ type envoyPorts struct {
 	AlsSinkPort                int
 	UpstreamFilterPort         int
 	UpstreamAuthPort           int
+	UpstreamAuthGroupPort      int
 	UpstreamFilterUpstreamPort int
 	AdminPort                  int
 }

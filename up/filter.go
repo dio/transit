@@ -12,15 +12,22 @@ type configFactory struct {
 	responseHandler    ResponseHandlerFunc
 	requestBodyHandler RequestBodyHandlerFunc
 	bufferBody         bool
+	group              *Group
 }
 
 func (f *configFactory) Create(_ shared.HttpFilterConfigHandle, _ []byte) (shared.HttpFilterFactory, error) {
+	var stop func()
+	if f.group != nil {
+		f.group.Start()
+		stop = f.group.Stop
+	}
 	return &filterFactory{
 		name:               f.name,
 		handler:            f.handler,
 		responseHandler:    f.responseHandler,
 		requestBodyHandler: f.requestBodyHandler,
 		bufferBody:         f.bufferBody,
+		stop:               stop,
 	}, nil
 }
 
@@ -32,6 +39,7 @@ type filterFactory struct {
 	responseHandler    ResponseHandlerFunc
 	requestBodyHandler RequestBodyHandlerFunc
 	bufferBody         bool
+	stop               func()
 }
 
 func (f *filterFactory) Create(handle shared.HttpFilterHandle) shared.HttpFilter {
@@ -45,7 +53,11 @@ func (f *filterFactory) Create(handle shared.HttpFilterHandle) shared.HttpFilter
 	}
 }
 
-func (f *filterFactory) OnDestroy() {}
+func (f *filterFactory) OnDestroy() {
+	if f.stop != nil {
+		f.stop()
+	}
+}
 
 type filter struct {
 	shared.EmptyHttpFilter
