@@ -95,6 +95,19 @@ vet:
 tidy:
 	go mod tidy
 
+# check-abi verifies that the vendored abi.h (down/abi_impl/abi.h) was taken from
+# the same SDK version that go.mod depends on. Run this after `go get` updates.
+.PHONY: check-abi
+check-abi:
+	@gomod_ver=$$(grep 'envoyproxy/envoy/source/extensions/dynamic_modules ' go.mod | awk '{print $$2}'); \
+	abi_ver=$$(grep '^SDK_VERSION=' down/abi_impl/VERSION | cut -d= -f2); \
+	if [ "$$gomod_ver" != "$$abi_ver" ]; then \
+		echo "ABI DRIFT: go.mod has $$gomod_ver but down/abi_impl/VERSION records $$abi_ver"; \
+		echo "Update abi.h and down/abi_impl/VERSION to match go.mod (see VERSION for instructions)."; \
+		exit 1; \
+	fi; \
+	echo "abi.h OK: $$gomod_ver"
+
 .PHONY: clean
 clean:
 	rm -rf dist/*.so dist/*.h .bin/*.o

@@ -1,7 +1,7 @@
 // Package e2e runs integration tests against a real Envoy binary.
 //
-// TestMain builds a combined .so from all e2e filters (echo, guard), starts Envoy,
-// and tears everything down when done.
+// TestMain builds a combined .so from all e2e filters (echo, guard, e2e-logger),
+// starts the access log sink, starts Envoy, and tears everything down when done.
 //
 // Prerequisites:
 //   - Envoy binary at .bin/envoy (run: make download-envoy) or set ENVOY_BIN
@@ -21,6 +21,7 @@ package e2e
 import (
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -28,14 +29,16 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/dio/transit/e2e/accessloggersink"
 )
 
-const (
-	// Port 10000: echo filter (pass-through, direct_response "echo ok").
-	echoAddr = "http://localhost:10000"
-	// Port 10001: guard filter (checks x-api-key, direct_response "guard ok").
-	guardAddr = "http://localhost:10001"
-	adminAddr = "http://localhost:9901"
+var (
+	echoAddr         string
+	guardAddr        string
+	accessLoggerAddr string
+	correlatorAddr   string
+	adminAddr        string
 )
 
 var (
@@ -52,6 +55,21 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "SKIP: envoy not found at %s (run: make download-envoy)\n", bin)
 		os.Exit(0)
 	}
+
+	echoPort := freePort()
+	guardPort := freePort()
+	accessLoggerPort := freePort()
+	correlatorPort := freePort()
+	adminPort := freePort()
+
+	echoAddr = fmt.Sprintf("http://localhost:%d", echoPort)
+	guardAddr = fmt.Sprintf("http://localhost:%d", guardPort)
+	accessLoggerAddr = fmt.Sprintf("http://localhost:%d", accessLoggerPort)
+	correlatorAddr = fmt.Sprintf("http://localhost:%d", correlatorPort)
+	adminAddr = fmt.Sprintf("http://localhost:%d", adminPort)
+
+	sinkURL := accessloggersink.StartSink()
+	fmt.Fprintf(os.Stderr, "e2e: access logger sink at %s\n", sinkURL)
 
 	soPath := filepath.Join(projectRoot, "libe2e.so")
 
@@ -75,8 +93,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "e2e: reusing existing libe2e.so (TRANSIT_SKIP_BUILD=1)")
 	}
 
-	cfgPath := writeEnvoyConfig()
-	defer os.Remove(cfgPath)
+	cfgPath := writeEnvoyConfig(sinkURL, echoPort, guardPort, accessLoggerPort, correlatorPort, adminPort)
 
 	envoyCmd = exec.Command(bin,
 		"-c", cfgPath,
@@ -91,6 +108,7 @@ func TestMain(m *testing.M) {
 	envoyCmd.Stderr = os.Stderr
 
 	if err := envoyCmd.Start(); err != nil {
+		os.Remove(cfgPath)
 		fmt.Fprintf(os.Stderr, "e2e: envoy start failed: %v\n", err)
 		os.Exit(1)
 	}
@@ -98,6 +116,8 @@ func TestMain(m *testing.M) {
 
 	if !waitReady(15 * time.Second) {
 		envoyCmd.Process.Kill()
+		envoyCmd.Wait()
+		os.Remove(cfgPath)
 		fmt.Fprintln(os.Stderr, "e2e: envoy not ready in time")
 		os.Exit(1)
 	}
@@ -107,6 +127,7 @@ func TestMain(m *testing.M) {
 
 	envoyCmd.Process.Kill()
 	envoyCmd.Wait()
+	os.Remove(cfgPath)
 	os.Exit(code)
 }
 
@@ -115,6 +136,19 @@ func envoyBin() string {
 		return b
 	}
 	return filepath.Join(projectRoot, "..", ".bin", "envoy")
+}
+
+// freePort asks the OS for an unused TCP port and returns its number.
+// There is an inherent TOCTOU gap between closing the listener and Envoy
+// binding the port, but in practice this is reliable in isolated test
+// environments.
+func freePort() int {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic("freePort: " + err.Error())
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port
 }
 
 func waitReady(timeout time.Duration) bool {
@@ -132,14 +166,13 @@ func waitReady(timeout time.Duration) bool {
 	return false
 }
 
-func writeEnvoyConfig() string {
-	cfg := `
+func writeEnvoyConfig(sinkURL string, echoPort, guardPort, accessLoggerPort, correlatorPort, adminPort int) string {
+	cfg := fmt.Sprintf(`
 static_resources:
   listeners:
-    # Port 10000: echo filter — passes every request through; direct_response 200 "echo ok".
     - name: echo
       address:
-        socket_address: { address: 0.0.0.0, port_value: 10000 }
+        socket_address: { address: 0.0.0.0, port_value: %d }
       filter_chains:
         - filters:
             - name: envoy.filters.network.http_connection_manager
@@ -167,10 +200,9 @@ static_resources:
                             status: 200
                             body: { inline_string: "echo ok" }
 
-    # Port 10001: guard filter — requires x-api-key header; returns 401 if missing.
     - name: guard
       address:
-        socket_address: { address: 0.0.0.0, port_value: 10001 }
+        socket_address: { address: 0.0.0.0, port_value: %d }
       filter_chains:
         - filters:
             - name: envoy.filters.network.http_connection_manager
@@ -198,10 +230,85 @@ static_resources:
                             status: 200
                             body: { inline_string: "guard ok" }
 
+    - name: access-logger-e2e
+      address:
+        socket_address: { address: 0.0.0.0, port_value: %d }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: access_logger_e2e
+                access_log:
+                  - name: envoy.access_loggers.dynamic_modules
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.access_loggers.dynamic_modules.v3.DynamicModuleAccessLog
+                      dynamic_module_config:
+                        name: e2e
+                      logger_name: e2e-logger
+                      logger_config:
+                        "@type": type.googleapis.com/google.protobuf.StringValue
+                        value: '{"sink_url":"%s"}'
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: access_logger_e2e
+                  virtual_hosts:
+                    - name: local
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          direct_response:
+                            status: 200
+                            body: { inline_string: "access-logger-ok" }
+
+    - name: correlator-e2e
+      address:
+        socket_address: { address: 0.0.0.0, port_value: %d }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: correlator_e2e
+                access_log:
+                  - name: envoy.access_loggers.dynamic_modules
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.access_loggers.dynamic_modules.v3.DynamicModuleAccessLog
+                      dynamic_module_config:
+                        name: e2e
+                      logger_name: e2e-correlator-logger
+                      logger_config:
+                        "@type": type.googleapis.com/google.protobuf.StringValue
+                        value: '{"sink_url":"%s"}'
+                http_filters:
+                  - name: e2e-correlator
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: e2e
+                      filter_name: e2e-correlator
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: correlator_e2e
+                  virtual_hosts:
+                    - name: local
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          direct_response:
+                            status: 200
+                            body: { inline_string: "correlator-ok" }
+
 admin:
   address:
-    socket_address: { address: 127.0.0.1, port_value: 9901 }
-`
+    socket_address: { address: 127.0.0.1, port_value: %d }
+`, echoPort, guardPort, accessLoggerPort, sinkURL, correlatorPort, sinkURL, adminPort)
+
 	f, err := os.CreateTemp("", "transit-e2e-*.yaml")
 	if err != nil {
 		panic(err)

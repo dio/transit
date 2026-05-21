@@ -22,3 +22,23 @@ func (w *Writer) SendLocalResponse(status int, body []byte) {
 	w.handle.SendLocalResponse(uint32(status), nil, body, "")
 	w.stopped = true
 }
+
+// GetAttributeString returns the string stream attribute for the given ID.
+func (w *Writer) GetAttributeString(id shared.AttributeID) (shared.UnsafeEnvoyBuffer, bool) {
+	return w.handle.GetAttributeString(id)
+}
+
+// GetAttributeNumber returns the numeric stream attribute for the given ID.
+func (w *Writer) GetAttributeNumber(id shared.AttributeID) (float64, bool) {
+	return w.handle.GetAttributeNumber(id)
+}
+
+// GetAttributeBool returns the boolean stream attribute for the given ID.
+func (w *Writer) GetAttributeBool(id shared.AttributeID) (bool, bool) {
+	return w.handle.GetAttributeBool(id)
+}
+
+// GetActiveSpan returns the active tracing span for the current stream.
+func (w *Writer) GetActiveSpan() shared.Span {
+	return w.handle.GetActiveSpan()
+}
