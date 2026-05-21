@@ -47,8 +47,10 @@ var (
 	codecAddr        string
 	metadataAddr     string
 	tracerAddr       string
-	alsAddr          string
-	adminAddr        string
+	alsAddr              string
+	upstreamFilterAddr   string
+	upstreamAuthAddr     string
+	adminAddr            string
 )
 
 var otelSink *otelsink.Sink
@@ -80,6 +82,9 @@ func TestMain(m *testing.M) {
 	metadataPort := freePort()
 	tracerPort := freePort()
 	alsPort := freePort()
+	upstreamFilterPort := freePort()
+	upstreamAuthPort := freePort()
+	upstreamFilterUpstreamPort := startPlainUpstream()
 	adminPort := freePort()
 
 	echoAddr = fmt.Sprintf("http://localhost:%d", echoPort)
@@ -92,6 +97,8 @@ func TestMain(m *testing.M) {
 	metadataAddr = fmt.Sprintf("http://localhost:%d", metadataPort)
 	tracerAddr = fmt.Sprintf("http://localhost:%d", tracerPort)
 	alsAddr = fmt.Sprintf("http://localhost:%d", alsPort)
+	upstreamFilterAddr = fmt.Sprintf("http://localhost:%d", upstreamFilterPort)
+	upstreamAuthAddr = fmt.Sprintf("http://localhost:%d", upstreamAuthPort)
 	adminAddr = fmt.Sprintf("http://localhost:%d", adminPort)
 
 	otelSink = otelsink.New()
@@ -140,9 +147,12 @@ func TestMain(m *testing.M) {
 		otelSinkPort:      otelSinkPort,
 		metadataPort:      metadataPort,
 		tracerPort:        tracerPort,
-		alsPort:           alsPort,
-		alsSinkPort:       alsSinkPort,
-		adminPort:         adminPort,
+		alsPort:                    alsPort,
+		alsSinkPort:                alsSinkPort,
+		upstreamFilterPort:         upstreamFilterPort,
+		upstreamAuthPort:           upstreamAuthPort,
+		upstreamFilterUpstreamPort: upstreamFilterUpstreamPort,
+		adminPort:                  adminPort,
 	})
 
 	envoyCmd = exec.Command(bin,
@@ -224,6 +234,25 @@ func startGzipUpstream() int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
+// startPlainUpstream starts a minimal HTTP server that always returns 200 with
+// body "upstream ok". Returns the port it is listening on.
+func startPlainUpstream() int {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic("startPlainUpstream: " + err.Error())
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if auth := r.Header.Get("Authorization"); auth != "" {
+			w.Header().Set("x-received-authorization", auth)
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("upstream ok"))
+	})
+	go http.Serve(l, mux) //nolint:errcheck
+	return l.Addr().(*net.TCPAddr).Port
+}
+
 func waitReady(timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -252,9 +281,12 @@ type envoyPorts struct {
 	otelSinkPort      int
 	metadataPort      int
 	tracerPort        int
-	alsPort           int
-	alsSinkPort       int
-	adminPort         int
+	alsPort                    int
+	alsSinkPort                int
+	upstreamFilterPort         int
+	upstreamAuthPort           int
+	upstreamFilterUpstreamPort int
+	adminPort                  int
 }
 
 func writeEnvoyConfig(p envoyPorts) string {
@@ -602,12 +634,108 @@ static_resources:
                             status: 200
                             body: { inline_string: "als-ok" }
 
+    - name: upstream-filter-e2e
+      address:
+        socket_address: { address: 0.0.0.0, port_value: %d }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: upstream_filter_e2e
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: upstream_filter_e2e
+                  virtual_hosts:
+                    - name: local
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          route: { cluster: upstream-filter-upstream }
+
+    - name: upstream-auth-e2e
+      address:
+        socket_address: { address: 0.0.0.0, port_value: %d }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: upstream_auth_e2e
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: upstream_auth_e2e
+                  virtual_hosts:
+                    - name: local
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          route: { cluster: upstream-auth-upstream }
+
   clusters:
     - name: codec-upstream
       connect_timeout: 5s
       type: STATIC
       load_assignment:
         cluster_name: codec-upstream
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: 127.0.0.1, port_value: %d }
+
+    - name: upstream-filter-upstream
+      connect_timeout: 5s
+      type: STATIC
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http_protocol_options: {}
+          http_filters:
+            - name: e2e-upstream
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                dynamic_module_config:
+                  name: e2e
+                filter_name: e2e-upstream
+            - name: envoy.filters.http.upstream_codec
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.upstream_codec.v3.UpstreamCodec
+      load_assignment:
+        cluster_name: upstream-filter-upstream
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: 127.0.0.1, port_value: %d }
+
+    - name: upstream-auth-upstream
+      connect_timeout: 5s
+      type: STATIC
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http_protocol_options: {}
+          http_filters:
+            - name: e2e-upstream-auth
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                dynamic_module_config:
+                  name: e2e
+                filter_name: e2e-upstream-auth
+            - name: envoy.filters.http.upstream_codec
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.upstream_codec.v3.UpstreamCodec
+      load_assignment:
+        cluster_name: upstream-auth-upstream
         endpoints:
           - lb_endpoints:
               - endpoint:
@@ -669,7 +797,7 @@ tracing:
         envoy_grpc:
           cluster_name: otel-collector
       service_name: "transit-e2e"
-`, p.echoPort, p.guardPort, p.accessLoggerPort, p.sinkURL, p.correlatorPort, p.sinkURL, p.bodyPort, p.mutableBodyPort, p.codecPort, p.metadataPort, p.tracerPort, p.alsPort, p.codecUpstreamPort, p.alsSinkPort, p.otelSinkPort, p.adminPort)
+`, p.echoPort, p.guardPort, p.accessLoggerPort, p.sinkURL, p.correlatorPort, p.sinkURL, p.bodyPort, p.mutableBodyPort, p.codecPort, p.metadataPort, p.tracerPort, p.alsPort, p.upstreamFilterPort, p.upstreamAuthPort, p.codecUpstreamPort, p.upstreamFilterUpstreamPort, p.upstreamFilterUpstreamPort, p.alsSinkPort, p.otelSinkPort, p.adminPort)
 
 	f, err := os.CreateTemp("", "transit-e2e-*.yaml")
 	if err != nil {
