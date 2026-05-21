@@ -6,12 +6,12 @@ Two separate layers:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  up/codec  — content-encoding decode/encode                   │
-│  gzip, deflate, br (brotli), zstd; Accept-Encoding helpers   │
+│  up/compress  — content-encoding decode/encode               │
+│  gzip, deflate, br (brotli), zstd; Accept-Encoding helpers    │
 ├──────────────────────────────────────────────────────────────┤
-│  up  — body mechanics                                         │
-│  BodyChunk, RequestBodyHandlerFunc, buffered/streaming,       │
-│  endOfStream invariant, header mutation, SetRequestBody       │
+│  up  — body mechanics                                        │
+│  BodyChunk, RequestBodyHandlerFunc, buffered/streaming,      │
+│  endOfStream invariant, header mutation, SetRequestBody      │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -163,7 +163,7 @@ Calling outside a buffered body callback is a no-op.
 
 ---
 
-## Layer 2: content encoding (`up/codec`)
+## Layer 2: content encoding (`up/compress`)
 
 ### API
 
@@ -202,14 +202,14 @@ upstreams that ignore `Accept-Encoding`.
 ```go
 // Request headers: negotiate away compression.
 func onReqHeaders(w *up.Writer, r *up.Request) {
-    codec.NegotiateIdentity(w)
+    compress.NegotiateIdentity(w)
 }
 
 // Response headers: captured automatically into ResponseChunk fields.
 // Body: decode then forward.
 func onRespBody(w *up.Writer, chunk *up.ResponseChunk) {
     if !chunk.EndStream { return }
-    decoded, err := codec.Decode(chunk.ContentEncoding, chunk.Data)
+    decoded, err := compress.Decode(chunk.ContentEncoding, chunk.Data)
     if err != nil { /* handle */ }
     // dispatch on chunk.ContentType for user-space parsing
     switch {
