@@ -19,14 +19,14 @@ func TestNewRequest_allHeaders(t *testing.T) {
 		":path":      {"/test"},
 		":authority": {"example.com"},
 	})
-	r := newRequest(headers)
+	r := newRequest(headers, "")
 	require.Equal(t, "GET", r.Method)
 	require.Equal(t, "/test", r.Path)
 	require.Equal(t, "example.com", r.Host)
 }
 
 func TestNewRequest_missingHeaders(t *testing.T) {
-	r := newRequest(fake.NewFakeHeaderMap(nil))
+	r := newRequest(fake.NewFakeHeaderMap(nil), "")
 	require.Empty(t, r.Method)
 	require.Empty(t, r.Path)
 	require.Empty(t, r.Host)
@@ -36,7 +36,7 @@ func TestNewRequest_partialHeaders(t *testing.T) {
 	headers := fake.NewFakeHeaderMap(map[string][]string{
 		":method": {"POST"},
 	})
-	r := newRequest(headers)
+	r := newRequest(headers, "")
 	require.Equal(t, "POST", r.Method)
 	require.Empty(t, r.Path)
 	require.Empty(t, r.Host)
@@ -44,7 +44,7 @@ func TestNewRequest_partialHeaders(t *testing.T) {
 
 func TestNewRequest_variousMethods(t *testing.T) {
 	for _, method := range []string{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"} {
-		r := newRequest(fake.NewFakeHeaderMap(map[string][]string{":method": {method}}))
+		r := newRequest(fake.NewFakeHeaderMap(map[string][]string{":method": {method}}), "")
 		require.Equal(t, method, r.Method)
 	}
 }
@@ -200,12 +200,12 @@ func TestRequest_Header_present(t *testing.T) {
 	headers := fake.NewFakeHeaderMap(map[string][]string{
 		"x-api-key": {"secret"},
 	})
-	r := newRequest(headers)
+	r := newRequest(headers, "")
 	require.Equal(t, "secret", r.Header("x-api-key"))
 }
 
 func TestRequest_Header_missing(t *testing.T) {
-	r := newRequest(fake.NewFakeHeaderMap(nil))
+	r := newRequest(fake.NewFakeHeaderMap(nil), "")
 	require.Empty(t, r.Header("x-api-key"))
 }
 
@@ -218,7 +218,7 @@ func TestRequest_Header_caseInsensitive(t *testing.T) {
 	headers := fake.NewFakeHeaderMap(map[string][]string{
 		"X-Request-ID": {"abc-123"},
 	})
-	r := newRequest(headers)
+	r := newRequest(headers, "")
 	require.Equal(t, "abc-123", r.Header("x-request-id"))
 }
 

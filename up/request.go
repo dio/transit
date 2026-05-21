@@ -4,10 +4,11 @@ import "github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/sha
 
 // Request holds the per-request fields populated before the handler is called.
 type Request struct {
-	Method  string
-	Path    string
-	Host    string
-	headers shared.HeaderMap
+	Method     string
+	Path       string
+	Host       string
+	FilterName string
+	headers    shared.HeaderMap
 }
 
 // Header returns the first value of the named request header, or "" if absent.
@@ -22,8 +23,8 @@ func (r *Request) Header(name string) string {
 	return v.ToString()
 }
 
-func newRequest(headers shared.HeaderMap) *Request {
-	r := &Request{headers: headers}
+func newRequest(headers shared.HeaderMap, name string) *Request {
+	r := &Request{headers: headers, FilterName: name}
 	if v := headers.GetOne(":method"); v.Len > 0 {
 		r.Method = v.ToString()
 	}
@@ -34,4 +35,9 @@ func newRequest(headers shared.HeaderMap) *Request {
 		r.Host = v.ToString()
 	}
 	return r
+}
+
+// NewRequest constructs a Request from a HeaderMap for use in tests.
+func NewRequest(headers shared.HeaderMap, name string) *Request {
+	return newRequest(headers, name)
 }

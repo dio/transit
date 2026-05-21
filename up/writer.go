@@ -23,9 +23,10 @@ func (w *Writer) Log(level shared.LogLevel, format string, args ...any) {
 }
 
 // SendLocalResponse sends an immediate response to the client and stops filter chain
-// processing. Subsequent filters are not invoked.
-func (w *Writer) SendLocalResponse(status int, body []byte) {
-	w.handle.SendLocalResponse(uint32(status), nil, body, "")
+// processing. Subsequent filters are not invoked. Optional headers are sent with the
+// response (e.g. [2]string{"content-type", "application/json"}).
+func (w *Writer) SendLocalResponse(status int, body []byte, headers ...[2]string) {
+	w.handle.SendLocalResponse(uint32(status), headers, body, "")
 	w.stopped = true
 }
 

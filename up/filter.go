@@ -7,6 +7,7 @@ import (
 )
 
 type configFactory struct {
+	name               string
 	handler            HandlerFunc
 	responseHandler    ResponseHandlerFunc
 	requestBodyHandler RequestBodyHandlerFunc
@@ -15,6 +16,7 @@ type configFactory struct {
 
 func (f *configFactory) Create(_ shared.HttpFilterConfigHandle, _ []byte) (shared.HttpFilterFactory, error) {
 	return &filterFactory{
+		name:               f.name,
 		handler:            f.handler,
 		responseHandler:    f.responseHandler,
 		requestBodyHandler: f.requestBodyHandler,
@@ -25,6 +27,7 @@ func (f *configFactory) Create(_ shared.HttpFilterConfigHandle, _ []byte) (share
 func (f *configFactory) CreatePerRoute(_ []byte) (any, error) { return nil, nil }
 
 type filterFactory struct {
+	name               string
 	handler            HandlerFunc
 	responseHandler    ResponseHandlerFunc
 	requestBodyHandler RequestBodyHandlerFunc
@@ -33,6 +36,7 @@ type filterFactory struct {
 
 func (f *filterFactory) Create(handle shared.HttpFilterHandle) shared.HttpFilter {
 	return &filter{
+		name:               f.name,
 		handle:             handle,
 		handler:            f.handler,
 		responseHandler:    f.responseHandler,
@@ -45,6 +49,7 @@ func (f *filterFactory) OnDestroy() {}
 
 type filter struct {
 	shared.EmptyHttpFilter
+	name               string
 	handle             shared.HttpFilterHandle
 	handler            HandlerFunc
 	responseHandler    ResponseHandlerFunc
@@ -67,7 +72,7 @@ func (f *filter) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool) sh
 	}
 
 	w := &Writer{handle: f.handle}
-	f.handler(w, newRequest(headers))
+	f.handler(w, newRequest(headers, f.name))
 	if w.stopped {
 		return shared.HeadersStatusStop
 	}

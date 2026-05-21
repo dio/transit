@@ -9,6 +9,18 @@ import (
 // HandlerFunc is called on every request.
 type HandlerFunc func(w *Writer, r *Request)
 
+// Middleware wraps a HandlerFunc, enabling before/after logic around a handler.
+type Middleware func(next HandlerFunc) HandlerFunc
+
+// Chain wraps h with the given middleware in left-to-right order: the first
+// middleware in the list is outermost (runs first).
+func Chain(h HandlerFunc, mw ...Middleware) HandlerFunc {
+	for i := len(mw) - 1; i >= 0; i-- {
+		h = mw[i](h)
+	}
+	return h
+}
+
 // LogLevel aliases.
 const (
 	LogTrace    = shared.LogLevelTrace
@@ -28,7 +40,7 @@ func Register(name string, h HandlerFunc) {
 		panic("up: filter already registered: " + name)
 	}
 	registry[name] = h
-	down.RegisterHttpFilter(name, &configFactory{handler: h})
+	down.RegisterHttpFilter(name, &configFactory{name: name, handler: h})
 }
 
 // RegisterWithResponse registers a named HTTP filter with both a request and a
@@ -38,7 +50,7 @@ func RegisterWithResponse(name string, h HandlerFunc, r ResponseHandlerFunc) {
 		panic("up: filter already registered: " + name)
 	}
 	registry[name] = h
-	down.RegisterHttpFilter(name, &configFactory{handler: h, responseHandler: r})
+	down.RegisterHttpFilter(name, &configFactory{name: name, handler: h, responseHandler: r})
 }
 
 // RegisterWithBody registers a named HTTP filter with request body handling in
@@ -50,6 +62,7 @@ func RegisterWithBody(name string, h HandlerFunc, rb RequestBodyHandlerFunc, r R
 	}
 	registry[name] = h
 	down.RegisterHttpFilter(name, &configFactory{
+		name:               name,
 		handler:            h,
 		responseHandler:    r,
 		requestBodyHandler: rb,
@@ -65,6 +78,7 @@ func RegisterWithMutableBody(name string, h HandlerFunc, rb RequestBodyHandlerFu
 	}
 	registry[name] = h
 	down.RegisterHttpFilter(name, &configFactory{
+		name:               name,
 		handler:            h,
 		responseHandler:    r,
 		requestBodyHandler: rb,
