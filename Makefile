@@ -85,7 +85,7 @@ test:
 
 .PHONY: e2e
 e2e: $(ENVOY_BIN)
-	ENVOY_BIN=$(ENVOY_BIN) go test ./e2e/... -v -timeout=90s
+	cd e2e && ENVOY_BIN=$(ENVOY_BIN) go test ./... -v -timeout=90s
 
 .PHONY: vet
 vet:
@@ -94,6 +94,7 @@ vet:
 .PHONY: tidy
 tidy:
 	go mod tidy
+	cd e2e && GOWORK=off go mod tidy
 
 # check-abi verifies that the vendored abi.h (down/abi_impl/abi.h) was taken from
 # the same SDK version that go.mod depends on. Run this after `go get` updates.

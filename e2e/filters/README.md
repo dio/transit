@@ -39,6 +39,16 @@ the body with the plain-text version via `SetResponseBody`.
 
 Used by `CodecSuite` to verify the full gzip-decode pipeline.
 
+## e2e-metadata — [`metadata.go`](metadata.go)
+
+Sets two dynamic metadata values (namespace `"e2e"`) on every request so
+Envoy's OpenTelemetry access logger can render them via `%DYNAMIC_METADATA(...)%`:
+
+- `custom_field` = `"hello-from-filter"` → appears in the OTLP log body
+- `method` = the HTTP method → appears as the `method` attribute
+
+Used by `OtelMetadataSuite` to verify the `SetMetadata` → OTel pipeline.
+
 ## e2e-logger — [`access_logger.go`](access_logger.go)
 
 A minimal access logger that POSTs a JSON record (timing, byte counts,
