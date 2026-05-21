@@ -95,14 +95,17 @@ NEW: if endOfStream && requestBodyHandler != nil:
          call requestBodyHandler(w, &BodyChunk{Data: nil, EndStream: true, ...})
          return Continue   ← no body coming, nothing to hold
 NEW: if bufferBody && requestBodyHandler != nil && !endOfStream:
-         return StopAllAndBuffer  ← hold headers with body so Content-Length
-                                    can be updated after body replacement
+         headers.Remove("content-length")    ← stale once body is replaced
+         headers.Remove("transfer-encoding") ← ditto
+         return Continue   ← headers forwarded; body buffered in OnRequestBody
 ```
 
-`StopAllAndBuffer` is essential for correctness: it prevents headers from being
-forwarded to upstream until `OnRequestBody` returns `Continue`, at which point
-both headers (with updated `Content-Length`) and body are released together.
-Without it, `Content-Length` would be stale by the time the body is replaced.
+`StopAllAndBuffer` is NOT used here. Envoy's `StopAllAndBuffer` from
+`OnRequestHeaders` prevents `OnRequestBody` from ever being called — the filter
+chain is frozen with no mechanism to resume it. Instead, `content-length` and
+`transfer-encoding` are stripped from the request headers before they are
+forwarded. The correct value is re-written after body replacement in
+`OnRequestBody`.
 
 ### `OnRequestBody` (new)
 
@@ -123,12 +126,11 @@ return Continue
 
 After calling the response handler with the headers chunk:
 ```
-if endOfStream:
-    call responseHandler(w, &ResponseChunk{EndStream: true, ...})  ← synthetic
-    return Continue
 if bufferBody:
-    return StopAllAndBuffer  ← hold response headers for Content-Length update
-return Continue
+    headers.Remove("content-length")  ← stale once body is replaced
+NEW: if endOfStream:
+    call responseHandler(w, &ResponseChunk{EndStream: true, ...})  ← synthetic
+return Continue  ← always; StopAllAndBuffer is NOT used (same reason as request side)
 ```
 
 ### `OnResponseBody` change

@@ -38,6 +38,8 @@ var (
 	guardAddr        string
 	accessLoggerAddr string
 	correlatorAddr   string
+	bodyAddr         string
+	mutableBodyAddr  string
 	adminAddr        string
 )
 
@@ -60,12 +62,16 @@ func TestMain(m *testing.M) {
 	guardPort := freePort()
 	accessLoggerPort := freePort()
 	correlatorPort := freePort()
+	bodyPort := freePort()
+	mutableBodyPort := freePort()
 	adminPort := freePort()
 
 	echoAddr = fmt.Sprintf("http://localhost:%d", echoPort)
 	guardAddr = fmt.Sprintf("http://localhost:%d", guardPort)
 	accessLoggerAddr = fmt.Sprintf("http://localhost:%d", accessLoggerPort)
 	correlatorAddr = fmt.Sprintf("http://localhost:%d", correlatorPort)
+	bodyAddr = fmt.Sprintf("http://localhost:%d", bodyPort)
+	mutableBodyAddr = fmt.Sprintf("http://localhost:%d", mutableBodyPort)
 	adminAddr = fmt.Sprintf("http://localhost:%d", adminPort)
 
 	sinkURL := accessloggersink.StartSink()
@@ -93,7 +99,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "e2e: reusing existing libe2e.so (TRANSIT_SKIP_BUILD=1)")
 	}
 
-	cfgPath := writeEnvoyConfig(sinkURL, echoPort, guardPort, accessLoggerPort, correlatorPort, adminPort)
+	cfgPath := writeEnvoyConfig(sinkURL, echoPort, guardPort, accessLoggerPort, correlatorPort, bodyPort, mutableBodyPort, adminPort)
 
 	envoyCmd = exec.Command(bin,
 		"-c", cfgPath,
@@ -166,7 +172,7 @@ func waitReady(timeout time.Duration) bool {
 	return false
 }
 
-func writeEnvoyConfig(sinkURL string, echoPort, guardPort, accessLoggerPort, correlatorPort, adminPort int) string {
+func writeEnvoyConfig(sinkURL string, echoPort, guardPort, accessLoggerPort, correlatorPort, bodyPort, mutableBodyPort, adminPort int) string {
 	cfg := fmt.Sprintf(`
 static_resources:
   listeners:
@@ -304,10 +310,70 @@ static_resources:
                             status: 200
                             body: { inline_string: "correlator-ok" }
 
+    - name: body-e2e
+      address:
+        socket_address: { address: 0.0.0.0, port_value: %d }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: body_e2e
+                http_filters:
+                  - name: e2e-body
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: e2e
+                      filter_name: e2e-body
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: body_e2e
+                  virtual_hosts:
+                    - name: local
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          direct_response:
+                            status: 200
+                            body: { inline_string: "body-ok" }
+
+    - name: mutable-body-e2e
+      address:
+        socket_address: { address: 0.0.0.0, port_value: %d }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: mutable_body_e2e
+                http_filters:
+                  - name: e2e-mutable-body
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: e2e
+                      filter_name: e2e-mutable-body
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: mutable_body_e2e
+                  virtual_hosts:
+                    - name: local
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          direct_response:
+                            status: 200
+                            body: { inline_string: "body-mutable-ok" }
+
 admin:
   address:
     socket_address: { address: 127.0.0.1, port_value: %d }
-`, echoPort, guardPort, accessLoggerPort, sinkURL, correlatorPort, sinkURL, adminPort)
+`, echoPort, guardPort, accessLoggerPort, sinkURL, correlatorPort, sinkURL, bodyPort, mutableBodyPort, adminPort)
 
 	f, err := os.CreateTemp("", "transit-e2e-*.yaml")
 	if err != nil {

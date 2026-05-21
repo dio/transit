@@ -85,10 +85,13 @@ func (f *filter) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool) sh
 		return shared.HeadersStatusContinue
 	}
 
-	// Body is coming: hold headers together with the body in buffered mode so
-	// Content-Length can be updated after the body is replaced.
+	// Body is coming in buffered mode: strip content-length now so upstream does
+	// not receive a stale value if SetRequestBody replaces the body. The body
+	// callbacks use StopAndBuffer to accumulate chunks; content-length is
+	// re-added after the replacement in OnRequestBody.
 	if f.bufferBody && f.requestBodyHandler != nil {
-		return shared.HeadersStatusStopAllAndBuffer
+		headers.Remove("content-length")
+		headers.Remove("transfer-encoding")
 	}
 	return shared.HeadersStatusContinue
 }
@@ -123,8 +126,7 @@ func (f *filter) OnRequestBody(body shared.BodyBuffer, endOfStream bool) shared.
 		buf := f.handle.BufferedRequestBody()
 		buf.Drain(buf.GetSize())
 		buf.Append(w.requestBodyReplacement)
-		// Headers were held by StopAllAndBuffer; update Content-Length now.
-		f.handle.RequestHeaders().Remove("transfer-encoding")
+		// content-length was cleared in OnRequestHeaders; set the correct value now.
 		f.handle.RequestHeaders().Set("content-length", strconv.Itoa(len(w.requestBodyReplacement)))
 	}
 	return shared.BodyStatusContinue
@@ -137,6 +139,14 @@ func (f *filter) OnResponseHeaders(headers shared.HeaderMap, endOfStream bool) s
 
 	f.responseContentType = headers.GetOne("content-type").ToString()
 	f.responseContentEncoding = headers.GetOne("content-encoding").ToString()
+
+	// Strip content-length upfront in buffered mode: if the response handler calls
+	// SetResponseBody the replacement may differ in length, and headers are
+	// forwarded before OnResponseBody runs. content-length is re-added after
+	// replacement in OnResponseBody.
+	if f.bufferBody {
+		headers.Remove("content-length")
+	}
 
 	statusCode := 0
 	if v := headers.GetOne(":status"); v.Len > 0 {
@@ -161,13 +171,6 @@ func (f *filter) OnResponseHeaders(headers shared.HeaderMap, endOfStream bool) s
 			ContentType:     f.responseContentType,
 			Context:         &f.context,
 		})
-		return shared.HeadersStatusContinue
-	}
-
-	// Hold response headers together with the body so Content-Length can be
-	// updated after the body is replaced.
-	if f.bufferBody {
-		return shared.HeadersStatusStopAllAndBuffer
 	}
 	return shared.HeadersStatusContinue
 }
@@ -202,8 +205,7 @@ func (f *filter) OnResponseBody(body shared.BodyBuffer, endOfStream bool) shared
 		buf := f.handle.BufferedResponseBody()
 		buf.Drain(buf.GetSize())
 		buf.Append(w.responseBodyReplacement)
-		// Headers were held by StopAllAndBuffer; update Content-Length now.
-		f.handle.ResponseHeaders().Remove("transfer-encoding")
+		// content-length was cleared in OnResponseHeaders; set the correct value now.
 		f.handle.ResponseHeaders().Set("content-length", strconv.Itoa(len(w.responseBodyReplacement)))
 	}
 	return shared.BodyStatusContinue
