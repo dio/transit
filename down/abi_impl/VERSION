@@ -3,20 +3,12 @@
 # abi.h is copied from the Envoy dynamic modules SDK module cache. It MUST
 # always match the Go SDK version pinned in go.mod.
 #
-# When updating: update go.mod first, then copy the new abi.h from the module
-# cache (or the envoyproxy/envoy repository), then update this file.
-#
 # Updating both in separate commits (or updating only one) causes ABI drift and
 # will produce hard-to-diagnose runtime crashes.
 #
-# To update:
-#   go get github.com/envoyproxy/envoy/source/extensions/dynamic_modules@<new-commit>
-#   go mod tidy
-#   MODCACHE=$(go env GOPATH)/pkg/mod
-#   SDK=$(grep envoyproxy/envoy go.mod | awk '{print $1 "@" $2}')
-#   cp "$MODCACHE/$SDK/source/extensions/dynamic_modules/abi.h" down/abi_impl/abi.h
-#   # then update SDK_COMMIT and SDK_MODULE below
+# To update (all steps in one):
+#   make update-sdk ENVOY_COMMIT=<full-or-short-commit>
 
 SDK_MODULE=github.com/envoyproxy/envoy/source/extensions/dynamic_modules
-SDK_VERSION=v0.0.0-20260519194112-86ae80bcd188
-SDK_COMMIT=86ae80bcd188
+SDK_VERSION=v0.0.0-20260521012914-4616750da8df
+SDK_COMMIT=4616750da8df

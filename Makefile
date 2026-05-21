@@ -1,4 +1,5 @@
-GO_TOOL := GOWORK=off go tool -modfile=tools/go.mod
+GO_TOOL          := GOWORK=off go tool -modfile=tools/go.mod
+EXAMPLES_GO_TOOL := GOWORK=off go tool -modfile=$(CURDIR)/tools/go.mod
 
 ZIG_VERSION   ?= 0.16.0
 ZIG_BIN       ?= $(CURDIR)/.bin/zig-dist/zig
@@ -54,7 +55,7 @@ build: $(ZIG_BIN)
 	@mkdir -p dist .bin
 	cd .bin && TARGET=$(HOST_TARGET) \
 	CC=$(CURDIR)/scripts/zigcc.sh \
-	CGO_ENABLED=1 go build -trimpath -buildmode=c-shared \
+	CGO_ENABLED=1 GOWORK=off go build -trimpath -buildmode=c-shared \
 		-o $(CURDIR)/dist/lib$(EXAMPLE).so $(CURDIR)/$(EXAMPLE_CMD)
 
 .PHONY: build-linux-amd64
@@ -62,7 +63,7 @@ build-linux-amd64: $(ZIG_BIN)
 	@mkdir -p dist .bin
 	cd .bin && TARGET=x86_64-linux-gnu.2.28 \
 	CC=$(CURDIR)/scripts/zigcc.sh \
-	CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
+	CGO_ENABLED=1 GOOS=linux GOARCH=amd64 GOWORK=off \
 	go build -trimpath -buildmode=c-shared \
 		-o $(CURDIR)/dist/lib$(EXAMPLE).linux-amd64.so $(CURDIR)/$(EXAMPLE_CMD)
 
@@ -71,7 +72,7 @@ build-linux-arm64: $(ZIG_BIN)
 	@mkdir -p dist .bin
 	cd .bin && TARGET=aarch64-linux-gnu.2.28 \
 	CC=$(CURDIR)/scripts/zigcc.sh \
-	CGO_ENABLED=1 GOOS=linux GOARCH=arm64 \
+	CGO_ENABLED=1 GOOS=linux GOARCH=arm64 GOWORK=off \
 	go build -trimpath -buildmode=c-shared \
 		-o $(CURDIR)/dist/lib$(EXAMPLE).linux-arm64.so $(CURDIR)/$(EXAMPLE_CMD)
 
@@ -89,6 +90,18 @@ test:
 e2e: $(ENVOY_BIN)
 	cd e2e && ENVOY_BIN=$(ENVOY_BIN) go test ./... -v -timeout=90s
 
+.PHONY: e2e-hello
+e2e-hello: $(ENVOY_BIN)
+	cd examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./hello/e2e/... -v -timeout=60s
+
+.PHONY: e2e-sse-tap
+e2e-sse-tap: $(ENVOY_BIN)
+	cd examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./sse-tap/e2e/... -v -timeout=60s
+
+.PHONY: e2e-request-ui
+e2e-request-ui: $(ENVOY_BIN)
+	cd examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./request-ui/e2e/... -v -timeout=120s
+
 .PHONY: vet
 vet:
 	go vet ./...
@@ -96,20 +109,46 @@ vet:
 .PHONY: format
 format:
 	$(GO_TOOL) golangci-lint fmt
+	cd examples && $(EXAMPLES_GO_TOOL) golangci-lint fmt
 
 .PHONY: format-check
 format-check:
 	$(GO_TOOL) golangci-lint fmt --diff .
+	cd examples && $(EXAMPLES_GO_TOOL) golangci-lint fmt --diff .
 
 .PHONY: lint
 lint:
 	$(GO_TOOL) golangci-lint run --timeout 5m
+	cd examples && $(EXAMPLES_GO_TOOL) golangci-lint run --timeout 5m
 
 .PHONY: tidy
 tidy:
 	go mod tidy
 	cd e2e && GOWORK=off go mod tidy
+	cd examples && GOWORK=off go mod tidy
 	cd tools && GOWORK=off go mod tidy
+
+# update-sdk upgrades the Envoy dynamic modules SDK to the given Envoy commit and
+# syncs down/abi_impl/abi.h + down/abi_impl/VERSION in one step.
+# Usage: make update-sdk ENVOY_COMMIT=<full-or-short-commit>
+.PHONY: update-sdk
+update-sdk:
+	@if [ -z "$(ENVOY_COMMIT)" ]; then \
+		echo "Usage: make update-sdk ENVOY_COMMIT=<commit>"; \
+		exit 1; \
+	fi
+	GOWORK=off go get github.com/envoyproxy/envoy/source/extensions/dynamic_modules@$(ENVOY_COMMIT)
+	GOWORK=off go mod tidy
+	@NEW_VER=$$(grep 'envoyproxy/envoy/source/extensions/dynamic_modules ' go.mod | awk '{print $$2}'); \
+	NEW_COMMIT=$$(echo "$$NEW_VER" | sed 's/.*-//'); \
+	MODCACHE=$$(go env GOPATH)/pkg/mod; \
+	ABI_SRC="$$MODCACHE/github.com/envoyproxy/envoy/source/extensions/dynamic_modules@$$NEW_VER/abi/abi.h"; \
+	chmod u+w down/abi_impl/abi.h; \
+	cp "$$ABI_SRC" down/abi_impl/abi.h; \
+	sed -i.bak "s|^SDK_VERSION=.*|SDK_VERSION=$$NEW_VER|" down/abi_impl/VERSION; \
+	sed -i.bak "s|^SDK_COMMIT=.*|SDK_COMMIT=$$NEW_COMMIT|" down/abi_impl/VERSION; \
+	rm -f down/abi_impl/VERSION.bak; \
+	echo "SDK updated to $$NEW_VER"
 
 # check-abi verifies that the vendored abi.h (down/abi_impl/abi.h) was taken from
 # the same SDK version that go.mod depends on. Run this after `go get` updates.
