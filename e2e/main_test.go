@@ -515,6 +515,16 @@ static_resources:
 admin:
   address:
     socket_address: { address: 127.0.0.1, port_value: %d }
+
+stats_flush_interval: 1s
+stats_sinks:
+  - name: envoy.stat_sinks.open_telemetry
+    typed_config:
+      "@type": type.googleapis.com/envoy.extensions.stat_sinks.open_telemetry.v3.SinkConfig
+      grpc_service:
+        envoy_grpc:
+          cluster_name: otel-collector
+      report_counters_as_deltas: false
 `, echoPort, guardPort, accessLoggerPort, sinkURL, correlatorPort, sinkURL, bodyPort, mutableBodyPort, codecPort, metadataPort, codecUpstreamPort, otelSinkPort, adminPort)
 
 	f, err := os.CreateTemp("", "transit-e2e-*.yaml")
