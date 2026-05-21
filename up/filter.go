@@ -85,10 +85,15 @@ func (f *filter) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool) sh
 		return shared.HeadersStatusContinue
 	}
 
-	// Body is coming in buffered mode: strip content-length now so upstream does
-	// not receive a stale value if SetRequestBody replaces the body. The body
-	// callbacks use StopAndBuffer to accumulate chunks; content-length is
-	// re-added after the replacement in OnRequestBody.
+	// Body is coming in buffered mode. Strip content-length and transfer-encoding
+	// now so upstream never sees a stale value after SetRequestBody replaces the
+	// body. Body chunks are accumulated via StopAndBuffer in OnRequestBody; the
+	// correct content-length is written there after any replacement.
+	//
+	// NOTE: HeadersStatusStopAllAndBuffer is intentionally NOT returned here.
+	// Returning it from OnRequestHeaders freezes the filter chain permanently —
+	// Envoy buffers body data but never calls OnRequestBody because the SDK
+	// has no asynchronous resume path.
 	if f.bufferBody && f.requestBodyHandler != nil {
 		headers.Remove("content-length")
 		headers.Remove("transfer-encoding")
@@ -140,10 +145,12 @@ func (f *filter) OnResponseHeaders(headers shared.HeaderMap, endOfStream bool) s
 	f.responseContentType = headers.GetOne("content-type").ToString()
 	f.responseContentEncoding = headers.GetOne("content-encoding").ToString()
 
-	// Strip content-length upfront in buffered mode: if the response handler calls
-	// SetResponseBody the replacement may differ in length, and headers are
-	// forwarded before OnResponseBody runs. content-length is re-added after
-	// replacement in OnResponseBody.
+	// Strip content-length upfront in buffered mode so downstream never sees a
+	// stale value after SetResponseBody replaces the body. The correct value is
+	// written in OnResponseBody after any replacement.
+	//
+	// NOTE: HeadersStatusStopAllAndBuffer is intentionally NOT returned here
+	// for the same reason as OnRequestHeaders: it would freeze the filter chain.
 	if f.bufferBody {
 		headers.Remove("content-length")
 	}
