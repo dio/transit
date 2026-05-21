@@ -66,12 +66,12 @@ func (l *e2eLogger) OnLog(h up.AccessLoggerHandle, logType up.AccessLogType) {
 	}
 
 	entry := map[string]any{
-		"log_type":     int(logType),
-		"duration_ms":  durationMs,
-		"bytes_sent":   bytes.BytesSent,
+		"log_type":      int(logType),
+		"duration_ms":   durationMs,
+		"bytes_sent":    bytes.BytesSent,
 		"response_code": h.GetResponseCode(),
-		"code_details": codeDetails,
-		"flags":        up.ResponseFlagsString(h.GetResponseFlags()),
+		"code_details":  codeDetails,
+		"flags":         up.ResponseFlagsString(h.GetResponseFlags()),
 	}
 
 	body, _ := json.Marshal(entry)

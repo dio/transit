@@ -55,7 +55,6 @@ type filter struct {
 	responseHandler    ResponseHandlerFunc
 	requestBodyHandler RequestBodyHandlerFunc
 	bufferBody         bool
-	stopped            bool
 	context            any
 
 	// captured from headers callbacks for use in body callbacks

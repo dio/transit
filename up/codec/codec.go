@@ -79,7 +79,7 @@ func decodeGzip(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("codec: gzip reader: %w", err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	out, err := io.ReadAll(r)
 	if err != nil {
 		return nil, fmt.Errorf("codec: gzip read: %w", err)
@@ -104,7 +104,7 @@ func decodeDeflate(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("codec: deflate reader: %w", err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	out, err := io.ReadAll(r)
 	if err != nil {
 		return nil, fmt.Errorf("codec: deflate read: %w", err)

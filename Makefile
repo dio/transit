@@ -1,3 +1,5 @@
+GO_TOOL := GOWORK=off go tool -modfile=tools/go.mod
+
 ZIG_VERSION   ?= 0.16.0
 ZIG_BIN       ?= $(CURDIR)/.bin/zig-dist/zig
 
@@ -91,10 +93,23 @@ e2e: $(ENVOY_BIN)
 vet:
 	go vet ./...
 
+.PHONY: format
+format:
+	$(GO_TOOL) golangci-lint fmt
+
+.PHONY: format-check
+format-check:
+	$(GO_TOOL) golangci-lint fmt --diff .
+
+.PHONY: lint
+lint:
+	$(GO_TOOL) golangci-lint run --timeout 5m
+
 .PHONY: tidy
 tidy:
 	go mod tidy
 	cd e2e && GOWORK=off go mod tidy
+	cd tools && GOWORK=off go mod tidy
 
 # check-abi verifies that the vendored abi.h (down/abi_impl/abi.h) was taken from
 # the same SDK version that go.mod depends on. Run this after `go get` updates.

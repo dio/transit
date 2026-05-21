@@ -43,19 +43,19 @@ import (
 var envoyConfigTmpl string
 
 var (
-	echoAddr         string
-	guardAddr        string
-	accessLoggerAddr string
-	correlatorAddr   string
-	bodyAddr         string
-	mutableBodyAddr  string
-	codecAddr        string
-	metadataAddr     string
-	tracerAddr       string
-	alsAddr              string
-	upstreamFilterAddr   string
-	upstreamAuthAddr     string
-	adminAddr            string
+	echoAddr           string
+	guardAddr          string
+	accessLoggerAddr   string
+	correlatorAddr     string
+	bodyAddr           string
+	mutableBodyAddr    string
+	codecAddr          string
+	metadataAddr       string
+	tracerAddr         string
+	alsAddr            string
+	upstreamFilterAddr string
+	upstreamAuthAddr   string
+	adminAddr          string
 )
 
 var otelSink *otelsink.Sink

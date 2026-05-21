@@ -26,15 +26,15 @@ const (
 
 // Response attributes.
 const (
-	AttributeIDResponseCode            = shared.AttributeIDResponseCode
-	AttributeIDResponseCodeDetails     = shared.AttributeIDResponseCodeDetails
-	AttributeIDResponseFlags           = shared.AttributeIDResponseFlags
-	AttributeIDResponseGrpcStatus      = shared.AttributeIDResponseGrpcStatus
-	AttributeIDResponseHeaders         = shared.AttributeIDResponseHeaders
-	AttributeIDResponseTrailers        = shared.AttributeIDResponseTrailers
-	AttributeIDResponseSize            = shared.AttributeIDResponseSize
-	AttributeIDResponseTotalSize       = shared.AttributeIDResponseTotalSize
-	AttributeIDResponseBackendLatency  = shared.AttributeIDResponseBackendLatency
+	AttributeIDResponseCode           = shared.AttributeIDResponseCode
+	AttributeIDResponseCodeDetails    = shared.AttributeIDResponseCodeDetails
+	AttributeIDResponseFlags          = shared.AttributeIDResponseFlags
+	AttributeIDResponseGrpcStatus     = shared.AttributeIDResponseGrpcStatus
+	AttributeIDResponseHeaders        = shared.AttributeIDResponseHeaders
+	AttributeIDResponseTrailers       = shared.AttributeIDResponseTrailers
+	AttributeIDResponseSize           = shared.AttributeIDResponseSize
+	AttributeIDResponseTotalSize      = shared.AttributeIDResponseTotalSize
+	AttributeIDResponseBackendLatency = shared.AttributeIDResponseBackendLatency
 )
 
 // Source / destination / connection attributes.
@@ -61,20 +61,20 @@ const (
 
 // Upstream attributes.
 const (
-	AttributeIDUpstreamAddress                  = shared.AttributeIDUpstreamAddress
-	AttributeIDUpstreamPort                     = shared.AttributeIDUpstreamPort
-	AttributeIDUpstreamLocalAddress             = shared.AttributeIDUpstreamLocalAddress
-	AttributeIDUpstreamTransportFailureReason   = shared.AttributeIDUpstreamTransportFailureReason
-	AttributeIDUpstreamRequestAttemptCount      = shared.AttributeIDUpstreamRequestAttemptCount
-	AttributeIDUpstreamCxPoolReadyDuration      = shared.AttributeIDUpstreamCxPoolReadyDuration
-	AttributeIDUpstreamLocality                 = shared.AttributeIDUpstreamLocality
-	AttributeIDUpstreamTlsVersion               = shared.AttributeIDUpstreamTlsVersion
-	AttributeIDUpstreamSubjectLocalCertificate  = shared.AttributeIDUpstreamSubjectLocalCertificate
-	AttributeIDUpstreamSubjectPeerCertificate   = shared.AttributeIDUpstreamSubjectPeerCertificate
-	AttributeIDUpstreamDnsSanLocalCertificate   = shared.AttributeIDUpstreamDnsSanLocalCertificate
-	AttributeIDUpstreamDnsSanPeerCertificate    = shared.AttributeIDUpstreamDnsSanPeerCertificate
-	AttributeIDUpstreamUriSanLocalCertificate   = shared.AttributeIDUpstreamUriSanLocalCertificate
-	AttributeIDUpstreamUriSanPeerCertificate    = shared.AttributeIDUpstreamUriSanPeerCertificate
+	AttributeIDUpstreamAddress                     = shared.AttributeIDUpstreamAddress
+	AttributeIDUpstreamPort                        = shared.AttributeIDUpstreamPort
+	AttributeIDUpstreamLocalAddress                = shared.AttributeIDUpstreamLocalAddress
+	AttributeIDUpstreamTransportFailureReason      = shared.AttributeIDUpstreamTransportFailureReason
+	AttributeIDUpstreamRequestAttemptCount         = shared.AttributeIDUpstreamRequestAttemptCount
+	AttributeIDUpstreamCxPoolReadyDuration         = shared.AttributeIDUpstreamCxPoolReadyDuration
+	AttributeIDUpstreamLocality                    = shared.AttributeIDUpstreamLocality
+	AttributeIDUpstreamTlsVersion                  = shared.AttributeIDUpstreamTlsVersion
+	AttributeIDUpstreamSubjectLocalCertificate     = shared.AttributeIDUpstreamSubjectLocalCertificate
+	AttributeIDUpstreamSubjectPeerCertificate      = shared.AttributeIDUpstreamSubjectPeerCertificate
+	AttributeIDUpstreamDnsSanLocalCertificate      = shared.AttributeIDUpstreamDnsSanLocalCertificate
+	AttributeIDUpstreamDnsSanPeerCertificate       = shared.AttributeIDUpstreamDnsSanPeerCertificate
+	AttributeIDUpstreamUriSanLocalCertificate      = shared.AttributeIDUpstreamUriSanLocalCertificate
+	AttributeIDUpstreamUriSanPeerCertificate       = shared.AttributeIDUpstreamUriSanPeerCertificate
 	AttributeIDUpstreamSha256PeerCertificateDigest = shared.AttributeIDUpstreamSha256PeerCertificateDigest
 )
 

@@ -7,15 +7,15 @@ import "github.com/dio/transit/down"
 // Users interact exclusively through these up-package names.
 
 type (
-	TimingInfo    = down.TimingInfo
-	BytesInfo     = down.BytesInfo
-	AccessLogType = down.AccessLogType
+	TimingInfo     = down.TimingInfo
+	BytesInfo      = down.BytesInfo
+	AccessLogType  = down.AccessLogType
 	HttpHeaderType = down.HttpHeaderType
 
-	AccessLoggerHandle       = down.AccessLoggerHandle
-	AccessLoggerConfigHandle = down.AccessLoggerConfigHandle
-	AccessLogger             = down.AccessLogger
-	AccessLoggerFactory      = down.AccessLoggerFactory
+	AccessLoggerHandle        = down.AccessLoggerHandle
+	AccessLoggerConfigHandle  = down.AccessLoggerConfigHandle
+	AccessLogger              = down.AccessLogger
+	AccessLoggerFactory       = down.AccessLoggerFactory
 	AccessLoggerConfigFactory = down.AccessLoggerConfigFactory
 
 	EmptyAccessLogger = down.EmptyAccessLogger

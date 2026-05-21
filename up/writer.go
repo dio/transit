@@ -8,9 +8,9 @@ type Writer struct {
 	stopped bool
 
 	// body replacement — set via SetRequestBody/SetResponseBody in buffered mode
-	requestBodyReplacement    []byte
-	hasRequestBodyReplacement bool
-	responseBodyReplacement   []byte
+	requestBodyReplacement     []byte
+	hasRequestBodyReplacement  bool
+	responseBodyReplacement    []byte
 	hasResponseBodyReplacement bool
 }
 

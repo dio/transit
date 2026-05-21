@@ -10,9 +10,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	spa "github.com/dio/transit/examples/spa"
 	"github.com/dio/transit/up"
 	"github.com/dio/transit/up/testutil"
-	spa "github.com/dio/transit/examples/spa"
 )
 
 // runHandler drives handler with a GET request to path and returns the fake handle.
