@@ -1,12 +1,11 @@
-// Package otelsink provides an in-memory OTLP receiver (logs + metrics) for
-// e2e tests. A single gRPC server registers both LogsService and MetricsService
-// on the same port. WaitForRecord / WaitForMetric block until a matching item
-// arrives or the context is cancelled.
+// Package otelsink provides an in-memory OTLP receiver (logs + metrics + traces)
+// for e2e tests. A single gRPC server registers LogsService, MetricsService, and
+// TraceService on the same port. WaitForRecord / WaitForMetric / WaitForSpan
+// block until a matching item arrives or the context is cancelled.
 //
-// Both services share a Sink that holds the received data. Because both
-// LogsServiceServer and MetricsServiceServer define an Export method, they are
-// wired via thin adapter types (logsSvc / metricsSvc) that delegate to the
-// shared Sink rather than being embedded in it.
+// All three OTLP service interfaces define a method named Export, so each is
+// wired via a thin adapter type (logsSvc / metricsSvc / tracesSvc) that holds a
+// pointer to the shared Sink rather than embedding the Unimplemented stubs in it.
 package otelsink
 
 import (
@@ -16,18 +15,22 @@ import (
 
 	otlpcollectorlogs "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	otlpcollectormetrics "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
+	otlpcollectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	otlplogs "go.opentelemetry.io/proto/otlp/logs/v1"
 	otlpmetrics "go.opentelemetry.io/proto/otlp/metrics/v1"
+	otlptrace "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/grpc"
 )
 
-// Sink is the shared in-memory store for OTLP logs and metrics.
+// Sink is the shared in-memory store for OTLP logs, metrics, and traces.
 type Sink struct {
 	mu           sync.Mutex
 	logRecords   []*otlplogs.LogRecord
 	metrics      []*otlpmetrics.Metric
+	spans        []*otlptrace.Span
 	logNotify    chan struct{}
 	metricNotify chan struct{}
+	traceNotify  chan struct{}
 }
 
 // New creates a new Sink. Call Start to begin listening.
@@ -35,11 +38,13 @@ func New() *Sink {
 	return &Sink{
 		logNotify:    make(chan struct{}, 256),
 		metricNotify: make(chan struct{}, 256),
+		traceNotify:  make(chan struct{}, 256),
 	}
 }
 
 // Start starts the gRPC server and returns the port it is listening on.
-// Both LogsService and MetricsService are registered on the same port.
+// LogsService, MetricsService, and TraceService are all registered on the
+// same port.
 func (s *Sink) Start() int {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -48,6 +53,7 @@ func (s *Sink) Start() int {
 	srv := grpc.NewServer()
 	otlpcollectorlogs.RegisterLogsServiceServer(srv, &logsSvc{sink: s})
 	otlpcollectormetrics.RegisterMetricsServiceServer(srv, &metricsSvc{sink: s})
+	otlpcollectortrace.RegisterTraceServiceServer(srv, &tracesSvc{sink: s})
 	go srv.Serve(l) //nolint:errcheck
 	return l.Addr().(*net.TCPAddr).Port
 }
@@ -92,6 +98,28 @@ func (s *Sink) WaitForMetric(ctx context.Context, predicate func(*otlpmetrics.Me
 	}
 }
 
+// WaitForSpan blocks until a Span matching predicate arrives or ctx is
+// cancelled. Returns (span, true) on match, (nil, false) on timeout.
+func (s *Sink) WaitForSpan(ctx context.Context, predicate func(*otlptrace.Span) bool) (*otlptrace.Span, bool) {
+	for {
+		s.mu.Lock()
+		for _, sp := range s.spans {
+			if predicate(sp) {
+				s.mu.Unlock()
+				return sp, true
+			}
+		}
+		s.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return nil, false
+		case <-s.traceNotify:
+		}
+	}
+}
+
+// ── adapter types ────────────────────────────────────────────────────────────
+
 // logsSvc adapts Sink to otlpcollectorlogs.LogsServiceServer.
 type logsSvc struct {
 	otlpcollectorlogs.UnimplementedLogsServiceServer
@@ -132,4 +160,25 @@ func (m *metricsSvc) Export(_ context.Context, req *otlpcollectormetrics.ExportM
 	default:
 	}
 	return &otlpcollectormetrics.ExportMetricsServiceResponse{}, nil
+}
+
+// tracesSvc adapts Sink to otlpcollectortrace.TraceServiceServer.
+type tracesSvc struct {
+	otlpcollectortrace.UnimplementedTraceServiceServer
+	sink *Sink
+}
+
+func (t *tracesSvc) Export(_ context.Context, req *otlpcollectortrace.ExportTraceServiceRequest) (*otlpcollectortrace.ExportTraceServiceResponse, error) {
+	t.sink.mu.Lock()
+	for _, rs := range req.ResourceSpans {
+		for _, ss := range rs.ScopeSpans {
+			t.sink.spans = append(t.sink.spans, ss.Spans...)
+		}
+	}
+	t.sink.mu.Unlock()
+	select {
+	case t.sink.traceNotify <- struct{}{}:
+	default:
+	}
+	return &otlpcollectortrace.ExportTraceServiceResponse{}, nil
 }

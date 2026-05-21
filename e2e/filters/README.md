@@ -49,6 +49,18 @@ Envoy's OpenTelemetry access logger can render them via `%DYNAMIC_METADATA(...)%
 
 Used by `OtelMetadataSuite` to verify the `SetMetadata` → OTel pipeline.
 
+## e2e-tracer — [`tracer.go`](tracer.go)
+
+Annotates the active Envoy tracing span with two attributes so
+`OtelTracesSuite` can verify they appear in the exported OTLP span:
+
+- `e2e.custom` = `"hello-from-tracer"`
+- `e2e.method` = the HTTP method
+
+Requires that the HCM listener is configured with an OpenTelemetry tracer
+(`envoy.tracers.opentelemetry`) and `generate_request_id: true`.
+If `GetActiveSpan()` returns nil (no tracer), the handler is a no-op.
+
 ## e2e-logger — [`access_logger.go`](access_logger.go)
 
 A minimal access logger that POSTs a JSON record (timing, byte counts,

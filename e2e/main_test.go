@@ -45,6 +45,7 @@ var (
 	mutableBodyAddr  string
 	codecAddr        string
 	metadataAddr     string
+	tracerAddr       string
 	adminAddr        string
 )
 
@@ -74,6 +75,7 @@ func TestMain(m *testing.M) {
 	codecPort := freePort()
 	codecUpstreamPort := startGzipUpstream()
 	metadataPort := freePort()
+	tracerPort := freePort()
 	adminPort := freePort()
 
 	echoAddr = fmt.Sprintf("http://localhost:%d", echoPort)
@@ -84,6 +86,7 @@ func TestMain(m *testing.M) {
 	mutableBodyAddr = fmt.Sprintf("http://localhost:%d", mutableBodyPort)
 	codecAddr = fmt.Sprintf("http://localhost:%d", codecPort)
 	metadataAddr = fmt.Sprintf("http://localhost:%d", metadataPort)
+	tracerAddr = fmt.Sprintf("http://localhost:%d", tracerPort)
 	adminAddr = fmt.Sprintf("http://localhost:%d", adminPort)
 
 	otelSink = otelsink.New()
@@ -115,7 +118,21 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "e2e: reusing existing libe2e.so (TRANSIT_SKIP_BUILD=1)")
 	}
 
-	cfgPath := writeEnvoyConfig(sinkURL, echoPort, guardPort, accessLoggerPort, correlatorPort, bodyPort, mutableBodyPort, codecPort, codecUpstreamPort, otelSinkPort, metadataPort, adminPort)
+	cfgPath := writeEnvoyConfig(envoyPorts{
+		sinkURL:           sinkURL,
+		echoPort:          echoPort,
+		guardPort:         guardPort,
+		accessLoggerPort:  accessLoggerPort,
+		correlatorPort:    correlatorPort,
+		bodyPort:          bodyPort,
+		mutableBodyPort:   mutableBodyPort,
+		codecPort:         codecPort,
+		codecUpstreamPort: codecUpstreamPort,
+		otelSinkPort:      otelSinkPort,
+		metadataPort:      metadataPort,
+		tracerPort:        tracerPort,
+		adminPort:         adminPort,
+	})
 
 	envoyCmd = exec.Command(bin,
 		"-c", cfgPath,
@@ -211,7 +228,23 @@ func waitReady(timeout time.Duration) bool {
 	return false
 }
 
-func writeEnvoyConfig(sinkURL string, echoPort, guardPort, accessLoggerPort, correlatorPort, bodyPort, mutableBodyPort, codecPort, codecUpstreamPort, otelSinkPort, metadataPort, adminPort int) string {
+type envoyPorts struct {
+	sinkURL           string
+	echoPort          int
+	guardPort         int
+	accessLoggerPort  int
+	correlatorPort    int
+	bodyPort          int
+	mutableBodyPort   int
+	codecPort         int
+	codecUpstreamPort int
+	otelSinkPort      int
+	metadataPort      int
+	tracerPort        int
+	adminPort         int
+}
+
+func writeEnvoyConfig(p envoyPorts) string {
 	cfg := fmt.Sprintf(`
 static_resources:
   listeners:
@@ -482,6 +515,41 @@ static_resources:
                             status: 200
                             body: { inline_string: "metadata-ok" }
 
+    - name: tracer-e2e
+      address:
+        socket_address: { address: 0.0.0.0, port_value: %d }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: tracer_e2e
+                generate_request_id: true
+                tracing:
+                  client_sampling: { value: 100 }
+                  random_sampling: { value: 100 }
+                  overall_sampling: { value: 100 }
+                http_filters:
+                  - name: e2e-tracer
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: e2e
+                      filter_name: e2e-tracer
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: tracer_e2e
+                  virtual_hosts:
+                    - name: local
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          direct_response:
+                            status: 200
+                            body: { inline_string: "tracer-ok" }
+
   clusters:
     - name: codec-upstream
       connect_timeout: 5s
@@ -523,7 +591,17 @@ stats_sinks:
         envoy_grpc:
           cluster_name: otel-collector
       report_counters_as_deltas: false
-`, echoPort, guardPort, accessLoggerPort, sinkURL, correlatorPort, sinkURL, bodyPort, mutableBodyPort, codecPort, metadataPort, codecUpstreamPort, otelSinkPort, adminPort)
+
+tracing:
+  http:
+    name: envoy.tracers.opentelemetry
+    typed_config:
+      "@type": type.googleapis.com/envoy.config.trace.v3.OpenTelemetryConfig
+      grpc_service:
+        envoy_grpc:
+          cluster_name: otel-collector
+      service_name: "transit-e2e"
+`, p.echoPort, p.guardPort, p.accessLoggerPort, p.sinkURL, p.correlatorPort, p.sinkURL, p.bodyPort, p.mutableBodyPort, p.codecPort, p.metadataPort, p.tracerPort, p.codecUpstreamPort, p.otelSinkPort, p.adminPort)
 
 	f, err := os.CreateTemp("", "transit-e2e-*.yaml")
 	if err != nil {

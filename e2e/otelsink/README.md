@@ -16,7 +16,43 @@ record, ok := sink.WaitForRecord(ctx, func(r *otlplogs.LogRecord) bool {
 metric, ok := sink.WaitForMetric(ctx, func(m *otlpmetrics.Metric) bool {
     return m.Name == "server.uptime"
 })
+
+// block until a matching span arrives (or ctx expires)
+span, ok := sink.WaitForSpan(ctx, func(sp *otlptrace.Span) bool {
+    return spanHasAttr(sp, "e2e.custom", "hello-from-tracer")
+})
 ```
+
+---
+
+## Traces: span attributes set by filters
+
+A filter that calls `w.GetActiveSpan().SetTag(key, value)` produces OTLP span
+attributes when the HCM is configured with `envoy.tracers.opentelemetry` and
+100% sampling.
+
+The `spanHasAttr` helper (defined in `e2e/otel_traces_test.go`) matches on key
+and string value:
+
+```go
+func spanHasAttr(sp *otlptrace.Span, key, val string) bool {
+    for _, a := range sp.Attributes {
+        if a.Key == key && a.Value.GetStringValue() == val {
+            return true
+        }
+    }
+    return false
+}
+
+otelSink.WaitForSpan(ctx, func(sp *otlptrace.Span) bool {
+    return spanHasAttr(sp, "e2e.custom", "hello-from-tracer")
+})
+```
+
+**Bootstrap requirement**: the Envoy bootstrap must include a `tracing.http`
+block naming `envoy.tracers.opentelemetry` and pointing at the OTLP collector
+cluster. Each HCM that should produce spans also needs a `tracing:` block with
+`overall_sampling: { numerator: 100000000 }` and `generate_request_id: true`.
 
 ---
 
