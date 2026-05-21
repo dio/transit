@@ -60,6 +60,8 @@ type clusterHandleImpl struct {
 	pending      map[uint64]func()
 }
 
+var _ down.ClusterHandle = (*clusterHandleImpl)(nil)
+
 func newClusterHandle(envoyPtr C.envoy_dynamic_module_type_cluster_envoy_ptr) *clusterHandleImpl {
 	h := &clusterHandleImpl{
 		envoyPtr: envoyPtr,
@@ -170,6 +172,8 @@ func (h *clusterHandleImpl) runPending(id uint64) {
 type dymClusterLBHandle struct {
 	lbPtr C.envoy_dynamic_module_type_cluster_lb_envoy_ptr
 }
+
+var _ down.ClusterLBHandle = (*dymClusterLBHandle)(nil)
 
 func (h *dymClusterLBHandle) ClusterName() string {
 	var buf C.envoy_dynamic_module_type_envoy_buffer
@@ -365,6 +369,8 @@ type dymClusterLBContext struct {
 	ctxPtr C.envoy_dynamic_module_type_cluster_lb_context_envoy_ptr
 	lbPtr  C.envoy_dynamic_module_type_cluster_lb_envoy_ptr
 }
+
+var _ down.ClusterLBContext = (*dymClusterLBContext)(nil)
 
 func (c *dymClusterLBContext) GetAllHeaders() [][2]string {
 	n := int(C.envoy_dynamic_module_callback_cluster_lb_context_get_downstream_headers_size(c.ctxPtr))

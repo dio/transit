@@ -39,6 +39,8 @@ type dymLBHandle struct {
 	lbPtr C.envoy_dynamic_module_type_lb_envoy_ptr
 }
 
+var _ down.LBHandle = (*dymLBHandle)(nil)
+
 func (h *dymLBHandle) ClusterName() string {
 	var buf C.envoy_dynamic_module_type_envoy_buffer
 	C.envoy_dynamic_module_callback_lb_get_cluster_name(h.lbPtr, &buf)
@@ -213,6 +215,8 @@ type dymLBContext struct {
 	ctxPtr C.envoy_dynamic_module_type_lb_context_envoy_ptr
 	lbPtr  C.envoy_dynamic_module_type_lb_envoy_ptr
 }
+
+var _ down.LBContext = (*dymLBContext)(nil)
 
 func (c *dymLBContext) GetAllHeaders() [][2]string {
 	n := int(C.envoy_dynamic_module_callback_lb_context_get_downstream_headers_size(c.ctxPtr))

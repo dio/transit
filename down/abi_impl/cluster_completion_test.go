@@ -1,17 +1,19 @@
-package down
+package abi_impl_test
 
 import (
 	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/dio/transit/down"
 )
 
 func TestClusterLBCompletion_Complete_once(t *testing.T) {
 	var completed atomic.Uint32
 	var finished atomic.Uint32
-	c := &ClusterLBCompletion{}
-	c.SetCompleteFn(func(HostPtr, string) {
+	c := &down.ClusterLBCompletion{}
+	c.SetCompleteFn(func(down.HostPtr, string) {
 		completed.Add(1)
 	})
 	c.SetFinishFn(func() {
@@ -29,8 +31,8 @@ func TestClusterLBCompletion_Cancel_preventsComplete(t *testing.T) {
 	var completed atomic.Uint32
 	var cancelled atomic.Uint32
 	var finished atomic.Uint32
-	c := &ClusterLBCompletion{}
-	c.SetCompleteFn(func(HostPtr, string) {
+	c := &down.ClusterLBCompletion{}
+	c.SetCompleteFn(func(down.HostPtr, string) {
 		completed.Add(1)
 	})
 	c.SetCancelFn(func() {
@@ -50,7 +52,7 @@ func TestClusterLBCompletion_Cancel_preventsComplete(t *testing.T) {
 
 func TestClusterLBCompletion_SetFinishFn_afterComplete(t *testing.T) {
 	var finished atomic.Uint32
-	c := &ClusterLBCompletion{}
+	c := &down.ClusterLBCompletion{}
 
 	require.True(t, c.Complete(nil, ""))
 	c.SetFinishFn(func() {
