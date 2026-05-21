@@ -30,6 +30,8 @@ e2e/
 │   ├── otelsink/           gRPC OTLP sink (logs + metrics + traces)
 │   └── alssink/            gRPC ALS sink (envoy.service.accesslog.v3)
 ├── cmd/              helper binaries (e.g. upstream echo server)
+├── testdata/
+│   └── envoy.yaml.tmpl   text/template for the Envoy bootstrap config
 ├── *_test.go         one file per feature / filter under test
 ├── main_test.go      TestMain: builds .so, starts Envoy, wires all sinks
 ├── go.mod            separate module (isolates heavyweight gRPC/OTel deps)
@@ -60,3 +62,5 @@ All three sinks live under [`sinks/`](sinks/) and expose a consistent pattern:
 | `otel_logs_test.go` | `OtelMetadataSuite` | `SetMetadata` → OTel access log body/attributes |
 | `otel_metrics_test.go` | `OtelMetricsSuite` | Envoy stat-sink → OTLP metrics, tag extraction |
 | `otel_traces_test.go` | `OtelTracesSuite` | `GetActiveSpan().SetTag` → OTLP span attributes |
+| `als_test.go` | `AlsSuite` | dynamic metadata in ALS entries via `filter_metadata` |
+| `upstream_filter_test.go` | `UpstreamFilterSuite` | dynamic module filter as upstream filter; auth injection |

@@ -61,6 +61,26 @@ Requires that the HCM listener is configured with an OpenTelemetry tracer
 (`envoy.tracers.opentelemetry`) and `generate_request_id: true`.
 If `GetActiveSpan()` returns nil (no tracer), the handler is a no-op.
 
+## e2e-upstream — [`upstream.go`](upstream.go)
+
+An upstream HTTP filter (loaded via `HttpProtocolOptions.http_filters` on a
+cluster) that stamps `x-upstream-filter: ran` on every response. Demonstrates
+that dynamic module filters can run on the cluster side — after Envoy connects
+to upstream but before the response reaches the downstream client.
+
+Used by `UpstreamFilterSuite` to verify the upstream filter position is
+distinct from the listener-side filter position.
+
+## e2e-upstream-auth — [`upstream_auth.go`](upstream_auth.go)
+
+An upstream HTTP filter that injects `Authorization: Bearer test-token` into
+every request before it reaches the upstream server. Demonstrates the
+credential-injection use case: auth headers are added at the cluster boundary
+so listener-side filters remain auth-agnostic.
+
+The plain upstream server echoes the header back as `x-received-authorization`;
+`UpstreamFilterSuite.TestGet_authHeaderInjected` asserts the round-trip value.
+
 ## e2e-logger — [`access_logger.go`](access_logger.go)
 
 A minimal access logger that POSTs a JSON record (timing, byte counts,
