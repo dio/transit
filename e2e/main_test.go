@@ -19,6 +19,8 @@
 package e2e
 
 import (
+	"bytes"
+	"compress/gzip"
 	"fmt"
 	"io"
 	"net"
@@ -40,6 +42,7 @@ var (
 	correlatorAddr   string
 	bodyAddr         string
 	mutableBodyAddr  string
+	codecAddr        string
 	adminAddr        string
 )
 
@@ -64,6 +67,8 @@ func TestMain(m *testing.M) {
 	correlatorPort := freePort()
 	bodyPort := freePort()
 	mutableBodyPort := freePort()
+	codecPort := freePort()
+	codecUpstreamPort := startGzipUpstream()
 	adminPort := freePort()
 
 	echoAddr = fmt.Sprintf("http://localhost:%d", echoPort)
@@ -72,6 +77,7 @@ func TestMain(m *testing.M) {
 	correlatorAddr = fmt.Sprintf("http://localhost:%d", correlatorPort)
 	bodyAddr = fmt.Sprintf("http://localhost:%d", bodyPort)
 	mutableBodyAddr = fmt.Sprintf("http://localhost:%d", mutableBodyPort)
+	codecAddr = fmt.Sprintf("http://localhost:%d", codecPort)
 	adminAddr = fmt.Sprintf("http://localhost:%d", adminPort)
 
 	sinkURL := accessloggersink.StartSink()
@@ -99,7 +105,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "e2e: reusing existing libe2e.so (TRANSIT_SKIP_BUILD=1)")
 	}
 
-	cfgPath := writeEnvoyConfig(sinkURL, echoPort, guardPort, accessLoggerPort, correlatorPort, bodyPort, mutableBodyPort, adminPort)
+	cfgPath := writeEnvoyConfig(sinkURL, echoPort, guardPort, accessLoggerPort, correlatorPort, bodyPort, mutableBodyPort, codecPort, codecUpstreamPort, adminPort)
 
 	envoyCmd = exec.Command(bin,
 		"-c", cfgPath,
@@ -157,6 +163,29 @@ func freePort() int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
+// startGzipUpstream starts a minimal HTTP server that always returns the text
+// "hello codec" compressed with gzip, regardless of Accept-Encoding. Returns
+// the port it is listening on.
+func startGzipUpstream() int {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic("startGzipUpstream: " + err.Error())
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		var buf bytes.Buffer
+		gz := gzip.NewWriter(&buf)
+		gz.Write([]byte("hello codec"))
+		gz.Close()
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		w.Write(buf.Bytes())
+	})
+	go http.Serve(l, mux) //nolint:errcheck
+	return l.Addr().(*net.TCPAddr).Port
+}
+
 func waitReady(timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -172,7 +201,7 @@ func waitReady(timeout time.Duration) bool {
 	return false
 }
 
-func writeEnvoyConfig(sinkURL string, echoPort, guardPort, accessLoggerPort, correlatorPort, bodyPort, mutableBodyPort, adminPort int) string {
+func writeEnvoyConfig(sinkURL string, echoPort, guardPort, accessLoggerPort, correlatorPort, bodyPort, mutableBodyPort, codecPort, codecUpstreamPort, adminPort int) string {
 	cfg := fmt.Sprintf(`
 static_resources:
   listeners:
@@ -370,10 +399,50 @@ static_resources:
                             status: 200
                             body: { inline_string: "body-mutable-ok" }
 
+    - name: codec-e2e
+      address:
+        socket_address: { address: 0.0.0.0, port_value: %d }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: codec_e2e
+                http_filters:
+                  - name: e2e-codec
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: e2e
+                      filter_name: e2e-codec
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: codec_e2e
+                  virtual_hosts:
+                    - name: local
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          route: { cluster: codec-upstream }
+
+  clusters:
+    - name: codec-upstream
+      connect_timeout: 5s
+      type: STATIC
+      load_assignment:
+        cluster_name: codec-upstream
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: 127.0.0.1, port_value: %d }
+
 admin:
   address:
     socket_address: { address: 127.0.0.1, port_value: %d }
-`, echoPort, guardPort, accessLoggerPort, sinkURL, correlatorPort, sinkURL, bodyPort, mutableBodyPort, adminPort)
+`, echoPort, guardPort, accessLoggerPort, sinkURL, correlatorPort, sinkURL, bodyPort, mutableBodyPort, codecPort, codecUpstreamPort, adminPort)
 
 	f, err := os.CreateTemp("", "transit-e2e-*.yaml")
 	if err != nil {
