@@ -41,6 +41,37 @@ func RegisterWithResponse(name string, h HandlerFunc, r ResponseHandlerFunc) {
 	down.RegisterHttpFilter(name, &configFactory{handler: h, responseHandler: r})
 }
 
+// RegisterWithBody registers a named HTTP filter with request body handling in
+// streaming mode: the body handler is called once per chunk as data arrives.
+// For bodyless requests (GET etc.) the handler is called once with Data: nil.
+func RegisterWithBody(name string, h HandlerFunc, rb RequestBodyHandlerFunc, r ResponseHandlerFunc) {
+	if _, ok := registry[name]; ok {
+		panic("up: filter already registered: " + name)
+	}
+	registry[name] = h
+	down.RegisterHttpFilter(name, &configFactory{
+		handler:            h,
+		responseHandler:    r,
+		requestBodyHandler: rb,
+	})
+}
+
+// RegisterWithMutableBody registers a named HTTP filter with buffered body
+// handling: the body handler is called once with the full accumulated body.
+// Use Writer.SetRequestBody / SetResponseBody to replace body content.
+func RegisterWithMutableBody(name string, h HandlerFunc, rb RequestBodyHandlerFunc, r ResponseHandlerFunc) {
+	if _, ok := registry[name]; ok {
+		panic("up: filter already registered: " + name)
+	}
+	registry[name] = h
+	down.RegisterHttpFilter(name, &configFactory{
+		handler:            h,
+		responseHandler:    r,
+		requestBodyHandler: rb,
+		bufferBody:         true,
+	})
+}
+
 // RegisterAccessLogger registers a named access logger factory. Must be called
 // from an init() function. Panics on duplicate names.
 func RegisterAccessLogger(name string, f down.AccessLoggerConfigFactory) {

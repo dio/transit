@@ -6,14 +6,20 @@ import "github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/sha
 //
 // On the response headers call, StatusCode is non-zero and Headers is set.
 // On response body calls, StatusCode is 0 and Data holds the received bytes.
-// Context is a per-stream slot; the same pointer is passed for every call on
-// one stream, allowing state to be carried from headers to body callbacks.
+// A synthetic body call with Data: nil, EndStream: true is issued when the
+// response has no body (204, HEAD, etc.) so body logic always fires once.
+//
+// ContentEncoding and ContentType are populated automatically from the
+// response's Content-Encoding and Content-Type headers.
+// Context is a per-stream slot shared across all callbacks on one stream.
 type ResponseChunk struct {
-	StatusCode int
-	Headers    shared.HeaderMap
-	Data       []byte
-	EndStream  bool
-	Context    *any
+	StatusCode      int
+	Headers         shared.HeaderMap
+	Data            []byte
+	EndStream       bool
+	ContentEncoding string
+	ContentType     string
+	Context         *any
 }
 
 // ResponseHandlerFunc is called for each response event on a stream.

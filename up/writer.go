@@ -6,6 +6,12 @@ import "github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/sha
 type Writer struct {
 	handle  shared.HttpFilterHandle
 	stopped bool
+
+	// body replacement — set via SetRequestBody/SetResponseBody in buffered mode
+	requestBodyReplacement    []byte
+	hasRequestBodyReplacement bool
+	responseBodyReplacement   []byte
+	hasResponseBodyReplacement bool
 }
 
 // NewWriter wraps handle in a Writer. Intended for use in tests.
@@ -41,4 +47,49 @@ func (w *Writer) GetAttributeBool(id shared.AttributeID) (bool, bool) {
 // GetActiveSpan returns the active tracing span for the current stream.
 func (w *Writer) GetActiveSpan() shared.Span {
 	return w.handle.GetActiveSpan()
+}
+
+// SetRequestHeader sets a request header. Valid during request-phase callbacks.
+func (w *Writer) SetRequestHeader(name, value string) {
+	w.handle.RequestHeaders().Set(name, value)
+}
+
+// AddRequestHeader adds a request header without removing existing values.
+func (w *Writer) AddRequestHeader(name, value string) {
+	w.handle.RequestHeaders().Add(name, value)
+}
+
+// RemoveRequestHeader removes a request header.
+func (w *Writer) RemoveRequestHeader(name string) {
+	w.handle.RequestHeaders().Remove(name)
+}
+
+// SetResponseHeader sets a response header. Valid during response-phase callbacks.
+func (w *Writer) SetResponseHeader(name, value string) {
+	w.handle.ResponseHeaders().Set(name, value)
+}
+
+// AddResponseHeader adds a response header without removing existing values.
+func (w *Writer) AddResponseHeader(name, value string) {
+	w.handle.ResponseHeaders().Add(name, value)
+}
+
+// RemoveResponseHeader removes a response header.
+func (w *Writer) RemoveResponseHeader(name string) {
+	w.handle.ResponseHeaders().Remove(name)
+}
+
+// SetRequestBody marks data as the replacement for the request body buffer.
+// Only effective in buffered mode (RegisterWithMutableBody); a no-op otherwise.
+// The replacement is applied by the filter after the body handler returns.
+func (w *Writer) SetRequestBody(data []byte) {
+	w.requestBodyReplacement = data
+	w.hasRequestBodyReplacement = true
+}
+
+// SetResponseBody marks data as the replacement for the response body buffer.
+// Only effective in buffered mode (RegisterWithMutableBody); a no-op otherwise.
+func (w *Writer) SetResponseBody(data []byte) {
+	w.responseBodyReplacement = data
+	w.hasResponseBodyReplacement = true
 }
