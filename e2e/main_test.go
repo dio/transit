@@ -244,7 +244,7 @@ func startGzipUpstream() int {
 		w.WriteHeader(http.StatusOK)
 		w.Write(buf.Bytes())
 	})
-	go http.Serve(l, mux) //nolint:errcheck
+	go http.Serve(l, mux)
 	return l.Addr().(*net.TCPAddr).Port
 }
 
@@ -263,7 +263,7 @@ func startPlainUpstream() int {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("upstream ok"))
 	})
-	go http.Serve(l, mux) //nolint:errcheck
+	go http.Serve(l, mux)
 	return l.Addr().(*net.TCPAddr).Port
 }
 
@@ -316,7 +316,7 @@ func writeEnvoyConfig(p envoyPorts) string {
 	if err != nil {
 		panic(err)
 	}
-	buf.WriteTo(f) //nolint:errcheck
+	buf.WriteTo(f)
 	f.Close()
 	return f.Name()
 }

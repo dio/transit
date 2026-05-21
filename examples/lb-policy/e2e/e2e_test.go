@@ -95,7 +95,7 @@ func TestMain(m *testing.M) {
 	envoyCmd.Stdout = os.Stderr
 	envoyCmd.Stderr = os.Stderr
 	if err := envoyCmd.Start(); err != nil {
-		_ = os.Remove(cfgPath)
+		os.Remove(cfgPath)
 		fmt.Fprintf(os.Stderr, "e2e: envoy start failed: %v\n", err)
 		os.Exit(1)
 	}
@@ -103,9 +103,9 @@ func TestMain(m *testing.M) {
 
 	adminURL := fmt.Sprintf("http://127.0.0.1:%d", adminPort)
 	if !waitURL(adminURL+"/ready", 15*time.Second) {
-		_ = envoyCmd.Process.Kill()
-		_ = envoyCmd.Wait()
-		_ = os.Remove(cfgPath)
+		envoyCmd.Process.Kill()
+		envoyCmd.Wait()
+		os.Remove(cfgPath)
 		fmt.Fprintln(os.Stderr, "e2e: envoy not ready in time")
 		os.Exit(1)
 	}
@@ -113,9 +113,9 @@ func TestMain(m *testing.M) {
 
 	code := m.Run()
 
-	_ = envoyCmd.Process.Kill()
-	_ = envoyCmd.Wait()
-	_ = os.Remove(cfgPath)
+	envoyCmd.Process.Kill()
+	envoyCmd.Wait()
+	os.Remove(cfgPath)
 	os.Exit(code)
 }
 
@@ -126,7 +126,7 @@ func TestGet_routesToUpstream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /: %v", err)
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("want 200, got %d", resp.StatusCode)
 	}
@@ -144,7 +144,7 @@ func TestGet_multipleRequests(t *testing.T) {
 		if err != nil {
 			t.Fatalf("request %d: %v", i, err)
 		}
-		resp.Body.Close() //nolint:errcheck
+		resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("request %d: want 200, got %d", i, resp.StatusCode)
 		}
@@ -162,9 +162,9 @@ func startUpstream() int {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprint(w, "upstream ok")
+		fmt.Fprint(w, "upstream ok")
 	})
-	go http.Serve(l, mux) //nolint:errcheck
+	go http.Serve(l, mux)
 	return l.Addr().(*net.TCPAddr).Port
 }
 
@@ -180,7 +180,7 @@ func freePort() int {
 	if err != nil {
 		panic("freePort: " + err.Error())
 	}
-	defer l.Close() //nolint:errcheck
+	defer l.Close()
 	return l.Addr().(*net.TCPAddr).Port
 }
 
@@ -189,7 +189,7 @@ func waitURL(url string, timeout time.Duration) bool {
 	for time.Now().Before(deadline) {
 		resp, err := http.Get(url) //nolint:noctx
 		if err == nil {
-			resp.Body.Close() //nolint:errcheck
+			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				return true
 			}
@@ -212,6 +212,6 @@ func writeEnvoyConfig(dir string, ports map[string]int) string {
 	if err := tmpl.Execute(f, ports); err != nil {
 		panic("template: " + err.Error())
 	}
-	f.Close() //nolint:errcheck
+	f.Close()
 	return f.Name()
 }

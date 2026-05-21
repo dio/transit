@@ -15,17 +15,6 @@ linters:
     - nilerr
     - prealloc
     - unparam
-
-linters-settings:
-  errcheck:
-    check-type-assertions: true
-  govet:
-    enable-all: true
-    disable:
-      - shadow
-      - fieldalignment
-
-issues:
   exclusions:
     rules:
       - path: "_test\\.go"
@@ -34,3 +23,11 @@ issues:
       - path: "e2e/"
         linters:
           - unparam
+  settings:
+    errcheck:
+      check-type-assertions: true
+    govet:
+      enable-all: true
+      disable:
+        - shadow
+        - fieldalignment

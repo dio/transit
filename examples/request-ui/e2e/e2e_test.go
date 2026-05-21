@@ -129,8 +129,8 @@ func TestMain(m *testing.M) {
 	fmt.Fprintf(os.Stderr, "e2e: testserver pid=%d port=%d\n", testsvr.Process.Pid, upstreamPort)
 
 	if !waitURL(fmt.Sprintf("http://127.0.0.1:%d/health", upstreamPort), 10*time.Second) {
-		_ = testsvr.Process.Kill()
-		_ = testsvr.Wait()
+		testsvr.Process.Kill()
+		testsvr.Wait()
 		fmt.Fprintln(os.Stderr, "e2e: testserver not ready in time")
 		os.Exit(1)
 	}
@@ -153,9 +153,9 @@ func TestMain(m *testing.M) {
 	envoyCmd.Stdout = os.Stderr
 	envoyCmd.Stderr = os.Stderr
 	if err := envoyCmd.Start(); err != nil {
-		_ = testsvr.Process.Kill()
-		_ = testsvr.Wait()
-		_ = os.Remove(cfgPath)
+		testsvr.Process.Kill()
+		testsvr.Wait()
+		os.Remove(cfgPath)
 		fmt.Fprintf(os.Stderr, "e2e: envoy start failed: %v\n", err)
 		os.Exit(1)
 	}
@@ -163,24 +163,24 @@ func TestMain(m *testing.M) {
 
 	adminReady := fmt.Sprintf("http://127.0.0.1:%d/ready", adminPort)
 	if !waitURL(adminReady, 15*time.Second) {
-		_ = envoyCmd.Process.Kill()
-		_ = envoyCmd.Wait()
-		_ = testsvr.Process.Kill()
-		_ = testsvr.Wait()
-		_ = os.Remove(cfgPath)
+		envoyCmd.Process.Kill()
+		envoyCmd.Wait()
+		testsvr.Process.Kill()
+		testsvr.Wait()
+		os.Remove(cfgPath)
 		fmt.Fprintln(os.Stderr, "e2e: envoy not ready in time")
 		os.Exit(1)
 	}
 	fmt.Fprintln(os.Stderr, "e2e: envoy ready")
 
 	// Trigger the first OnLog so the request-ui HTTP server starts.
-	http.Get(proxyURL + "/health") //nolint:errcheck
+	http.Get(proxyURL + "/health")
 	if !waitURL(uiURL+"/", 10*time.Second) {
-		_ = envoyCmd.Process.Kill()
-		_ = envoyCmd.Wait()
-		_ = testsvr.Process.Kill()
-		_ = testsvr.Wait()
-		_ = os.Remove(cfgPath)
+		envoyCmd.Process.Kill()
+		envoyCmd.Wait()
+		testsvr.Process.Kill()
+		testsvr.Wait()
+		os.Remove(cfgPath)
 		fmt.Fprintln(os.Stderr, "e2e: request-ui server not ready in time")
 		os.Exit(1)
 	}
@@ -188,11 +188,11 @@ func TestMain(m *testing.M) {
 
 	code := m.Run()
 
-	_ = envoyCmd.Process.Kill()
-	_ = envoyCmd.Wait()
-	_ = testsvr.Process.Kill()
-	_ = testsvr.Wait()
-	_ = os.Remove(cfgPath)
+	envoyCmd.Process.Kill()
+	envoyCmd.Wait()
+	testsvr.Process.Kill()
+	testsvr.Wait()
+	os.Remove(cfgPath)
 	os.Exit(code)
 }
 
@@ -203,7 +203,7 @@ func TestUIServesHTML(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /: %v", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
@@ -228,7 +228,7 @@ func TestProxyGETRecorded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("proxy GET: %v", err)
 	}
-	_ = resp.Body.Close()
+	resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("proxy returned %d, want 200", resp.StatusCode)
 	}
@@ -257,7 +257,7 @@ func TestProxyPOSTRecorded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("proxy POST: %v", err)
 	}
-	_ = resp.Body.Close()
+	resp.Body.Close()
 
 	rec := pollRecord(t, runID, func(r *sink.Record) bool {
 		return r.Path == path && r.Method == "POST"
@@ -276,7 +276,7 @@ func TestProxy5xxHasError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("proxy GET: %v", err)
 	}
-	_ = resp.Body.Close()
+	resp.Body.Close()
 
 	rec := pollRecord(t, runID, func(r *sink.Record) bool {
 		return r.Path == path && r.ResponseCode >= 500
@@ -305,7 +305,7 @@ func TestQSearch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("proxy GET: %v", err)
 	}
-	_ = resp.Body.Close()
+	resp.Body.Close()
 
 	// Poll until the record appears.
 	pollRecord(t, runID, func(r *sink.Record) bool {
@@ -337,13 +337,13 @@ func TestSSEDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SSE connect: %v", err)
 	}
-	defer func() { _ = sseResp.Body.Close() }()
+	defer sseResp.Body.Close()
 
 	// Small delay so the SSE subscription is established.
 	time.Sleep(50 * time.Millisecond)
 
 	// Send a request through the proxy.
-	go http.Get(proxyURL + path) //nolint:errcheck
+	go http.Get(proxyURL + path)
 
 	// Read SSE events until we find the one for our path.
 	scanner := bufio.NewScanner(sseResp.Body)
@@ -376,7 +376,7 @@ func TestResponseHeadersRecorded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("proxy GET: %v", err)
 	}
-	_ = resp.Body.Close()
+	resp.Body.Close()
 
 	rec := pollRecord(t, runID, func(r *sink.Record) bool {
 		return r.Path == path
@@ -415,7 +415,7 @@ func TestSinceParam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("proxy GET: %v", err)
 	}
-	_ = resp.Body.Close()
+	resp.Body.Close()
 
 	pollRecord(t, runID, func(r *sink.Record) bool {
 		return r.Path == path
@@ -448,7 +448,7 @@ func freePort() int {
 	if err != nil {
 		panic("freePort: " + err.Error())
 	}
-	defer func() { _ = l.Close() }()
+	defer l.Close()
 	return l.Addr().(*net.TCPAddr).Port
 }
 
@@ -465,11 +465,11 @@ func writeEnvoyConfig(e2eDir string, ports map[string]int) string {
 		panic("createTemp: " + err.Error())
 	}
 	if err := tmpl.Execute(f, ports); err != nil {
-		_ = f.Close()
-		_ = os.Remove(f.Name())
+		f.Close()
+		os.Remove(f.Name())
 		panic("template: " + err.Error())
 	}
-	_ = f.Close()
+	f.Close()
 	return f.Name()
 }
 
@@ -479,7 +479,7 @@ func waitURL(url string, timeout time.Duration) bool {
 	for time.Now().Before(deadline) {
 		resp, err := http.Get(url)
 		if err == nil {
-			_ = resp.Body.Close()
+			resp.Body.Close()
 			if resp.StatusCode == 200 {
 				return true
 			}
@@ -504,7 +504,7 @@ func mustFetchRecords(t *testing.T, params map[string]string) []*sink.Record {
 	if err != nil {
 		t.Fatalf("GET %s: %v", u, err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("GET %s: status %d", u, resp.StatusCode)
 	}

@@ -98,16 +98,16 @@ func TestMain(m *testing.M) {
 	envoyCmd.Stdout = os.Stderr
 	envoyCmd.Stderr = os.Stderr
 	if err := envoyCmd.Start(); err != nil {
-		_ = os.Remove(cfgPath)
+		os.Remove(cfgPath)
 		fmt.Fprintf(os.Stderr, "e2e: envoy start failed: %v\n", err)
 		os.Exit(1)
 	}
 	fmt.Fprintf(os.Stderr, "e2e: envoy pid=%d\n", envoyCmd.Process.Pid)
 
 	if !waitURL(adminURL+"/ready", 15*time.Second) {
-		_ = envoyCmd.Process.Kill()
-		_ = envoyCmd.Wait()
-		_ = os.Remove(cfgPath)
+		envoyCmd.Process.Kill()
+		envoyCmd.Wait()
+		os.Remove(cfgPath)
 		fmt.Fprintln(os.Stderr, "e2e: envoy not ready in time")
 		os.Exit(1)
 	}
@@ -115,9 +115,9 @@ func TestMain(m *testing.M) {
 
 	code := m.Run()
 
-	_ = envoyCmd.Process.Kill()
-	_ = envoyCmd.Wait()
-	_ = os.Remove(cfgPath)
+	envoyCmd.Process.Kill()
+	envoyCmd.Wait()
+	os.Remove(cfgPath)
 	os.Exit(code)
 }
 
@@ -128,7 +128,7 @@ func TestGet_tapHeaderInjected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /echo: %v", err)
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("want 200, got %d", resp.StatusCode)
 	}
@@ -145,7 +145,7 @@ func TestSSE_anthropicPassthrough(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /sse/anthropic: %v", err)
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("want 200, got %d", resp.StatusCode)
 	}
@@ -167,7 +167,7 @@ func TestSSE_openaiPassthrough(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /sse/openai: %v", err)
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("want 200, got %d", resp.StatusCode)
 	}
@@ -190,8 +190,8 @@ func TestSSE_countersRecorded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /sse/anthropic: %v", err)
 	}
-	_, _ = io.Copy(io.Discard, resp.Body)
-	resp.Body.Close() //nolint:errcheck
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
 
 	// Poll until the counter appears in admin stats.
 	deadline := time.Now().Add(5 * time.Second)
@@ -205,7 +205,7 @@ func TestSSE_countersRecorded(t *testing.T) {
 	// Dump all stats containing "sse_tap" to help diagnose key format.
 	if resp2, err2 := http.Get(adminURL + "/stats?filter=sse_tap"); err2 == nil { //nolint:noctx
 		body2, _ := io.ReadAll(resp2.Body)
-		resp2.Body.Close() //nolint:errcheck
+		resp2.Body.Close()
 		t.Logf("all sse_tap stats:\n%s", body2)
 	}
 	t.Fatal("timed out waiting for sse_tap_input_tokens > 0 in admin stats")
@@ -252,7 +252,7 @@ func startUpstream() int {
 			"",
 		}
 		for _, line := range lines {
-			fmt.Fprintln(w, line) //nolint:errcheck
+			fmt.Fprintln(w, line)
 		}
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
@@ -272,14 +272,14 @@ func startUpstream() int {
 			"",
 		}
 		for _, line := range lines {
-			fmt.Fprintln(w, line) //nolint:errcheck
+			fmt.Fprintln(w, line)
 		}
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
 	})
 
-	go http.Serve(l, mux) //nolint:errcheck
+	go http.Serve(l, mux)
 	return l.Addr().(*net.TCPAddr).Port
 }
 
@@ -292,7 +292,7 @@ func readStat(t *testing.T, name string) int64 {
 	if err != nil {
 		return 0
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer resp.Body.Close()
 	sc := bufio.NewScanner(resp.Body)
 	for sc.Scan() {
 		line := sc.Text()
@@ -306,7 +306,7 @@ func readStat(t *testing.T, name string) int64 {
 		}
 		t.Logf("admin stat: %s", line)
 		var v int64
-		fmt.Sscanf(strings.TrimSpace(line[idx+2:]), "%d", &v) //nolint:errcheck
+		fmt.Sscanf(strings.TrimSpace(line[idx+2:]), "%d", &v)
 		return v
 	}
 	return 0
@@ -324,7 +324,7 @@ func freePort() int {
 	if err != nil {
 		panic("freePort: " + err.Error())
 	}
-	defer l.Close() //nolint:errcheck
+	defer l.Close()
 	return l.Addr().(*net.TCPAddr).Port
 }
 
@@ -333,7 +333,7 @@ func waitURL(url string, timeout time.Duration) bool {
 	for time.Now().Before(deadline) {
 		resp, err := http.Get(url) //nolint:noctx
 		if err == nil {
-			resp.Body.Close() //nolint:errcheck
+			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				return true
 			}
@@ -356,6 +356,6 @@ func writeEnvoyConfig(dir string, ports map[string]int) string {
 	if err := tmpl.Execute(f, ports); err != nil {
 		panic("template: " + err.Error())
 	}
-	f.Close() //nolint:errcheck
+	f.Close()
 	return f.Name()
 }

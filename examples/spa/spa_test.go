@@ -43,7 +43,7 @@ func localResponseHeader(lr testutil.LocalResponse, key string) string {
 func assetPath(t *testing.T, ext string) string {
 	t.Helper()
 	var found string
-	fs.WalkDir(spa.UIFS, "ui/dist/assets", func(path string, d fs.DirEntry, err error) error { //nolint:errcheck
+	fs.WalkDir(spa.UIFS, "ui/dist/assets", func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}

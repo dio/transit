@@ -15,24 +15,22 @@ linters:
     - nilerr
     - prealloc
     - unparam
-
-linters-settings:
-  errcheck:
-    check-type-assertions: true
-  govet:
-    enable-all: true
-    disable:
-      - shadow          # too noisy for filter code
-      - fieldalignment  # hand-tuned layouts
-
-issues:
-  exclude-rules:
-    - path: "_test\\.go"
-      linters:
-        - errcheck
-    - path: "up/testutil/"
-      linters:
-        - unparam
-    - path: "examples/"
-      linters:
-        - unparam
+  exclusions:
+    rules:
+      - path: "_test\\.go"
+        linters:
+          - errcheck
+      - path: "up/testutil/"
+        linters:
+          - unparam
+      - path: "examples/"
+        linters:
+          - unparam
+  settings:
+    errcheck:
+      check-type-assertions: true
+    govet:
+      enable-all: true
+      disable:
+        - shadow          # too noisy for filter code
+        - fieldalignment  # hand-tuned layouts

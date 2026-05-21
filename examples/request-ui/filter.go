@@ -73,7 +73,10 @@ func Register(name string, s *sink.Sink, pending *PendingRecords) {
 
 			// Headers call: StatusCode != 0, Data == nil.
 			if chunk.StatusCode != 0 {
-				st := statePool.Get().(*reqState)
+				st, ok := statePool.Get().(*reqState)
+				if !ok || st == nil {
+					st = &reqState{}
+				}
 				*st = reqState{}
 
 				if v, ok := w.GetAttributeString(up.AttributeIDRequestId); ok {
