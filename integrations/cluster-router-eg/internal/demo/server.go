@@ -31,11 +31,11 @@ func RegisterControlHandlers(mux *http.ServeMux, store *ConfigStore) {
 		defer func() { _ = r.Body.Close() }()
 		var cfg RouteConfig
 		if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid route config")
+			writeError(w, "invalid route config")
 			return
 		}
 		if err := store.Replace(cfg); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeError(w, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, store.Current())
@@ -44,11 +44,11 @@ func RegisterControlHandlers(mux *http.ServeMux, store *ConfigStore) {
 		defer func() { _ = r.Body.Close() }()
 		var update ModelUpdate
 		if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid model update")
+			writeError(w, "invalid model update")
 			return
 		}
 		if err := store.UpsertModel(update); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeError(w, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, store.Current())
@@ -116,8 +116,8 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	}
 }
 
-func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
+func writeError(w http.ResponseWriter, msg string) {
+	writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
 }
 
 func mustJSON(value any) []byte {

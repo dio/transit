@@ -1,4 +1,4 @@
-module github.com/dio/transit/integrations/cluster-router-eg
+module github.com/dio/transit/integrations
 
 go 1.26.2
 

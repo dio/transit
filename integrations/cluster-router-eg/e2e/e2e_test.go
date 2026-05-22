@@ -74,10 +74,10 @@ func (s *clusterRouterSuite) TestClusterRouterEnvoyGateway() {
 	apply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "httproute.yaml"))
 
 	liveLogf(s.T(), "waiting for demo pods and Gateway")
-	waitReady(s.ctx, s.T(), "default", "app=cluster-router-control")
-	waitReady(s.ctx, s.T(), "default", "app=upstream-a")
-	waitReady(s.ctx, s.T(), "default", "app=upstream-b")
-	waitReady(s.ctx, s.T(), "default", "app=upstream-c")
+	waitReady(s.ctx, s.T(), "app=cluster-router-control")
+	waitReady(s.ctx, s.T(), "app=upstream-a")
+	waitReady(s.ctx, s.T(), "app=upstream-b")
+	waitReady(s.ctx, s.T(), "app=upstream-c")
 	run(s.ctx, s.T(), "", "kubectl", "wait", "gateway/cluster-router", "--for=condition=Accepted", "--timeout=120s")
 
 	liveLogf(s.T(), "waiting for generated Envoy deployment")
@@ -294,9 +294,9 @@ func do(req *http.Request) ([]byte, int, error) {
 	return body, resp.StatusCode, nil
 }
 
-func waitReady(ctx context.Context, t *testing.T, namespace, label string) {
+func waitReady(ctx context.Context, t *testing.T, label string) {
 	t.Helper()
-	run(ctx, t, "", "kubectl", "wait", "pods", "--for=condition=Ready", "-n", namespace, "-l", label, "--timeout=120s")
+	run(ctx, t, "", "kubectl", "wait", "pods", "--for=condition=Ready", "-n", "default", "-l", label, "--timeout=120s")
 }
 
 func waitDeployment(ctx context.Context, t *testing.T, namespace, name string) {
