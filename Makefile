@@ -157,6 +157,7 @@ update-sdk:
 	sed -i.bak "s|^SDK_COMMIT=.*|SDK_COMMIT=$$NEW_COMMIT|" down/abi_impl/VERSION; \
 	rm -f down/abi_impl/VERSION.bak; \
 	echo "SDK updated to $$NEW_VER"
+	$(MAKE) tidy
 
 # check-abi verifies that the vendored abi.h (down/abi_impl/abi.h) was taken from
 # the same SDK version that go.mod depends on. Run this after `go get` updates.
