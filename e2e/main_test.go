@@ -21,9 +21,16 @@ package e2e
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	_ "embed"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -43,23 +50,24 @@ import (
 var envoyConfigTmpl string
 
 var (
-	echoAddr              string
-	guardAddr             string
-	accessLoggerAddr      string
-	correlatorAddr        string
-	bodyAddr              string
-	mutableBodyAddr       string
-	compressAddr          string
-	metadataAddr          string
-	tracerAddr            string
-	alsAddr               string
-	upstreamFilterAddr    string
-	upstreamAuthAddr      string
-	upstreamAuthGroupAddr string
-	lbPolicyAddr          string
-	clusterExtensionAddr  string
-	clusterSchedulerAddr  string
-	adminAddr             string
+	echoAddr                string
+	guardAddr               string
+	accessLoggerAddr        string
+	correlatorAddr          string
+	bodyAddr                string
+	mutableBodyAddr         string
+	compressAddr            string
+	metadataAddr            string
+	tracerAddr              string
+	alsAddr                 string
+	upstreamFilterAddr      string
+	upstreamAuthAddr        string
+	upstreamAuthGroupAddr   string
+	lbPolicyAddr            string
+	clusterExtensionAddr    string
+	clusterExtensionTLSAddr string
+	clusterSchedulerAddr    string
+	adminAddr               string
 )
 
 var otelSink *otelsink.Sink
@@ -97,6 +105,8 @@ func TestMain(m *testing.M) {
 	upstreamFilterUpstreamPort := startPlainUpstream()
 	lbPolicyPort := freePort()
 	clusterExtensionPort := freePort()
+	clusterExtensionTLSPort := freePort()
+	clusterExtensionTLSUpstreamPort, clusterExtensionTLSCAPath, cleanupTLS := startTLSUpstream()
 	clusterSchedulerPort := freePort()
 	adminPort := freePort()
 
@@ -115,6 +125,7 @@ func TestMain(m *testing.M) {
 	upstreamAuthGroupAddr = fmt.Sprintf("http://localhost:%d", upstreamAuthGroupPort)
 	lbPolicyAddr = fmt.Sprintf("http://localhost:%d", lbPolicyPort)
 	clusterExtensionAddr = fmt.Sprintf("http://localhost:%d", clusterExtensionPort)
+	clusterExtensionTLSAddr = fmt.Sprintf("http://localhost:%d", clusterExtensionTLSPort)
 	clusterSchedulerAddr = fmt.Sprintf("http://localhost:%d", clusterSchedulerPort)
 	adminAddr = fmt.Sprintf("http://localhost:%d", adminPort)
 
@@ -152,30 +163,33 @@ func TestMain(m *testing.M) {
 	}
 
 	cfgPath := writeEnvoyConfig(envoyPorts{
-		SinkURL:                      sinkURL,
-		EchoPort:                     echoPort,
-		GuardPort:                    guardPort,
-		AccessLoggerPort:             accessLoggerPort,
-		CorrelatorPort:               correlatorPort,
-		BodyPort:                     bodyPort,
-		MutableBodyPort:              mutableBodyPort,
-		CompressPort:                 compressPort,
-		CompressUpstreamPort:         compressUpstreamPort,
-		OtelSinkPort:                 otelSinkPort,
-		MetadataPort:                 metadataPort,
-		TracerPort:                   tracerPort,
-		AlsPort:                      alsPort,
-		AlsSinkPort:                  alsSinkPort,
-		UpstreamFilterPort:           upstreamFilterPort,
-		UpstreamAuthPort:             upstreamAuthPort,
-		UpstreamAuthGroupPort:        upstreamAuthGroupPort,
-		UpstreamFilterUpstreamPort:   upstreamFilterUpstreamPort,
-		LbPolicyPort:                 lbPolicyPort,
-		LbPolicyUpstreamPort:         upstreamFilterUpstreamPort,
-		ClusterExtensionPort:         clusterExtensionPort,
-		ClusterExtensionUpstreamPort: upstreamFilterUpstreamPort,
-		ClusterSchedulerPort:         clusterSchedulerPort,
-		AdminPort:                    adminPort,
+		SinkURL:                         sinkURL,
+		EchoPort:                        echoPort,
+		GuardPort:                       guardPort,
+		AccessLoggerPort:                accessLoggerPort,
+		CorrelatorPort:                  correlatorPort,
+		BodyPort:                        bodyPort,
+		MutableBodyPort:                 mutableBodyPort,
+		CompressPort:                    compressPort,
+		CompressUpstreamPort:            compressUpstreamPort,
+		OtelSinkPort:                    otelSinkPort,
+		MetadataPort:                    metadataPort,
+		TracerPort:                      tracerPort,
+		AlsPort:                         alsPort,
+		AlsSinkPort:                     alsSinkPort,
+		UpstreamFilterPort:              upstreamFilterPort,
+		UpstreamAuthPort:                upstreamAuthPort,
+		UpstreamAuthGroupPort:           upstreamAuthGroupPort,
+		UpstreamFilterUpstreamPort:      upstreamFilterUpstreamPort,
+		LbPolicyPort:                    lbPolicyPort,
+		LbPolicyUpstreamPort:            upstreamFilterUpstreamPort,
+		ClusterExtensionPort:            clusterExtensionPort,
+		ClusterExtensionUpstreamPort:    upstreamFilterUpstreamPort,
+		ClusterExtensionTLSPort:         clusterExtensionTLSPort,
+		ClusterExtensionTLSUpstreamPort: clusterExtensionTLSUpstreamPort,
+		ClusterExtensionTLSCAPath:       clusterExtensionTLSCAPath,
+		ClusterSchedulerPort:            clusterSchedulerPort,
+		AdminPort:                       adminPort,
 	})
 
 	envoyCmd = exec.Command(bin,
@@ -192,6 +206,7 @@ func TestMain(m *testing.M) {
 
 	if err := envoyCmd.Start(); err != nil {
 		os.Remove(cfgPath)
+		cleanupTLS()
 		fmt.Fprintf(os.Stderr, "e2e: envoy start failed: %v\n", err)
 		os.Exit(1)
 	}
@@ -201,6 +216,7 @@ func TestMain(m *testing.M) {
 		envoyCmd.Process.Kill()
 		envoyCmd.Wait()
 		os.Remove(cfgPath)
+		cleanupTLS()
 		fmt.Fprintln(os.Stderr, "e2e: envoy not ready in time")
 		os.Exit(1)
 	}
@@ -211,6 +227,7 @@ func TestMain(m *testing.M) {
 	envoyCmd.Process.Kill()
 	envoyCmd.Wait()
 	os.Remove(cfgPath)
+	cleanupTLS()
 	os.Exit(code)
 }
 
@@ -276,6 +293,100 @@ func startPlainUpstream() int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
+const clusterExtensionTLSServerName = "cluster-tls.local"
+
+// startTLSUpstream starts a local HTTPS upstream and returns its port plus the
+// CA file Envoy should trust. The certificate is valid only for
+// cluster-tls.local so Envoy must use SNI and SAN validation to connect.
+func startTLSUpstream() (int, string, func()) {
+	dir, err := os.MkdirTemp("", "transit-e2e-tls-*")
+	if err != nil {
+		panic("startTLSUpstream: " + err.Error())
+	}
+	cert, caPEM := generateLocalTLSCert()
+	caPath := filepath.Join(dir, "ca.pem")
+	if err := os.WriteFile(caPath, caPEM, 0o600); err != nil {
+		os.RemoveAll(dir)
+		panic("startTLSUpstream: " + err.Error())
+	}
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		os.RemoveAll(dir)
+		panic("startTLSUpstream: " + err.Error())
+	}
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.TLS == nil {
+				http.Error(w, "request did not use TLS", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("content-type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, "tls upstream ok sni=%s", r.TLS.ServerName)
+		}),
+		TLSConfig: &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS12,
+		},
+	}
+	go server.Serve(tls.NewListener(l, server.TLSConfig)) //nolint:errcheck
+
+	cleanup := func() {
+		server.Close()
+		os.RemoveAll(dir)
+	}
+	return l.Addr().(*net.TCPAddr).Port, caPath, cleanup
+}
+
+func generateLocalTLSCert() (tls.Certificate, []byte) {
+	now := time.Now()
+	caKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		panic("generateLocalTLSCert ca key: " + err.Error())
+	}
+	caTemplate := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "transit e2e test ca"},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.Add(time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	if err != nil {
+		panic("generateLocalTLSCert ca cert: " + err.Error())
+	}
+
+	serverKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		panic("generateLocalTLSCert server key: " + err.Error())
+	}
+	serverTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: clusterExtensionTLSServerName},
+		DNSNames:     []string{clusterExtensionTLSServerName},
+		NotBefore:    now.Add(-time.Hour),
+		NotAfter:     now.Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	serverDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, caTemplate, &serverKey.PublicKey, caKey)
+	if err != nil {
+		panic("generateLocalTLSCert server cert: " + err.Error())
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverDER})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(serverKey)})
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		panic("generateLocalTLSCert key pair: " + err.Error())
+	}
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
+	return cert, caPEM
+}
+
 func waitReady(timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -292,30 +403,33 @@ func waitReady(timeout time.Duration) bool {
 }
 
 type envoyPorts struct {
-	SinkURL                      string
-	EchoPort                     int
-	GuardPort                    int
-	AccessLoggerPort             int
-	CorrelatorPort               int
-	BodyPort                     int
-	MutableBodyPort              int
-	CompressPort                 int
-	CompressUpstreamPort         int
-	OtelSinkPort                 int
-	MetadataPort                 int
-	TracerPort                   int
-	AlsPort                      int
-	AlsSinkPort                  int
-	UpstreamFilterPort           int
-	UpstreamAuthPort             int
-	UpstreamAuthGroupPort        int
-	UpstreamFilterUpstreamPort   int
-	LbPolicyPort                 int
-	LbPolicyUpstreamPort         int
-	ClusterExtensionPort         int
-	ClusterExtensionUpstreamPort int
-	ClusterSchedulerPort         int
-	AdminPort                    int
+	SinkURL                         string
+	EchoPort                        int
+	GuardPort                       int
+	AccessLoggerPort                int
+	CorrelatorPort                  int
+	BodyPort                        int
+	MutableBodyPort                 int
+	CompressPort                    int
+	CompressUpstreamPort            int
+	OtelSinkPort                    int
+	MetadataPort                    int
+	TracerPort                      int
+	AlsPort                         int
+	AlsSinkPort                     int
+	UpstreamFilterPort              int
+	UpstreamAuthPort                int
+	UpstreamAuthGroupPort           int
+	UpstreamFilterUpstreamPort      int
+	LbPolicyPort                    int
+	LbPolicyUpstreamPort            int
+	ClusterExtensionPort            int
+	ClusterExtensionUpstreamPort    int
+	ClusterExtensionTLSPort         int
+	ClusterExtensionTLSUpstreamPort int
+	ClusterExtensionTLSCAPath       string
+	ClusterSchedulerPort            int
+	AdminPort                       int
 }
 
 func writeEnvoyConfig(p envoyPorts) string {
