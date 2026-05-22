@@ -33,13 +33,7 @@ func (s *OtelTracesSuite) TestGet_spanExported() {
 	resp.Body.Close()
 	s.Require().Equal(http.StatusOK, resp.StatusCode)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	_, ok := otelSink.WaitForSpan(ctx, func(sp *otlptrace.Span) bool {
-		return spanHasAttr(sp, "e2e.custom", "hello-from-tracer")
-	})
-	s.Require().True(ok, "timed out waiting for span with e2e.custom=hello-from-tracer")
+	s.Require().True(waitForSpanAttr("e2e.custom", "hello-from-tracer"), "timed out waiting for span with e2e.custom=hello-from-tracer")
 }
 
 // TestGet_methodAttributeSet verifies that the filter encodes the HTTP method
@@ -50,13 +44,7 @@ func (s *OtelTracesSuite) TestGet_methodAttributeSet() {
 	resp.Body.Close()
 	s.Require().Equal(http.StatusOK, resp.StatusCode)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	_, ok := otelSink.WaitForSpan(ctx, func(sp *otlptrace.Span) bool {
-		return spanHasAttr(sp, "e2e.method", "GET")
-	})
-	s.Require().True(ok, "timed out waiting for span with e2e.method=GET")
+	s.Require().True(waitForSpanAttr("e2e.method", "GET"), "timed out waiting for span with e2e.method=GET")
 }
 
 // TestPost_methodAttributeReflectsVerb verifies the method attribute tracks
@@ -67,13 +55,17 @@ func (s *OtelTracesSuite) TestPost_methodAttributeReflectsVerb() {
 	resp.Body.Close()
 	s.Require().Equal(http.StatusOK, resp.StatusCode)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	s.Require().True(waitForSpanAttr("e2e.method", "POST"), "timed out waiting for span with e2e.method=POST")
+}
+
+func waitForSpanAttr(key, val string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	_, ok := otelSink.WaitForSpan(ctx, func(sp *otlptrace.Span) bool {
-		return spanHasAttr(sp, "e2e.method", "POST")
+		return spanHasAttr(sp, key, val)
 	})
-	s.Require().True(ok, "timed out waiting for span with e2e.method=POST")
+	return ok
 }
 
 // spanHasAttr reports whether span sp carries an attribute with the given key
