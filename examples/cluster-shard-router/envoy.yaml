@@ -1,0 +1,63 @@
+static_resources:
+  listeners:
+    - name: cluster-shard-router
+      address:
+        socket_address: { address: 127.0.0.1, port_value: 10000 }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: cluster_shard_router
+                http_filters:
+                  - name: cluster-shard-router-debug
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: cluster-shard-router
+                      filter_name: cluster-shard-router-debug
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: cluster-shard-router
+                  virtual_hosts:
+                    - name: local
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          route: { cluster: cluster-shard-router }
+
+  clusters:
+    - name: cluster-shard-router
+      connect_timeout: 5s
+      lb_policy: CLUSTER_PROVIDED
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http_protocol_options: {}
+          http_filters:
+            - name: cluster-shard-router-upstream
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                dynamic_module_config:
+                  name: cluster-shard-router
+                filter_name: cluster-shard-router-upstream
+            - name: envoy.filters.http.upstream_codec
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.upstream_codec.v3.UpstreamCodec
+      cluster_type:
+        name: envoy.clusters.dynamic_modules
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_modules.v3.ClusterConfig
+          dynamic_module_config:
+            name: cluster-shard-router
+          cluster_name: cluster-shard-router
+          cluster_config:
+            "@type": type.googleapis.com/google.protobuf.StringValue
+            value: '{"initial":{"version":"local","default_shard":"a","shards":{"a":{"target":"localhost:18081","prefixes":["a"],"shard":"a","status":"active"},"b":{"target":"localhost:18082","prefixes":["b"],"shard":"b","status":"active"}}}}'
+
+admin:
+  address:
+    socket_address: { address: 127.0.0.1, port_value: 19000 }
