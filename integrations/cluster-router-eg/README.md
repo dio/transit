@@ -176,6 +176,12 @@ k3d image import -c transit-cluster-router-eg --mode direct ...
 
 Use `make publish` only when a remote cluster needs to pull from ttl.sh.
 
+CI uses that remote-pull shape. It publishes short-lived ttl.sh images, passes
+those image tags into the e2e suite, and sets `K3D_SKIP_IMAGE_IMPORT=1` so the
+k3d cluster pulls from ttl.sh instead of importing local Docker images from the
+runner. Local demos should keep the default direct import path because it is
+faster and avoids an external registry round trip.
+
 ## Context Safety
 
 The e2e must never touch the user's current Kubernetes context by accident.

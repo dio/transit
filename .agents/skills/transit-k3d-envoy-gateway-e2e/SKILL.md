@@ -113,6 +113,12 @@ applying resources:
 k3d image import -c <cluster> --mode direct <envoy-image> <demo-or-control-image>
 ```
 
+For CI, ttl.sh can be simpler than local import. Push short-lived image tags,
+pass those tags as `IMAGE` and `CONTROL_PLANE_IMAGE`, and set
+`K3D_SKIP_IMAGE_IMPORT=1` so k3d pulls from the registry instead of importing
+from the runner Docker daemon. Keep local demos on direct import because it is
+faster and works offline after the base images are present.
+
 Build the image from the repo root when the Dockerfile needs `./dist`. Do not
 copy generated `.so` or `.h` artifacts into the integration directory. For Go
 control-plane or upstream demo services, build the Linux binary locally with

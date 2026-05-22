@@ -46,6 +46,10 @@ func (s *clusterRouterSuite) SetupSuite() {
 	s.controlImage = requireEnv(s.T(), "CONTROL_PLANE_IMAGE")
 
 	s.envoyGatewaySuite.SetupSuite()
+	if os.Getenv("K3D_SKIP_IMAGE_IMPORT") == "1" {
+		liveLogf(s.T(), "skipping k3d image import; cluster will pull %s and %s", s.envoyImage, s.controlImage)
+		return
+	}
 	liveLogf(s.T(), "importing images into k3d cluster %s", s.cluster)
 	args := []string{"image", "import", "-c", s.cluster}
 	if mode := os.Getenv("K3D_IMAGE_IMPORT_MODE"); mode != "" {

@@ -16,6 +16,9 @@ on:
 
 env:
   CGO_ENABLED: "1"
+  K3D_CLI_VERSION: v5.7.5
+  HELM_VERSION: v3.16.4
+  KUBECTL_VERSION: v1.31.6
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -102,3 +105,59 @@ jobs:
       - run: make -C examples/cluster-dfp e2e
       - run: make -C examples/cluster-router e2e
       - run: make -C examples/spa e2e
+
+  # ---------------------------------------------------------------------------
+  # cluster-router-eg: Kubernetes integration against Envoy Gateway in k3d.
+  # Uses ttl.sh images so the k3d node pulls the same images a remote cluster
+  # would pull, instead of relying on local Docker image import.
+  # ---------------------------------------------------------------------------
+  cluster-router-eg:
+    name: cluster-router-eg
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+
+      - name: install Kubernetes tools
+        run: |
+          set -euxo pipefail
+          curl -fsSL -o /tmp/k3d "https://github.com/k3d-io/k3d/releases/download/${K3D_CLI_VERSION}/k3d-linux-amd64"
+          sudo install -m 0755 /tmp/k3d /usr/local/bin/k3d
+
+          curl -fsSL -o /tmp/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+
+          curl -fsSL -o /tmp/helm.tgz "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          tar -C /tmp -xzf /tmp/helm.tgz
+          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+
+          k3d version
+          kubectl version --client=true
+          helm version
+
+      - name: publish demo images
+        run: |
+          set -euxo pipefail
+          image_tag="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          publish_image="ttl.sh/transit-cluster-router-eg-${image_tag}:1h"
+          publish_control_image="ttl.sh/transit-cluster-router-eg-control-${image_tag}:1h"
+
+          echo "PUBLISH_IMAGE=${publish_image}" >> "${GITHUB_ENV}"
+          echo "PUBLISH_CONTROL_PLANE_IMAGE=${publish_control_image}" >> "${GITHUB_ENV}"
+
+          make -C integrations/cluster-router-eg publish \
+            PUBLISH_IMAGE="${publish_image}" \
+            PUBLISH_CONTROL_PLANE_IMAGE="${publish_control_image}"
+
+      - name: run Envoy Gateway demo e2e
+        run: |
+          set -euxo pipefail
+          SKIP_IMAGE_BUILD=1 \
+          K3D_SKIP_IMAGE_IMPORT=1 \
+          IMAGE="${PUBLISH_IMAGE}" \
+          CONTROL_PLANE_IMAGE="${PUBLISH_CONTROL_PLANE_IMAGE}" \
+          make -C integrations/cluster-router-eg e2e
