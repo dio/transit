@@ -7,8 +7,8 @@ github.com/cncf/xds/go v0.0.0-20260202195803-dba9d589def2/go.mod h1:qwXFYgsP6T7X
 github.com/creack/pty v1.1.9/go.mod h1:oKZEueFk5CKHvIhNR5MUki03XCEU+Q6VDXinZuGJ33E=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/envoyproxy/envoy/source/extensions/dynamic_modules v0.0.0-20260521012914-4616750da8df h1:BPn2zoUeNUlthcVIa2s+Up3sItg42Hcl98J9+TGwUfI=
-github.com/envoyproxy/envoy/source/extensions/dynamic_modules v0.0.0-20260521012914-4616750da8df/go.mod h1:NpQosaDAX20s0ak0o/4b5dLOdvkbk15XqoakhSNX1Gg=
+github.com/envoyproxy/envoy/source/extensions/dynamic_modules v0.0.0-20260521055639-0d6e3c60aa55 h1:lTewRAh7QFyxr0VG4GyFrAg5FUT95W8jOYWmMgQ+iaI=
+github.com/envoyproxy/envoy/source/extensions/dynamic_modules v0.0.0-20260521055639-0d6e3c60aa55/go.mod h1:NpQosaDAX20s0ak0o/4b5dLOdvkbk15XqoakhSNX1Gg=
 github.com/envoyproxy/go-control-plane/envoy v1.37.0 h1:u3riX6BoYRfF4Dr7dwSOroNfdSbEPe9Yyl09/B6wBrQ=
 github.com/envoyproxy/go-control-plane/envoy v1.37.0/go.mod h1:DReE9MMrmecPy+YvQOAOHNYMALuowAnbjjEMkkWOi6A=
 github.com/envoyproxy/protoc-gen-validate v1.3.3 h1:MVQghNeW+LZcmXe7SY1V36Z+WFMDjpqGAGacLe2T0ds=

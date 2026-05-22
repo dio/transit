@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	github.com/dio/transit v0.0.0
-	github.com/envoyproxy/envoy/source/extensions/dynamic_modules v0.0.0-20260521012914-4616750da8df
+	github.com/envoyproxy/envoy/source/extensions/dynamic_modules v0.0.0-20260521055639-0d6e3c60aa55
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/proto/otlp v1.10.0
