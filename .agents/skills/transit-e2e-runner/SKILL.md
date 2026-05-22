@@ -17,8 +17,10 @@ The normal path is:
 make download-envoy
 ```
 
-`make e2e*` targets depend on `.bin/envoy` automatically. Direct `go test`
-commands must set `ENVOY_BIN`; otherwise tests skip.
+`make e2e` depends on `.bin/envoy` automatically. Example e2e suites are run
+through their own Makefiles, which delegate to the root `download-envoy` target
+when needed. Direct `go test` commands must set `ENVOY_BIN`; otherwise tests
+skip.
 
 ## Main commands
 
@@ -26,10 +28,13 @@ From the repo root:
 
 ```
 make e2e
-make e2e-hello
-make e2e-sse-tap
-make e2e-request-ui
-make e2e-lb-policy
+make -C examples/hello e2e
+make -C examples/sse-tap e2e
+make -C examples/request-ui e2e
+make -C examples/lb-policy e2e
+make -C examples/cluster e2e
+make -C examples/cluster-dfp e2e
+make -C examples/spa e2e
 ```
 
 Direct equivalents:
@@ -40,6 +45,8 @@ cd examples && ENVOY_BIN=../.bin/envoy GOWORK=off go test ./hello/e2e/... -v -ti
 cd examples && ENVOY_BIN=../.bin/envoy GOWORK=off go test ./sse-tap/e2e/... -v -timeout=60s
 cd examples && ENVOY_BIN=../.bin/envoy GOWORK=off go test ./request-ui/e2e/... -v -timeout=120s
 cd examples && ENVOY_BIN=../.bin/envoy GOWORK=off go test ./lb-policy/e2e/... -v -timeout=60s
+cd examples && ENVOY_BIN=../.bin/envoy GOWORK=off go test ./cluster/e2e/... -v -timeout=60s
+cd examples && ENVOY_BIN=../.bin/envoy GOWORK=off go test ./cluster-dfp/e2e/... -v -timeout=60s
 ```
 
 Use `TRANSIT_SKIP_BUILD=1` for faster iteration after a successful shared
@@ -59,7 +66,7 @@ the dynamic module.
 - allocates loopback ports,
 - starts in-process sinks for custom access logs, OTLP, and ALS,
 - builds `e2e/libe2e.so` from `e2e/cmd`,
-- renders `e2e/testdata/envoy.yaml.tmpl`,
+- renders the embedded `e2e/testdata/envoy.tmpl.yaml`,
 - starts Envoy with `GODEBUG=cgocheck=0` and
   `ENVOY_DYNAMIC_MODULES_SEARCH_PATH=<repo>/e2e`,
 - waits for the Envoy admin `/ready` endpoint,
@@ -78,10 +85,14 @@ Envoy logs to test stderr.
   dynamic module loading errors, listener bind conflicts, and admin readiness.
 - If a sink assertion times out, check the filter registration name in
   `e2e/filters`, the matching `filter_name` or `logger_name` in
-  `e2e/testdata/envoy.yaml.tmpl`, and whether the test resets or waits on the
+  `e2e/testdata/envoy.tmpl.yaml`, and whether the test resets or waits on the
   right sink.
 - For flaky port behavior, rerun the single package first; ports are allocated
   dynamically but still have a close-and-bind race.
+- In restricted sandboxes, e2e can fail before Envoy starts with
+  `listen tcp 127.0.0.1:0: bind: operation not permitted`. That is a sandbox
+  limitation, not an e2e assertion failure; rerun the relevant `make -C
+  examples/<name> e2e` target with permission to bind loopback ports.
 
 ## Before finishing
 

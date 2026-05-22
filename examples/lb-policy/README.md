@@ -16,13 +16,10 @@ healthy host exists, and returns no host when the list is empty.
 ## Run
 
 The reference `envoy.yaml` expects an upstream service on `127.0.0.1:8080`.
-Start any HTTP server there, then run Envoy from the repository root:
+Start any HTTP server there, then run Envoy:
 
 ```sh
-make build EXAMPLE=lb-policy EXAMPLE_CMD=./examples/lb-policy/cmd
-ENVOY_DYNAMIC_MODULES_SEARCH_PATH=$PWD/dist \
-GODEBUG=cgocheck=0 \
-.bin/envoy -c examples/lb-policy/envoy.yaml
+make -C examples/lb-policy run
 ```
 
 Then send a request through Envoy:
@@ -36,13 +33,13 @@ curl localhost:10000/
 Unit tests:
 
 ```sh
-cd examples && GOWORK=off go test ./lb-policy/...
+make -C examples/lb-policy test
 ```
 
 End to end test:
 
 ```sh
-make e2e-lb-policy
+make -C examples/lb-policy e2e
 ```
 
 The e2e suite starts its own upstream server, so it does not need the manual

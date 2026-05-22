@@ -1,0 +1,42 @@
+static_resources:
+  listeners:
+    - name: cluster
+      address:
+        socket_address: { address: 127.0.0.1, port_value: 10000 }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: cluster
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: cluster
+                  virtual_hosts:
+                    - name: local
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          route: { cluster: upstream }
+
+  clusters:
+    - name: upstream
+      connect_timeout: 5s
+      lb_policy: CLUSTER_PROVIDED
+      cluster_type:
+        name: envoy.clusters.dynamic_modules
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_modules.v3.ClusterConfig
+          dynamic_module_config:
+            name: cluster
+          cluster_name: static-hosts
+          cluster_config:
+            "@type": type.googleapis.com/google.protobuf.StringValue
+            value: '{"hosts":[{"address":"127.0.0.1:8080"}]}'
+
+admin:
+  address:
+    socket_address: { address: 127.0.0.1, port_value: 9901 }

@@ -10,7 +10,7 @@
 //
 // Run:
 //
-//	make e2e-request-ui
+//	make -C examples/request-ui e2e
 //
 // Or directly (from the examples/ directory):
 //
@@ -22,6 +22,7 @@ package e2e
 import (
 	"bufio"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -37,6 +38,9 @@ import (
 
 	"github.com/dio/transit/examples/request-ui/sink"
 )
+
+//go:embed testdata/envoy.tmpl.yaml
+var envoyConfigTmpl string
 
 // ── globals set by TestMain ──────────────────────────────────────────────────
 
@@ -136,7 +140,7 @@ func TestMain(m *testing.M) {
 	}
 
 	// Write templated Envoy config.
-	cfgPath := writeEnvoyConfig(e2eDir, map[string]int{
+	cfgPath := writeEnvoyConfig(map[string]int{
 		"ProxyPort":    proxyPort,
 		"UpstreamPort": upstreamPort,
 		"AdminPort":    adminPort,
@@ -452,13 +456,8 @@ func freePort() int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
-func writeEnvoyConfig(e2eDir string, ports map[string]int) string {
-	tmplPath := filepath.Join(e2eDir, "testdata/envoy.yaml.tmpl")
-	tmplBytes, err := os.ReadFile(tmplPath)
-	if err != nil {
-		panic("readTemplate: " + err.Error())
-	}
-	tmpl := template.Must(template.New("envoy").Parse(string(tmplBytes)))
+func writeEnvoyConfig(ports map[string]int) string {
+	tmpl := template.Must(template.New("envoy").Parse(envoyConfigTmpl))
 
 	f, err := os.CreateTemp("", "requi-envoy-*.yaml")
 	if err != nil {

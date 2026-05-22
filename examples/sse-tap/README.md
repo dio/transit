@@ -33,13 +33,10 @@ The module emits:
 ## Run
 
 The reference `envoy.yaml` routes to an upstream service on `127.0.0.1:8080`.
-Start a streaming upstream there, then run Envoy from the repository root:
+Start a streaming upstream there, then run Envoy:
 
 ```sh
-make build EXAMPLE=sse-tap EXAMPLE_CMD=./examples/sse-tap/cmd
-ENVOY_DYNAMIC_MODULES_SEARCH_PATH=$PWD/dist \
-GODEBUG=cgocheck=0 \
-.bin/envoy -c examples/sse-tap/envoy.yaml
+make -C examples/sse-tap run
 ```
 
 Then send traffic through Envoy:
@@ -53,13 +50,13 @@ curl -N localhost:10000/
 Unit tests:
 
 ```sh
-cd examples && GOWORK=off go test ./sse-tap/...
+make -C examples/sse-tap test
 ```
 
 End to end test:
 
 ```sh
-make e2e-sse-tap
+make -C examples/sse-tap e2e
 ```
 
 ## Files

@@ -94,22 +94,6 @@ test:
 e2e: $(ENVOY_BIN)
 	cd e2e && ENVOY_BIN=$(ENVOY_BIN) go test ./... -v -timeout=90s
 
-.PHONY: e2e-hello
-e2e-hello: $(ENVOY_BIN)
-	cd examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./hello/e2e/... -v -timeout=60s
-
-.PHONY: e2e-sse-tap
-e2e-sse-tap: $(ENVOY_BIN)
-	cd examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./sse-tap/e2e/... -v -timeout=60s
-
-.PHONY: e2e-request-ui
-e2e-request-ui: $(ENVOY_BIN)
-	cd examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./request-ui/e2e/... -v -timeout=120s
-
-.PHONY: e2e-lb-policy
-e2e-lb-policy: $(ENVOY_BIN)
-	cd examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./lb-policy/e2e/... -v -timeout=60s
-
 .PHONY: vet
 vet:
 	go vet ./...

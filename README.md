@@ -161,13 +161,16 @@ Run the root e2e suite:
 make e2e
 ```
 
-Run example e2e suites:
+Run example e2e suites from their own directories:
 
 ```sh
-make e2e-hello
-make e2e-lb-policy
-make e2e-request-ui
-make e2e-sse-tap
+make -C examples/hello e2e
+make -C examples/lb-policy e2e
+make -C examples/cluster e2e
+make -C examples/cluster-dfp e2e
+make -C examples/request-ui e2e
+make -C examples/sse-tap e2e
+make -C examples/spa e2e
 ```
 
 For faster e2e iteration after a successful shared library build:
@@ -212,6 +215,8 @@ The `examples/` module shows several ways to use transit:
 
 - `hello` for a minimal HTTP filter
 - `lb-policy` for a custom LB Policy
+- `cluster` for a custom Cluster Extension
+- `cluster-dfp` for model-based host selection with Go DNS discovery
 - `sse-tap` for observing server sent events
 - `request-ui` for request capture with a small UI
 - `spa` for serving embedded static assets from a module

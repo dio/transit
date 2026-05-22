@@ -42,8 +42,13 @@ else
   echo "==> reusing $so_path (TRANSIT_SKIP_BUILD=1)"
 fi
 
-# Install e2e npm deps.
-npm ci --prefix "$script_dir" --silent
+# Install e2e npm deps. Use npm ci when a lockfile is present, otherwise
+# fall back to npm install so a fresh checkout with only package.json works.
+if [[ -f "$script_dir/package-lock.json" ]]; then
+  npm ci --prefix "$script_dir" --silent
+else
+  npm install --prefix "$script_dir" --silent
+fi
 
 # Start Envoy.
 GODEBUG=cgocheck=0 \

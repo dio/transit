@@ -1,0 +1,42 @@
+static_resources:
+  listeners:
+    - name: cluster-dfp
+      address:
+        socket_address: { address: 127.0.0.1, port_value: 10000 }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: cluster_dfp
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: cluster-dfp
+                  virtual_hosts:
+                    - name: local
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          route: { cluster: dfp-upstream }
+
+  clusters:
+    - name: dfp-upstream
+      connect_timeout: 5s
+      lb_policy: CLUSTER_PROVIDED
+      cluster_type:
+        name: envoy.clusters.dynamic_modules
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_modules.v3.ClusterConfig
+          dynamic_module_config:
+            name: cluster-dfp
+          cluster_name: go-dfp
+          cluster_config:
+            "@type": type.googleapis.com/google.protobuf.StringValue
+            value: '{"timeout_millis":500,"models":{"tiny":"localhost:8080","large":"localhost:9090"}}'
+
+admin:
+  address:
+    socket_address: { address: 127.0.0.1, port_value: 9901 }

@@ -73,7 +73,7 @@ make -C examples/request-ui test
 End to end test:
 
 ```sh
-make e2e-request-ui
+make -C examples/request-ui e2e
 ```
 
 ## Files

@@ -10,10 +10,12 @@ Use this skill when adding new e2e coverage for transit or its examples.
 ## Choose the right suite
 
 - Use root `e2e/` for core transit API behavior, ABI wrapper coverage, access
-  logger behavior, body handling, metadata, telemetry, upstream filters, and LB
-  Policy behavior.
+  logger behavior, body handling, metadata, telemetry, upstream filters, LB
+  Policy behavior, and Cluster Extension behavior.
 - Use `examples/<name>/e2e/` when validating a specific example's user-facing
   behavior.
+- Every example should have e2e coverage and a local `make -C examples/<name>
+  e2e` entry point. Do not add per-example e2e targets to the root `Makefile`.
 - Add a new sink under `e2e/sinks/` only when existing HTTP JSON, OTLP, or ALS
   sinks cannot observe the behavior.
 
@@ -23,7 +25,7 @@ Use this skill when adding new e2e coverage for transit or its examples.
 e2e/
   cmd/main.go                  imports e2e/filters for shared-library build
   filters/*.go                 test dynamic modules registered in init
-  testdata/envoy.yaml.tmpl     Envoy bootstrap template
+  testdata/envoy.tmpl.yaml     Envoy bootstrap template
   main_test.go                 builds libe2e.so, starts Envoy and sinks
   *_test.go                    feature assertions
   sinks/*                      in-process assertion sinks
@@ -39,7 +41,7 @@ To add a root e2e case:
    `github.com/dio/transit/e2e/filters`. The `abi_impl` blank import belongs in
    the shared-library entrypoint, not in `up` or another library package.
 3. Add listener, filter, cluster, access logger, or sink config to
-   `e2e/testdata/envoy.yaml.tmpl`.
+   `e2e/testdata/envoy.tmpl.yaml`.
 4. Add a port field and `freePort()` allocation in `e2e/main_test.go` when the
    test needs a new listener, admin endpoint, or upstream.
 5. Add a focused `*_test.go` file or extend the relevant suite.
@@ -47,6 +49,10 @@ To add a root e2e case:
 
 Keep test filter names stable and obvious: `e2e-<feature>` for filters and
 `<feature>-e2e` for listener/stat prefixes.
+
+For upstream selection work, check both APIs deliberately. LB Policy e2e
+coverage does not cover Cluster Extension behavior, and Cluster Extension e2e
+coverage does not cover LB Policy behavior.
 
 ## Assertions
 
@@ -67,8 +73,11 @@ Example e2e suites usually live at:
 
 ```
 examples/<name>/e2e/e2e_test.go
-examples/<name>/e2e/testdata/envoy.yaml.tmpl
+examples/<name>/e2e/testdata/envoy.tmpl.yaml
 ```
+
+Browser-based examples can use a script-backed `examples/<name>/e2e/` harness
+instead of Go tests, but the example Makefile must still expose `e2e`.
 
 The example `TestMain` normally:
 
@@ -78,7 +87,8 @@ The example `TestMain` normally:
   example `cmd/main.go` must blank-import `github.com/dio/transit/down/abi_impl`
   so Envoy ABI exports are linked only into the `.so`,
 - starts any in-process upstream/test server,
-- renders a temp Envoy config,
+- embeds `testdata/envoy.tmpl.yaml` with `//go:embed` and renders a temp Envoy
+  config,
 - starts Envoy with `GODEBUG=cgocheck=0` and
   `ENVOY_DYNAMIC_MODULES_SEARCH_PATH=<example dir>`,
 - waits for admin `/ready`,
@@ -102,10 +112,13 @@ make e2e
 Example e2e:
 
 ```
-make e2e-hello
-make e2e-sse-tap
-make e2e-request-ui
-make e2e-lb-policy
+make -C examples/hello e2e
+make -C examples/sse-tap e2e
+make -C examples/request-ui e2e
+make -C examples/lb-policy e2e
+make -C examples/cluster e2e
+make -C examples/cluster-dfp e2e
+make -C examples/spa e2e
 ```
 
 Fast rerun after a successful build:

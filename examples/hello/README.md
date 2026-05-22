@@ -17,7 +17,7 @@ The Envoy config returns a direct response, so no upstream service is needed.
 From the repository root:
 
 ```sh
-make run EXAMPLE=hello ENVOY_YAML=$PWD/examples/hello/envoy.yaml
+make -C examples/hello run
 ```
 
 Then send a request:
@@ -31,13 +31,13 @@ curl localhost:10000/
 Unit tests:
 
 ```sh
-cd examples && GOWORK=off go test ./hello/...
+make -C examples/hello test
 ```
 
 End to end test:
 
 ```sh
-make e2e-hello
+make -C examples/hello e2e
 ```
 
 ## Files

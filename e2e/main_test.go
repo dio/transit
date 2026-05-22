@@ -39,7 +39,7 @@ import (
 	"github.com/dio/transit/e2e/sinks/otelsink"
 )
 
-//go:embed testdata/envoy.yaml.tmpl
+//go:embed testdata/envoy.tmpl.yaml
 var envoyConfigTmpl string
 
 var (
@@ -57,6 +57,7 @@ var (
 	upstreamAuthAddr      string
 	upstreamAuthGroupAddr string
 	lbPolicyAddr          string
+	clusterExtensionAddr  string
 	adminAddr             string
 )
 
@@ -94,6 +95,7 @@ func TestMain(m *testing.M) {
 	upstreamAuthGroupPort := freePort()
 	upstreamFilterUpstreamPort := startPlainUpstream()
 	lbPolicyPort := freePort()
+	clusterExtensionPort := freePort()
 	adminPort := freePort()
 
 	echoAddr = fmt.Sprintf("http://localhost:%d", echoPort)
@@ -110,6 +112,7 @@ func TestMain(m *testing.M) {
 	upstreamAuthAddr = fmt.Sprintf("http://localhost:%d", upstreamAuthPort)
 	upstreamAuthGroupAddr = fmt.Sprintf("http://localhost:%d", upstreamAuthGroupPort)
 	lbPolicyAddr = fmt.Sprintf("http://localhost:%d", lbPolicyPort)
+	clusterExtensionAddr = fmt.Sprintf("http://localhost:%d", clusterExtensionPort)
 	adminAddr = fmt.Sprintf("http://localhost:%d", adminPort)
 
 	otelSink = otelsink.New()
@@ -146,27 +149,29 @@ func TestMain(m *testing.M) {
 	}
 
 	cfgPath := writeEnvoyConfig(envoyPorts{
-		SinkURL:                    sinkURL,
-		EchoPort:                   echoPort,
-		GuardPort:                  guardPort,
-		AccessLoggerPort:           accessLoggerPort,
-		CorrelatorPort:             correlatorPort,
-		BodyPort:                   bodyPort,
-		MutableBodyPort:            mutableBodyPort,
-		CompressPort:               compressPort,
-		CompressUpstreamPort:       compressUpstreamPort,
-		OtelSinkPort:               otelSinkPort,
-		MetadataPort:               metadataPort,
-		TracerPort:                 tracerPort,
-		AlsPort:                    alsPort,
-		AlsSinkPort:                alsSinkPort,
-		UpstreamFilterPort:         upstreamFilterPort,
-		UpstreamAuthPort:           upstreamAuthPort,
-		UpstreamAuthGroupPort:      upstreamAuthGroupPort,
-		UpstreamFilterUpstreamPort: upstreamFilterUpstreamPort,
-		LbPolicyPort:               lbPolicyPort,
-		LbPolicyUpstreamPort:       upstreamFilterUpstreamPort,
-		AdminPort:                  adminPort,
+		SinkURL:                      sinkURL,
+		EchoPort:                     echoPort,
+		GuardPort:                    guardPort,
+		AccessLoggerPort:             accessLoggerPort,
+		CorrelatorPort:               correlatorPort,
+		BodyPort:                     bodyPort,
+		MutableBodyPort:              mutableBodyPort,
+		CompressPort:                 compressPort,
+		CompressUpstreamPort:         compressUpstreamPort,
+		OtelSinkPort:                 otelSinkPort,
+		MetadataPort:                 metadataPort,
+		TracerPort:                   tracerPort,
+		AlsPort:                      alsPort,
+		AlsSinkPort:                  alsSinkPort,
+		UpstreamFilterPort:           upstreamFilterPort,
+		UpstreamAuthPort:             upstreamAuthPort,
+		UpstreamAuthGroupPort:        upstreamAuthGroupPort,
+		UpstreamFilterUpstreamPort:   upstreamFilterUpstreamPort,
+		LbPolicyPort:                 lbPolicyPort,
+		LbPolicyUpstreamPort:         upstreamFilterUpstreamPort,
+		ClusterExtensionPort:         clusterExtensionPort,
+		ClusterExtensionUpstreamPort: upstreamFilterUpstreamPort,
+		AdminPort:                    adminPort,
 	})
 
 	envoyCmd = exec.Command(bin,
@@ -283,27 +288,29 @@ func waitReady(timeout time.Duration) bool {
 }
 
 type envoyPorts struct {
-	SinkURL                    string
-	EchoPort                   int
-	GuardPort                  int
-	AccessLoggerPort           int
-	CorrelatorPort             int
-	BodyPort                   int
-	MutableBodyPort            int
-	CompressPort               int
-	CompressUpstreamPort       int
-	OtelSinkPort               int
-	MetadataPort               int
-	TracerPort                 int
-	AlsPort                    int
-	AlsSinkPort                int
-	UpstreamFilterPort         int
-	UpstreamAuthPort           int
-	UpstreamAuthGroupPort      int
-	UpstreamFilterUpstreamPort int
-	LbPolicyPort               int
-	LbPolicyUpstreamPort       int
-	AdminPort                  int
+	SinkURL                      string
+	EchoPort                     int
+	GuardPort                    int
+	AccessLoggerPort             int
+	CorrelatorPort               int
+	BodyPort                     int
+	MutableBodyPort              int
+	CompressPort                 int
+	CompressUpstreamPort         int
+	OtelSinkPort                 int
+	MetadataPort                 int
+	TracerPort                   int
+	AlsPort                      int
+	AlsSinkPort                  int
+	UpstreamFilterPort           int
+	UpstreamAuthPort             int
+	UpstreamAuthGroupPort        int
+	UpstreamFilterUpstreamPort   int
+	LbPolicyPort                 int
+	LbPolicyUpstreamPort         int
+	ClusterExtensionPort         int
+	ClusterExtensionUpstreamPort int
+	AdminPort                    int
 }
 
 func writeEnvoyConfig(p envoyPorts) string {

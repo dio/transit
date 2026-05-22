@@ -31,7 +31,7 @@ e2e/
 │   └── alssink/            gRPC ALS sink (envoy.service.accesslog.v3)
 ├── cmd/              helper binaries (e.g. upstream echo server)
 ├── testdata/
-│   └── envoy.yaml.tmpl   text/template for the Envoy bootstrap config
+│   └── envoy.tmpl.yaml   text/template for the Envoy bootstrap config
 ├── *_test.go         one file per feature / filter under test
 ├── main_test.go      TestMain: builds .so, starts Envoy, wires all sinks
 ├── go.mod            separate module (isolates heavyweight gRPC/OTel deps)
@@ -64,3 +64,5 @@ All three sinks live under [`sinks/`](sinks/) and expose a consistent pattern:
 | `otel_traces_test.go` | `OtelTracesSuite` | `GetActiveSpan().SetTag` → OTLP span attributes |
 | `als_test.go` | `AlsSuite` | dynamic metadata in ALS entries via `filter_metadata` |
 | `upstream_filter_test.go` | `UpstreamFilterSuite` | dynamic module filter as upstream filter; auth injection |
+| `lb_policy_test.go` | LB Policy | custom LB policy host selection |
+| `cluster_test.go` | Cluster Extension | module-owned host discovery and host selection |

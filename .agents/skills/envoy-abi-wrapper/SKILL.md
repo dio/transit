@@ -120,6 +120,32 @@ envoy_dynamic_module_on_cluster_http_callout_done
 `envoy_dynamic_module_on_cluster_http_callout_done` is currently a required
 stub; transit does not expose cluster HTTP callouts.
 
+## Cluster Extension Envoy config
+
+Dynamic module clusters use Envoy's Cluster Extension config, not the LB Policy
+extension config. The cluster must use `lb_policy: CLUSTER_PROVIDED`.
+
+```
+clusters:
+  - name: upstream
+    connect_timeout: 5s
+    lb_policy: CLUSTER_PROVIDED
+    cluster_type:
+      name: envoy.clusters.dynamic_modules
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_modules.v3.ClusterConfig
+        dynamic_module_config:
+          name: <module-name>
+        cluster_name: <registered-cluster-name>
+        cluster_config:
+          "@type": type.googleapis.com/google.protobuf.StringValue
+          value: '{"hosts":[{"address":"127.0.0.1:8080"}]}'
+```
+
+`cluster_name` must match the name passed to `up.RegisterCluster`. For simple
+examples and e2e tests, prefer `google.protobuf.StringValue` carrying JSON so
+the module can parse the config without protobuf dependencies.
+
 ## Cluster main-thread scheduling
 
 `ClusterHandle` methods that mutate cluster state must run on Envoy's main

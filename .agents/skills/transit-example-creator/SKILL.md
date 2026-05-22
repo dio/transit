@@ -25,6 +25,16 @@ examples/
     cmd/main.go
     lb_policy_test.go
     e2e/
+  cluster/
+    cluster.go
+    cmd/main.go
+    cluster_test.go
+    e2e/
+  cluster-dfp/
+    cluster_dfp.go
+    cmd/main.go
+    cluster_dfp_test.go
+    e2e/
   sse-tap/
   request-ui/
   spa/
@@ -36,11 +46,13 @@ Simple examples use:
 examples/<name>/<name>.go
 examples/<name>/cmd/main.go
 examples/<name>/<name>_test.go
+examples/<name>/Makefile
 examples/<name>/e2e/e2e_test.go
-examples/<name>/e2e/testdata/envoy.yaml.tmpl
+examples/<name>/e2e/testdata/envoy.tmpl.yaml
 ```
 
-Larger examples may add local packages, UI assets, or a local `Makefile`.
+Larger examples may add local packages, UI assets, browser e2e assets, or
+additional helper commands.
 
 ## Implementation workflow
 
@@ -60,48 +72,89 @@ Larger examples may add local packages, UI assets, or a local `Makefile`.
    normal test binaries with unresolved Envoy callback symbols, while the `.so`
    is resolved by Envoy at runtime.
 6. Add unit tests for pure Go behavior where possible.
-7. Add e2e coverage when the feature depends on Envoy behavior, dynamic module
-   loading, upstream filters, telemetry, access logging, body mutation, or LB
-   selection.
+7. Add e2e coverage for every example. Keep it focused on the user-facing
+   behavior the example exists to demonstrate.
+8. Add `examples/<name>/Makefile` with at least `build`, `test`, `e2e`, `run`,
+   `clean`, and `download-envoy`. Do not add per-example targets to the root
+   `Makefile`; examples own their local lifecycle.
 
 Do not put CGO details in examples. The only `down/abi_impl` detail examples
 should carry is the required blank import in `cmd/main.go`.
+
+For example e2e suites, prefer embedding the Envoy config template:
+
+```
+//go:embed testdata/envoy.tmpl.yaml
+var envoyConfigTmpl string
+```
+
+Render the embedded template to a temp file before starting Envoy. This keeps
+the test self-contained and makes missing template files fail at compile time.
 
 For examples that use `//go:embed`, make sure the embedded files exist in a
 clean checkout. `golangci-lint` typechecks packages in CI and fails on missing
 embed patterns before any build script can generate assets. If a small built
 fixture is intentional, unignore and track that exact fixture.
 
-## Build and run commands
+## Upstream selection examples
 
-Build an example shared library from the repo root:
+LB Policy and Cluster Extension are separate APIs. Do not treat coverage or
+examples for one as coverage for the other.
+
+An LB Policy example should show Envoy owning the host set while the module
+implements `LBPolicy.ChooseHost`.
+
+A Cluster Extension example should show the lifecycle users need to copy:
+
+1. Parse config in `ClusterFactory.Create`.
+2. Create a cluster from `ClusterConfigFactory.NewCluster`.
+3. Add hosts and call `ClusterHandle.PreInitComplete` in `Cluster.Init`.
+4. Return a `ClusterLB` from `Cluster.NewClusterLB`.
+5. Choose a healthy host in `ClusterLB.ChooseHost`.
+
+A DFP-style Cluster Extension example should stay separate from the basic
+cluster example. Use request headers or filter state as the target signal,
+resolve or look up the target asynchronously, mutate hosts through
+`ClusterHandle.Schedule`, then complete host selection with
+`ClusterLBCompletion`.
+
+## Per-example Makefile
+
+Every example should have its own Makefile so users can work locally without
+remembering root target names:
 
 ```
-make build EXAMPLE=<name> EXAMPLE_CMD=./examples/<name>/cmd
+make -C examples/<name> build
+make -C examples/<name> test
+make -C examples/<name> e2e
+make -C examples/<name> run
 ```
 
-Run with Envoy:
+Use the examples module for Go commands inside those targets:
 
 ```
-make run EXAMPLE=<name> ENVOY_YAML=$PWD/examples/<name>/envoy.yaml
+cd $(ROOT)/examples && GOWORK=off go test ./<name>/...
 ```
 
-For direct commands from `examples/`, use `GOWORK=off`:
+Build shared libraries into the example directory for local runs:
 
 ```
-cd examples && GOWORK=off go test ./<name>/...
+cd $(ROOT)/examples && CGO_ENABLED=1 GOWORK=off go build -trimpath -buildmode=c-shared \
+  -o <name>/lib<name>.so ./<name>/cmd
 ```
 
 ## E2E expectations
 
-If adding example e2e, also add or update a root Make target when the example is
-meant to be run routinely:
+Every example must have an e2e entry point in its own Makefile:
 
 ```
-.PHONY: e2e-<name>
-e2e-<name>: $(ENVOY_BIN)
-	cd examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./<name>/e2e/... -v -timeout=60s
+.PHONY: e2e
+e2e:
+	cd $(ROOT)/examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./<name>/e2e/... -v -timeout=60s
 ```
+
+SPA/browser examples may use a script-backed e2e target, but `make -C
+examples/<name> e2e` should remain the public command.
 
 Use `transit-e2e-authoring` for the test harness details.
 
@@ -110,7 +163,7 @@ Use `transit-e2e-authoring` for the test harness details.
 For an example-only change:
 
 ```
-cd examples && GOWORK=off go test ./<name>/...
+make -C examples/<name> test
 ```
 
 For examples module-wide checks:
@@ -119,7 +172,7 @@ For examples module-wide checks:
 cd examples && GOWORK=off go test ./...
 ```
 
-For examples with e2e coverage, run the matching `make e2e-<name>` target after
+For example e2e coverage, run `make -C examples/<name> e2e` after
 `make download-envoy` has populated `.bin/envoy`.
 
 Use `transit-unit-testing` for ordinary example unit-test issues and

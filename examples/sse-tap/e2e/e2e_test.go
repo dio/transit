@@ -10,7 +10,7 @@
 //
 // Run:
 //
-//	make e2e-sse-tap
+//	make -C examples/sse-tap e2e
 //
 // Or directly (from the examples/ directory):
 //
@@ -21,6 +21,7 @@ package e2e
 
 import (
 	"bufio"
+	_ "embed"
 	"fmt"
 	"io"
 	"net"
@@ -34,6 +35,9 @@ import (
 	"text/template"
 	"time"
 )
+
+//go:embed testdata/envoy.tmpl.yaml
+var envoyConfigTmpl string
 
 var (
 	proxyURL     string
@@ -83,7 +87,7 @@ func TestMain(m *testing.M) {
 	proxyURL = fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
 	adminURL = fmt.Sprintf("http://127.0.0.1:%d", adminPort)
 
-	cfgPath := writeEnvoyConfig(filepath.Join(sseTapDir, "e2e"), map[string]int{
+	cfgPath := writeEnvoyConfig(map[string]int{
 		"ProxyPort":    proxyPort,
 		"UpstreamPort": upstreamPort,
 		"AdminPort":    adminPort,
@@ -343,12 +347,8 @@ func waitURL(url string, timeout time.Duration) bool {
 	return false
 }
 
-func writeEnvoyConfig(dir string, ports map[string]int) string {
-	tmplBytes, err := os.ReadFile(filepath.Join(dir, "testdata/envoy.yaml.tmpl"))
-	if err != nil {
-		panic("readTemplate: " + err.Error())
-	}
-	tmpl := template.Must(template.New("envoy").Parse(string(tmplBytes)))
+func writeEnvoyConfig(ports map[string]int) string {
+	tmpl := template.Must(template.New("envoy").Parse(envoyConfigTmpl))
 	f, err := os.CreateTemp("", "transit-sse-tap-e2e-*.yaml")
 	if err != nil {
 		panic(err)

@@ -1,2 +1,13 @@
-/* placeholder - replaced by Vite build output in production */
-body { margin: 0; }
+body {
+  font-family: system-ui, sans-serif;
+  margin: 2rem;
+}
+
+nav {
+  display: flex;
+  gap: 1rem;
+}
+
+button {
+  margin-top: 1rem;
+}
