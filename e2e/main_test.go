@@ -50,24 +50,25 @@ import (
 var envoyConfigTmpl string
 
 var (
-	echoAddr                string
-	guardAddr               string
-	accessLoggerAddr        string
-	correlatorAddr          string
-	bodyAddr                string
-	mutableBodyAddr         string
-	compressAddr            string
-	metadataAddr            string
-	tracerAddr              string
-	alsAddr                 string
-	upstreamFilterAddr      string
-	upstreamAuthAddr        string
-	upstreamAuthGroupAddr   string
-	lbPolicyAddr            string
-	clusterExtensionAddr    string
-	clusterExtensionTLSAddr string
-	clusterSchedulerAddr    string
-	adminAddr               string
+	echoAddr                 string
+	guardAddr                string
+	accessLoggerAddr         string
+	correlatorAddr           string
+	bodyAddr                 string
+	mutableBodyAddr          string
+	compressAddr             string
+	metadataAddr             string
+	tracerAddr               string
+	alsAddr                  string
+	upstreamFilterAddr       string
+	upstreamAuthAddr         string
+	upstreamAuthGroupAddr    string
+	lbPolicyAddr             string
+	clusterExtensionAddr     string
+	clusterExtensionTLSAddr  string
+	clusterExtensionMTLSAddr string
+	clusterSchedulerAddr     string
+	adminAddr                string
 )
 
 var otelSink *otelsink.Sink
@@ -106,7 +107,13 @@ func TestMain(m *testing.M) {
 	lbPolicyPort := freePort()
 	clusterExtensionPort := freePort()
 	clusterExtensionTLSPort := freePort()
-	clusterExtensionTLSUpstreamPort, clusterExtensionTLSCAPath, cleanupTLS := startTLSUpstream()
+	clusterExtensionTLSUpstream, cleanupTLS := startTLSUpstream(clusterExtensionTLSServerName, false)
+	clusterExtensionMTLSPort := freePort()
+	clusterExtensionMTLSUpstream, cleanupMTLS := startTLSUpstream(clusterExtensionMTLSServerName, true)
+	cleanupTLSUpstreams := func() {
+		cleanupTLS()
+		cleanupMTLS()
+	}
 	clusterSchedulerPort := freePort()
 	adminPort := freePort()
 
@@ -126,6 +133,7 @@ func TestMain(m *testing.M) {
 	lbPolicyAddr = fmt.Sprintf("http://localhost:%d", lbPolicyPort)
 	clusterExtensionAddr = fmt.Sprintf("http://localhost:%d", clusterExtensionPort)
 	clusterExtensionTLSAddr = fmt.Sprintf("http://localhost:%d", clusterExtensionTLSPort)
+	clusterExtensionMTLSAddr = fmt.Sprintf("http://localhost:%d", clusterExtensionMTLSPort)
 	clusterSchedulerAddr = fmt.Sprintf("http://localhost:%d", clusterSchedulerPort)
 	adminAddr = fmt.Sprintf("http://localhost:%d", adminPort)
 
@@ -150,12 +158,14 @@ func TestMain(m *testing.M) {
 		cmd.Stdout = os.Stderr
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
+			cleanupTLSUpstreams()
 			fmt.Fprintf(os.Stderr, "e2e: build failed: %v\n", err)
 			os.Exit(1)
 		}
 		fmt.Fprintln(os.Stderr, "e2e: build OK")
 	} else {
 		if _, err := os.Stat(soPath); err != nil {
+			cleanupTLSUpstreams()
 			fmt.Fprintf(os.Stderr, "e2e: TRANSIT_SKIP_BUILD=1 but libe2e.so not found at %s\n", soPath)
 			os.Exit(1)
 		}
@@ -163,33 +173,38 @@ func TestMain(m *testing.M) {
 	}
 
 	cfgPath := writeEnvoyConfig(envoyPorts{
-		SinkURL:                         sinkURL,
-		EchoPort:                        echoPort,
-		GuardPort:                       guardPort,
-		AccessLoggerPort:                accessLoggerPort,
-		CorrelatorPort:                  correlatorPort,
-		BodyPort:                        bodyPort,
-		MutableBodyPort:                 mutableBodyPort,
-		CompressPort:                    compressPort,
-		CompressUpstreamPort:            compressUpstreamPort,
-		OtelSinkPort:                    otelSinkPort,
-		MetadataPort:                    metadataPort,
-		TracerPort:                      tracerPort,
-		AlsPort:                         alsPort,
-		AlsSinkPort:                     alsSinkPort,
-		UpstreamFilterPort:              upstreamFilterPort,
-		UpstreamAuthPort:                upstreamAuthPort,
-		UpstreamAuthGroupPort:           upstreamAuthGroupPort,
-		UpstreamFilterUpstreamPort:      upstreamFilterUpstreamPort,
-		LbPolicyPort:                    lbPolicyPort,
-		LbPolicyUpstreamPort:            upstreamFilterUpstreamPort,
-		ClusterExtensionPort:            clusterExtensionPort,
-		ClusterExtensionUpstreamPort:    upstreamFilterUpstreamPort,
-		ClusterExtensionTLSPort:         clusterExtensionTLSPort,
-		ClusterExtensionTLSUpstreamPort: clusterExtensionTLSUpstreamPort,
-		ClusterExtensionTLSCAPath:       clusterExtensionTLSCAPath,
-		ClusterSchedulerPort:            clusterSchedulerPort,
-		AdminPort:                       adminPort,
+		SinkURL:                            sinkURL,
+		EchoPort:                           echoPort,
+		GuardPort:                          guardPort,
+		AccessLoggerPort:                   accessLoggerPort,
+		CorrelatorPort:                     correlatorPort,
+		BodyPort:                           bodyPort,
+		MutableBodyPort:                    mutableBodyPort,
+		CompressPort:                       compressPort,
+		CompressUpstreamPort:               compressUpstreamPort,
+		OtelSinkPort:                       otelSinkPort,
+		MetadataPort:                       metadataPort,
+		TracerPort:                         tracerPort,
+		AlsPort:                            alsPort,
+		AlsSinkPort:                        alsSinkPort,
+		UpstreamFilterPort:                 upstreamFilterPort,
+		UpstreamAuthPort:                   upstreamAuthPort,
+		UpstreamAuthGroupPort:              upstreamAuthGroupPort,
+		UpstreamFilterUpstreamPort:         upstreamFilterUpstreamPort,
+		LbPolicyPort:                       lbPolicyPort,
+		LbPolicyUpstreamPort:               upstreamFilterUpstreamPort,
+		ClusterExtensionPort:               clusterExtensionPort,
+		ClusterExtensionUpstreamPort:       upstreamFilterUpstreamPort,
+		ClusterExtensionTLSPort:            clusterExtensionTLSPort,
+		ClusterExtensionTLSUpstreamPort:    clusterExtensionTLSUpstream.port,
+		ClusterExtensionTLSCAPath:          clusterExtensionTLSUpstream.caPath,
+		ClusterExtensionMTLSPort:           clusterExtensionMTLSPort,
+		ClusterExtensionMTLSUpstreamPort:   clusterExtensionMTLSUpstream.port,
+		ClusterExtensionMTLSCAPath:         clusterExtensionMTLSUpstream.caPath,
+		ClusterExtensionMTLSClientCertPath: clusterExtensionMTLSUpstream.clientCertPath,
+		ClusterExtensionMTLSClientKeyPath:  clusterExtensionMTLSUpstream.clientKeyPath,
+		ClusterSchedulerPort:               clusterSchedulerPort,
+		AdminPort:                          adminPort,
 	})
 
 	envoyCmd = exec.Command(bin,
@@ -206,7 +221,7 @@ func TestMain(m *testing.M) {
 
 	if err := envoyCmd.Start(); err != nil {
 		os.Remove(cfgPath)
-		cleanupTLS()
+		cleanupTLSUpstreams()
 		fmt.Fprintf(os.Stderr, "e2e: envoy start failed: %v\n", err)
 		os.Exit(1)
 	}
@@ -216,7 +231,7 @@ func TestMain(m *testing.M) {
 		envoyCmd.Process.Kill()
 		envoyCmd.Wait()
 		os.Remove(cfgPath)
-		cleanupTLS()
+		cleanupTLSUpstreams()
 		fmt.Fprintln(os.Stderr, "e2e: envoy not ready in time")
 		os.Exit(1)
 	}
@@ -227,7 +242,7 @@ func TestMain(m *testing.M) {
 	envoyCmd.Process.Kill()
 	envoyCmd.Wait()
 	os.Remove(cfgPath)
-	cleanupTLS()
+	cleanupTLSUpstreams()
 	os.Exit(code)
 }
 
@@ -293,21 +308,43 @@ func startPlainUpstream() int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
-const clusterExtensionTLSServerName = "cluster-tls.local"
+const (
+	clusterExtensionTLSServerName  = "cluster-tls.local"
+	clusterExtensionMTLSServerName = "cluster-mtls.local"
+)
 
-// startTLSUpstream starts a local HTTPS upstream and returns its port plus the
-// CA file Envoy should trust. The certificate is valid only for
-// cluster-tls.local so Envoy must use SNI and SAN validation to connect.
-func startTLSUpstream() (int, string, func()) {
+type tlsUpstream struct {
+	port           int
+	caPath         string
+	clientCertPath string
+	clientKeyPath  string
+}
+
+// startTLSUpstream starts a local HTTPS upstream and writes the certificate
+// material Envoy needs. When requireClientCert is true, the upstream refuses the
+// handshake unless Envoy presents the generated client certificate.
+func startTLSUpstream(serverName string, requireClientCert bool) (tlsUpstream, func()) {
 	dir, err := os.MkdirTemp("", "transit-e2e-tls-*")
 	if err != nil {
 		panic("startTLSUpstream: " + err.Error())
 	}
-	cert, caPEM := generateLocalTLSCert()
+	material := generateLocalTLSMaterial(serverName)
 	caPath := filepath.Join(dir, "ca.pem")
-	if err := os.WriteFile(caPath, caPEM, 0o600); err != nil {
+	if err := os.WriteFile(caPath, material.caPEM, 0o600); err != nil {
 		os.RemoveAll(dir)
 		panic("startTLSUpstream: " + err.Error())
+	}
+	clientCertPath := filepath.Join(dir, "client.pem")
+	clientKeyPath := filepath.Join(dir, "client-key.pem")
+	if requireClientCert {
+		if err := os.WriteFile(clientCertPath, material.clientCertPEM, 0o600); err != nil {
+			os.RemoveAll(dir)
+			panic("startTLSUpstream: " + err.Error())
+		}
+		if err := os.WriteFile(clientKeyPath, material.clientKeyPEM, 0o600); err != nil {
+			os.RemoveAll(dir)
+			panic("startTLSUpstream: " + err.Error())
+		}
 	}
 
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -323,12 +360,25 @@ func startTLSUpstream() (int, string, func()) {
 			}
 			w.Header().Set("content-type", "text/plain")
 			w.WriteHeader(http.StatusOK)
-			fmt.Fprintf(w, "tls upstream ok sni=%s", r.TLS.ServerName)
+			clientCN := ""
+			if len(r.TLS.PeerCertificates) > 0 {
+				clientCN = r.TLS.PeerCertificates[0].Subject.CommonName
+			}
+			fmt.Fprintf(w, "tls upstream ok sni=%s client=%s", r.TLS.ServerName, clientCN)
 		}),
 		TLSConfig: &tls.Config{
-			Certificates: []tls.Certificate{cert},
+			Certificates: []tls.Certificate{material.serverCert},
 			MinVersion:   tls.VersionTLS12,
 		},
+	}
+	if requireClientCert {
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(material.caPEM) {
+			os.RemoveAll(dir)
+			panic("startTLSUpstream: failed to load client CA")
+		}
+		server.TLSConfig.ClientAuth = tls.RequireAndVerifyClientCert
+		server.TLSConfig.ClientCAs = pool
 	}
 	go server.Serve(tls.NewListener(l, server.TLSConfig)) //nolint:errcheck
 
@@ -336,14 +386,26 @@ func startTLSUpstream() (int, string, func()) {
 		server.Close()
 		os.RemoveAll(dir)
 	}
-	return l.Addr().(*net.TCPAddr).Port, caPath, cleanup
+	return tlsUpstream{
+		port:           l.Addr().(*net.TCPAddr).Port,
+		caPath:         caPath,
+		clientCertPath: clientCertPath,
+		clientKeyPath:  clientKeyPath,
+	}, cleanup
 }
 
-func generateLocalTLSCert() (tls.Certificate, []byte) {
+type tlsMaterial struct {
+	serverCert    tls.Certificate
+	caPEM         []byte
+	clientCertPEM []byte
+	clientKeyPEM  []byte
+}
+
+func generateLocalTLSMaterial(serverName string) tlsMaterial {
 	now := time.Now()
 	caKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		panic("generateLocalTLSCert ca key: " + err.Error())
+		panic("generateLocalTLSMaterial ca key: " + err.Error())
 	}
 	caTemplate := &x509.Certificate{
 		SerialNumber:          big.NewInt(1),
@@ -356,17 +418,17 @@ func generateLocalTLSCert() (tls.Certificate, []byte) {
 	}
 	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
 	if err != nil {
-		panic("generateLocalTLSCert ca cert: " + err.Error())
+		panic("generateLocalTLSMaterial ca cert: " + err.Error())
 	}
 
 	serverKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		panic("generateLocalTLSCert server key: " + err.Error())
+		panic("generateLocalTLSMaterial server key: " + err.Error())
 	}
 	serverTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(2),
-		Subject:      pkix.Name{CommonName: clusterExtensionTLSServerName},
-		DNSNames:     []string{clusterExtensionTLSServerName},
+		Subject:      pkix.Name{CommonName: serverName},
+		DNSNames:     []string{serverName},
 		NotBefore:    now.Add(-time.Hour),
 		NotAfter:     now.Add(time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
@@ -374,17 +436,39 @@ func generateLocalTLSCert() (tls.Certificate, []byte) {
 	}
 	serverDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, caTemplate, &serverKey.PublicKey, caKey)
 	if err != nil {
-		panic("generateLocalTLSCert server cert: " + err.Error())
+		panic("generateLocalTLSMaterial server cert: " + err.Error())
 	}
 
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverDER})
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(serverKey)})
 	cert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
-		panic("generateLocalTLSCert key pair: " + err.Error())
+		panic("generateLocalTLSMaterial server key pair: " + err.Error())
+	}
+
+	clientKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		panic("generateLocalTLSMaterial client key: " + err.Error())
+	}
+	clientTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(3),
+		Subject:      pkix.Name{CommonName: "transit-e2e-client"},
+		NotBefore:    now.Add(-time.Hour),
+		NotAfter:     now.Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	clientDER, err := x509.CreateCertificate(rand.Reader, clientTemplate, caTemplate, &clientKey.PublicKey, caKey)
+	if err != nil {
+		panic("generateLocalTLSMaterial client cert: " + err.Error())
 	}
 	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
-	return cert, caPEM
+	return tlsMaterial{
+		serverCert:    cert,
+		caPEM:         caPEM,
+		clientCertPEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: clientDER}),
+		clientKeyPEM:  pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(clientKey)}),
+	}
 }
 
 func waitReady(timeout time.Duration) bool {
@@ -403,33 +487,38 @@ func waitReady(timeout time.Duration) bool {
 }
 
 type envoyPorts struct {
-	SinkURL                         string
-	EchoPort                        int
-	GuardPort                       int
-	AccessLoggerPort                int
-	CorrelatorPort                  int
-	BodyPort                        int
-	MutableBodyPort                 int
-	CompressPort                    int
-	CompressUpstreamPort            int
-	OtelSinkPort                    int
-	MetadataPort                    int
-	TracerPort                      int
-	AlsPort                         int
-	AlsSinkPort                     int
-	UpstreamFilterPort              int
-	UpstreamAuthPort                int
-	UpstreamAuthGroupPort           int
-	UpstreamFilterUpstreamPort      int
-	LbPolicyPort                    int
-	LbPolicyUpstreamPort            int
-	ClusterExtensionPort            int
-	ClusterExtensionUpstreamPort    int
-	ClusterExtensionTLSPort         int
-	ClusterExtensionTLSUpstreamPort int
-	ClusterExtensionTLSCAPath       string
-	ClusterSchedulerPort            int
-	AdminPort                       int
+	SinkURL                            string
+	EchoPort                           int
+	GuardPort                          int
+	AccessLoggerPort                   int
+	CorrelatorPort                     int
+	BodyPort                           int
+	MutableBodyPort                    int
+	CompressPort                       int
+	CompressUpstreamPort               int
+	OtelSinkPort                       int
+	MetadataPort                       int
+	TracerPort                         int
+	AlsPort                            int
+	AlsSinkPort                        int
+	UpstreamFilterPort                 int
+	UpstreamAuthPort                   int
+	UpstreamAuthGroupPort              int
+	UpstreamFilterUpstreamPort         int
+	LbPolicyPort                       int
+	LbPolicyUpstreamPort               int
+	ClusterExtensionPort               int
+	ClusterExtensionUpstreamPort       int
+	ClusterExtensionTLSPort            int
+	ClusterExtensionTLSUpstreamPort    int
+	ClusterExtensionTLSCAPath          string
+	ClusterExtensionMTLSPort           int
+	ClusterExtensionMTLSUpstreamPort   int
+	ClusterExtensionMTLSCAPath         string
+	ClusterExtensionMTLSClientCertPath string
+	ClusterExtensionMTLSClientKeyPath  string
+	ClusterSchedulerPort               int
+	AdminPort                          int
 }
 
 func writeEnvoyConfig(p envoyPorts) string {

@@ -92,7 +92,7 @@ test:
 
 .PHONY: e2e
 e2e: $(ENVOY_BIN)
-	cd e2e && ENVOY_BIN=$(ENVOY_BIN) go test ./... -v -timeout=90s
+	$(MAKE) -C e2e ENVOY_BIN=$(ENVOY_BIN) test
 
 .PHONY: vet
 vet:

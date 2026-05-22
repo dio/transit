@@ -24,5 +24,16 @@ func TestClusterExtension_tlsHosts(t *testing.T) {
 	resp, err := http.Get(clusterExtensionTLSAddr + "/") //nolint:noctx
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, "tls upstream ok sni=cluster-tls.local", readBody(t, resp))
+	require.Equal(t, "tls upstream ok sni=cluster-tls.local client=", readBody(t, resp))
+}
+
+// TestClusterExtension_mTLSHosts verifies that Envoy can add a client
+// certificate on top of the same Cluster Extension host discovery path. The
+// local HTTPS upstream requires and verifies that client certificate before it
+// responds.
+func TestClusterExtension_mTLSHosts(t *testing.T) {
+	resp, err := http.Get(clusterExtensionMTLSAddr + "/") //nolint:noctx
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, "tls upstream ok sni=cluster-mtls.local client=transit-e2e-client", readBody(t, resp))
 }
