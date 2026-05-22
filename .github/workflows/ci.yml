@@ -15,7 +15,6 @@ on:
 
 env:
   CGO_ENABLED: "1"
-  ENVOY_DEV_SHA: "0d6e3c60aa55e434f28e581df1d25fcb83404b68"
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -55,7 +54,8 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # e2e: all integration test suites against dev Envoy
-  # ENVOY_DEV_SHA pins the dev build; bump it alongside the SDK when updating.
+  # Cache key is the hash of down/abi_impl/VERSION so the binary refreshes
+  # automatically whenever make update-sdk bumps the SDK commit.
   # ---------------------------------------------------------------------------
   e2e:
     name: e2e
@@ -72,7 +72,7 @@ jobs:
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: .bin/envoy
-          key: envoy-dev-${{ env.ENVOY_DEV_SHA }}-linux-amd64
+          key: envoy-dev-${{ hashFiles('down/abi_impl/VERSION') }}-linux-amd64
 
       - name: download envoy
         if: steps.cache-envoy.outputs.cache-hit != 'true'
