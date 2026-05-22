@@ -592,6 +592,206 @@ patch: HTTP/2 protocol options plus ALPN set to `h2`. The Transit
 host-selection API should not grow transport-level TLS knobs unless Envoy's
 dynamic module Cluster Extension API requires it later.
 
+## MCP Fan-Out Research
+
+MCP fan-out is a separate problem from Cluster Extension host selection.
+Cluster Extension answers "which one host should handle this request?" MCP
+fan-out answers "which shard-local MCP servers should contribute to one logical
+response?"
+
+That distinction matters most for `tools/list`. Listing tools is discovery.
+It is safe to aggregate across multiple MCP servers when the caller is allowed
+to see those servers. Executing a tool with `tools/call` is different: the call
+should normally route to exactly one server, because it may mutate state, spend
+quota, touch credentials, or depend on server-local session state.
+
+### Recommended Placement
+
+Put the first fan-out implementation above the Cluster Extension layer:
+
+```text
+client
+  |
+  | JSON-RPC tools/list
+  v
+L1 shard router
+  |
+  | selects shard set or default shard
+  v
+L2 MCP aggregator
+  |
+  +--> mcp-a
+  +--> mcp-b
+  +--> mcp-c
+```
+
+The L2 MCP aggregator can be a small Go service first. That keeps JSON-RPC
+parsing, pagination, caching, merge policy, timeout policy, and partial failure
+handling in ordinary Go code instead of pushing those semantics into Envoy
+cluster selection too early.
+
+Cluster Extension still helps, but only for single-target routing:
+
+- L1 chooses the state shard or shard set.
+- L2 `cluster-router` can route non-fan-out MCP calls to one MCP server.
+- Cluster Extension can select the shard-local aggregator service.
+- Cluster Extension should not try to turn one `tools/list` request into N
+  upstream requests.
+
+### First Supported Methods
+
+Start narrow:
+
+| Method | Fan-out? | Reason |
+| --- | --- | --- |
+| `tools/list` | yes | discovery response can be merged |
+| `resources/list` | later | similar shape, but resource URI semantics need care |
+| `prompts/list` | later | similar shape, but prompt naming collisions need policy |
+| `tools/call` | no | execution should route to one selected server |
+| stateful or streaming calls | no | session ownership is not an aggregation problem |
+
+### Merge Policy
+
+The aggregator should return one MCP `tools/list` response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "tools": [
+      {
+        "name": "github.search",
+        "description": "Search GitHub",
+        "inputSchema": {}
+      }
+    ]
+  }
+}
+```
+
+Tool names should be globally stable after aggregation. The safest first policy
+is namespacing:
+
+```text
+<server-id>.<tool-name>
+```
+
+For example:
+
+```text
+github.search
+linear.search
+docs.search
+```
+
+That avoids silent collisions where two MCP servers both expose `search`.
+Later, the control plane can add aliases, but aliases should be explicit and
+the active dump should show which server owns each alias.
+
+### Timeout And Partial Failure Policy
+
+The aggregator needs request-budget accounting:
+
+- one parent timeout for the logical `tools/list`
+- one per-server timeout below the parent budget
+- bounded concurrency
+- deterministic result ordering
+- partial failure metadata in an internal debug endpoint or response extension
+
+For the first demo, prefer fail-open discovery:
+
+```text
+if at least one MCP server responds:
+  return the merged tools from responding servers
+  record failed servers in the aggregator dump
+else:
+  return a JSON-RPC error or empty list, depending on the client contract
+```
+
+Do not expose raw backend errors to the model by default. Operator dumps should
+show enough to debug, but model-visible tool descriptions should stay clean.
+
+### Routing `tools/call`
+
+Fan-out discovery implies a routing table for execution. If the aggregator
+returns `github.search`, then a later `tools/call` with that name should route
+only to the GitHub MCP server:
+
+```text
+tools/list
+  -> aggregate github.search, linear.search, docs.search
+
+tools/call name=github.search
+  -> strip or map the public name back to search
+  -> send one request to the github MCP server
+```
+
+This can also happen in a router layer instead of the aggregator, but the first
+demo should keep list and call ownership together. The component that creates
+the public tool name should also know how to reverse-map that name.
+
+### Control-Plane Shape
+
+The control plane should describe MCP server groups separately from model
+provider routes:
+
+```json
+{
+  "version": "mcp-bootstrap",
+  "mcp_groups": {
+    "default": {
+      "timeout_millis": 800,
+      "servers": {
+        "github": {
+          "target": "mcp-github.transit-dataplane.svc.cluster.local:8080",
+          "prefix": "github"
+        },
+        "linear": {
+          "target": "mcp-linear.transit-dataplane.svc.cluster.local:8080",
+          "prefix": "linear"
+        }
+      }
+    }
+  }
+}
+```
+
+Shard-local variants can use the existing L1/L2 split:
+
+```text
+L1 tag a-demo -> L2 A MCP aggregator -> mcp-github-a + mcp-linear-a
+L1 tag b-demo -> L2 B MCP aggregator -> mcp-github-b + mcp-docs-b
+```
+
+This preserves the same rule as BYOK and provider routing: shard-local state
+stays behind the L2 shard that owns it.
+
+### First Demo Target
+
+Do not start inside Envoy. Start with a deterministic Go aggregator service in
+the integration:
+
+- `tiered-router-demo mcp-server --id github`
+- `tiered-router-demo mcp-server --id linear`
+- `tiered-router-demo mcp-aggregator --group default`
+- `tiered-router-demo mcp tools-list`
+- `tiered-router-demo mcp tools-call github.search`
+
+The e2e should assert:
+
+- `tools/list` fans out to at least two shard-local MCP servers.
+- returned tool names are namespaced and deterministic.
+- one slow MCP server does not block the whole response past the parent budget.
+- one failed MCP server is visible in the aggregator dump.
+- `tools/call` for a namespaced tool routes to exactly one MCP server.
+- `tools/call` for an unknown tool returns a controlled JSON-RPC error.
+
+Only after those semantics are stable should we consider moving fan-out into a
+Transit HTTP filter. That move needs a real outbound subrequest API and clear
+body buffering limits. Until then, a service-level aggregator is the right
+place to learn.
+
 Each L2 logical shard asks the control plane for its own config:
 
 ```text

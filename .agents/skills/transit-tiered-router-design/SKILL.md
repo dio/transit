@@ -106,6 +106,27 @@ cluster. Use a separate TLS-enabled provider route or cluster and let Envoy
 originate TLS with `UpstreamTlsContext`. Keep SNI, authority, and optional H2
 protocol metadata in the model/provider config.
 
+## MCP fan-out
+
+MCP fan-out is not ordinary Cluster Extension host selection. Cluster Extension
+chooses one host. Fan-out creates one logical response from several upstream
+MCP servers.
+
+Start fan-out above the cluster layer as a small Go MCP aggregator service:
+
+- Fan out `tools/list` first because it is discovery and can be merged.
+- Do not fan out `tools/call` by default. Route it to the one server that owns
+  the selected namespaced tool.
+- Namespace tool names as `<server-id>.<tool-name>` for the first demo.
+- Keep timeout budgets, partial failure accounting, result ordering, and merge
+  policy in the aggregator until the semantics are stable.
+- Use Cluster Extension only to route to the shard-local aggregator or to one
+  selected MCP server for non-fan-out calls.
+
+Only consider a Transit HTTP-filter implementation after the service-level
+aggregator proves the JSON-RPC semantics and Transit has an outbound subrequest
+API with clear body buffering limits.
+
 ## Testing priority
 
 Prove the topology incrementally:
@@ -117,3 +138,5 @@ Prove the topology incrementally:
 3. Shard-local config: the same model resolves differently in shard A and B.
 4. Dynamic config: add a shard or model without changing Gateway API.
 5. Provider egress: route one model to a TLS internet endpoint.
+6. MCP fan-out: aggregate `tools/list` across shard-local MCP servers, then
+   route `tools/call` for a namespaced tool to exactly one server.
