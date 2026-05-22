@@ -15,6 +15,7 @@ on:
 
 env:
   CGO_ENABLED: "1"
+  ENVOY_DEV_SHA: "0d6e3c60aa55e434f28e581df1d25fcb83404b68"
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -54,9 +55,7 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # e2e: all integration test suites against dev Envoy
-  # Dev Envoy is fetched from archive.tetratelabs.io/envoy/download/dev/;
-  # the cache key is pinned to the dev commitSha from envoy-versions.json so
-  # it refreshes automatically when a new dev build is published.
+  # ENVOY_DEV_SHA pins the dev build; bump it alongside the SDK when updating.
   # ---------------------------------------------------------------------------
   e2e:
     name: e2e
@@ -68,19 +67,12 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: resolve dev envoy commit
-        id: envoy
-        run: |
-          SHA=$(curl -fsSL https://archive.tetratelabs.io/envoy/envoy-versions.json \
-            | python3 -c "import sys,json; print(json.load(sys.stdin)['dev']['commitSha'])")
-          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
-
       - name: cache envoy
         id: cache-envoy
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: .bin/envoy
-          key: envoy-dev-${{ steps.envoy.outputs.sha }}-linux-amd64
+          key: envoy-dev-${{ env.ENVOY_DEV_SHA }}-linux-amd64
 
       - name: download envoy
         if: steps.cache-envoy.outputs.cache-hit != 'true'
