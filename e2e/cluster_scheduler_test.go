@@ -1,25 +1,39 @@
 package e2e
 
 import (
+	"fmt"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestClusterExtension_schedulerCallback(t *testing.T) {
-	deadline := time.Now().Add(5 * time.Second)
 	var last string
-	for time.Now().Before(deadline) {
+	require.Eventually(t, func() bool {
 		resp, err := http.Get(clusterSchedulerAddr + "/") //nolint:noctx
 		if err != nil {
-			t.Fatalf("GET scheduler state: %v", err)
+			last = fmt.Sprintf("GET scheduler state: %v", err)
+			return false
 		}
 		last = readBody(t, resp)
-		if strings.Contains(last, "committed=2") && strings.Contains(last, "ran=2") {
-			return
+		if resp.StatusCode != http.StatusOK {
+			last = fmt.Sprintf("GET scheduler state: status %d body %s", resp.StatusCode, last)
+			return false
 		}
-		time.Sleep(100 * time.Millisecond)
+
+		committed, ran, ok := parseSchedulerState(last)
+		if !ok {
+			return false
+		}
+		return committed >= 2 && ran == committed
+	}, 5*time.Second, 100*time.Millisecond, "scheduled callback did not run; last state: %s", last)
+}
+
+func parseSchedulerState(body string) (committed int64, ran int64, ok bool) {
+	if _, err := fmt.Sscanf(body, "committed=%d ran=%d", &committed, &ran); err != nil {
+		return 0, 0, false
 	}
-	t.Fatalf("scheduled callback did not run; last state: %s", last)
+	return committed, ran, true
 }
