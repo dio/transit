@@ -36,9 +36,11 @@ func TestResolveConfigSnapshot(t *testing.T) {
 		Version: "v1",
 		Models: map[string]modelConfig{
 			"gpt-fast": {
-				Target:   target,
-				Provider: "openai",
-				AuthRef:  "openai-default",
+				Target:    target,
+				Provider:  "openai",
+				AuthRef:   "openai-default",
+				Profile:   "profile-a",
+				BYOKKeyID: "key-a-001",
 			},
 		},
 		Auth: map[string]authConfig{
@@ -51,6 +53,8 @@ func TestResolveConfigSnapshot(t *testing.T) {
 	require.Equal(t, target, route.Target)
 	require.Equal(t, "openai", route.Provider)
 	require.Equal(t, "openai-default", route.AuthRef)
+	require.Equal(t, "profile-a", route.Profile)
+	require.Equal(t, "key-a-001", route.BYOKKeyID)
 	require.Contains(t, route.Address, ":8080")
 	require.Equal(t, "static", snap.Auth["openai-default"].Type)
 }

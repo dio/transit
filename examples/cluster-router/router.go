@@ -19,8 +19,10 @@ const (
 	tenantHeader = "x-tenant"
 	debugPath    = "/__cluster-router/config"
 
-	defaultRefresh = time.Second
-	defaultTimeout = 500 * time.Millisecond
+	defaultScope       = "default"
+	httpsProviderScope = "https-provider"
+	defaultRefresh     = time.Second
+	defaultTimeout     = 500 * time.Millisecond
 )
 
 // One shared route table keeps the example honest. Host selection and upstream
@@ -30,19 +32,33 @@ const (
 //   - the Cluster Extension reads it while choosing a host
 //   - the upstream HTTP filter reads it while injecting provider headers
 //   - the debug HTTP filter reads it while dumping active config
-var activeRoutes = newRouteStore()
+var routeStores = struct {
+	sync.Mutex
+	byScope map[string]*routeStore
+}{byScope: make(map[string]*routeStore)}
+
+var activeRoutes = routeStoreForScope(defaultScope)
 
 func init() {
 	up.RegisterCluster("cluster-router", &clusterFactory{})
-	up.Register("cluster-router-upstream", upstreamHeaderFilter)
+	up.Register("cluster-router-upstream", upstreamHeaderFilterForStore(routeStoreForScope(defaultScope)))
+	up.Register("cluster-router-upstream-https", upstreamHeaderFilterForStore(routeStoreForScope(httpsProviderScope)))
 	up.Register("cluster-router-debug", debugHandler)
 }
 
 type routerConfig struct {
+	Scope         string         `json:"scope,omitempty"`
 	ConfigURL     string         `json:"config_url,omitempty"`
 	RefreshMillis int            `json:"refresh_millis,omitempty"`
 	TimeoutMillis int            `json:"timeout_millis,omitempty"`
 	Initial       configSnapshot `json:"initial,omitempty"`
+}
+
+func (c routerConfig) scope() string {
+	if c.Scope == "" {
+		return defaultScope
+	}
+	return c.Scope
 }
 
 func (c routerConfig) refresh() time.Duration {
@@ -71,6 +87,8 @@ type modelConfig struct {
 	Provider   string `json:"provider"`
 	AuthHeader string `json:"auth_header,omitempty"`
 	AuthRef    string `json:"auth_ref,omitempty"`
+	Profile    string `json:"profile,omitempty"`
+	BYOKKeyID  string `json:"byok_key_id,omitempty"`
 }
 
 type authConfig struct {
@@ -92,6 +110,8 @@ type modelRoute struct {
 	Provider   string
 	AuthHeader string
 	AuthRef    string
+	Profile    string
+	BYOKKeyID  string
 }
 
 type authPolicy struct {
@@ -119,6 +139,20 @@ func newRouteStore() *routeStore {
 		BYOK:   make(map[string]map[string]string),
 	})
 	return s
+}
+
+func routeStoreForScope(scope string) *routeStore {
+	if scope == "" {
+		scope = defaultScope
+	}
+	routeStores.Lock()
+	defer routeStores.Unlock()
+	if store, ok := routeStores.byScope[scope]; ok {
+		return store
+	}
+	store := newRouteStore()
+	routeStores.byScope[scope] = store
+	return store
 }
 
 func (s *routeStore) Current() routeSnapshot {
@@ -191,6 +225,8 @@ func resolveConfigSnapshot(parent context.Context, cfg configSnapshot, timeout t
 			Provider:   model.Provider,
 			AuthHeader: model.AuthHeader,
 			AuthRef:    model.AuthRef,
+			Profile:    model.Profile,
+			BYOKKeyID:  model.BYOKKeyID,
 		}
 	}
 	return out, nil

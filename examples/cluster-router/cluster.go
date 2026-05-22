@@ -28,7 +28,7 @@ func (cf *clusterConfigFactory) NewCluster(h up.ClusterHandle) up.Cluster {
 	return &routerCluster{
 		handle:  h,
 		cfg:     cf.cfg,
-		store:   activeRoutes,
+		store:   routeStoreForScope(cf.cfg.scope()),
 		timeout: cf.cfg.timeout(),
 		refresh: cf.cfg.refresh(),
 	}

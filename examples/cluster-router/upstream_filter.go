@@ -6,26 +6,34 @@ import (
 	"github.com/dio/transit/up"
 )
 
-func upstreamHeaderFilter(w *up.Writer, r *up.Request) {
-	// Upstream filters run after host selection. Keep this filter focused on
-	// request shaping: provider headers, auth, and traceable router version.
-	model := r.Header(modelHeader)
-	if model == "" {
-		return
-	}
-	snap := activeRoutes.Current()
-	route, ok := snap.Models[model]
-	if !ok {
-		return
-	}
-	if auth := resolveAuthHeader(snap, route, r.Header(tenantHeader)); auth != "" {
-		w.SetRequestHeader("authorization", auth)
-	}
-	if route.Provider != "" {
-		w.SetRequestHeader("x-llm-provider", route.Provider)
-	}
-	if snap.Version != "" {
-		w.SetRequestHeader("x-cluster-router-version", snap.Version)
+func upstreamHeaderFilterForStore(store *routeStore) func(*up.Writer, *up.Request) {
+	return func(w *up.Writer, r *up.Request) {
+		// Upstream filters run after host selection. Keep this filter focused on
+		// request shaping: provider headers, auth, and traceable router version.
+		model := r.Header(modelHeader)
+		if model == "" {
+			return
+		}
+		snap := store.Current()
+		route, ok := snap.Models[model]
+		if !ok {
+			return
+		}
+		if auth := resolveAuthHeader(snap, route, r.Header(tenantHeader)); auth != "" {
+			w.SetRequestHeader("authorization", auth)
+		}
+		if route.Provider != "" {
+			w.SetRequestHeader("x-llm-provider", route.Provider)
+		}
+		if route.Profile != "" {
+			w.SetRequestHeader("x-user-profile", route.Profile)
+		}
+		if route.BYOKKeyID != "" {
+			w.SetRequestHeader("x-byok-key-id", route.BYOKKeyID)
+		}
+		if snap.Version != "" {
+			w.SetRequestHeader("x-cluster-router-version", snap.Version)
+		}
 	}
 }
 
@@ -78,10 +86,12 @@ type debugSnapshot struct {
 }
 
 type debugModel struct {
-	Target   string `json:"target"`
-	Address  string `json:"address"`
-	Provider string `json:"provider"`
-	AuthRef  string `json:"auth_ref,omitempty"`
+	Target    string `json:"target"`
+	Address   string `json:"address"`
+	Provider  string `json:"provider"`
+	AuthRef   string `json:"auth_ref,omitempty"`
+	Profile   string `json:"profile,omitempty"`
+	BYOKKeyID string `json:"byok_key_id,omitempty"`
 }
 
 type debugAuth struct {
@@ -98,10 +108,12 @@ func (s *routeStore) DebugSnapshot() debugSnapshot {
 	}
 	for name, route := range snap.Models {
 		out.Models[name] = debugModel{
-			Target:   route.Target,
-			Address:  route.Address,
-			Provider: route.Provider,
-			AuthRef:  route.AuthRef,
+			Target:    route.Target,
+			Address:   route.Address,
+			Provider:  route.Provider,
+			AuthRef:   route.AuthRef,
+			Profile:   route.Profile,
+			BYOKKeyID: route.BYOKKeyID,
 		}
 	}
 	for name, auth := range snap.Auth {

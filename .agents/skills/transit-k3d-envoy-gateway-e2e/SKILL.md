@@ -102,6 +102,61 @@ Poll `EnvoyPatchPolicy` programmed status through
 `status.ancestors[*].conditions`; generic `kubectl wait
 envoypatchpolicy/... --for=condition=Programmed` can miss the nested condition.
 
+## Gateway Namespace mode
+
+When an integration enables Gateway Namespace mode through the Envoy Gateway
+runtime config, make the namespace and RBAC assumptions explicit in manifests.
+
+The controller namespace and dataplane namespace should both be watched. If the
+watch list only includes the dataplane namespace, Envoy Gateway can fail to read
+its own TLS secret and Gateways may be Accepted but not Programmed:
+
+```yaml
+provider:
+  kubernetes:
+    deploy:
+      type: GatewayNamespace
+    watch:
+      type: Namespaces
+      namespaces:
+      - transit-system
+      - transit-dataplane
+```
+
+The Envoy Gateway service account also needs dataplane namespace infra-manager
+permissions when Helm did not create namespace-specific RBAC. Mirror the chart's
+infra-manager Role shape for serviceaccounts, services, configmaps,
+deployments, daemonsets, HPAs, PDBs, and clustertrustbundles in the dataplane
+namespace, then bind it to `system-namespace/envoy-gateway`.
+
+Data-plane Envoy pods authenticate to xDS with service-account JWTs. If Envoy
+pods exist but stay unready and Envoy Gateway logs contain
+`tokenreviews.authentication.k8s.io is forbidden`, add cluster-scope
+`tokenreviews` `create` permission for the Envoy Gateway service account.
+
+Prefer stable EnvoyProxy-generated Service names and pod labels instead of
+hand-written Services that duplicate generated selectors:
+
+```yaml
+provider:
+  kubernetes:
+    envoyService:
+      name: l1
+      type: ClusterIP
+      labels:
+        transit.dio/proxy: l1
+    envoyDeployment:
+      pod:
+        labels:
+          transit.dio/proxy: l1
+```
+
+Use the stable service name for port-forwarding and the stable pod label for
+readiness checks. For shared L2 deployments with logical shard Services, label
+the alias Services with shard identity and select the shared L2 pod label. Only
+use per-shard pod labels such as `transit.dio/proxy: l2-a` when the integration
+creates separate physical L2 EnvoyProxy deployments.
+
 ## Images and modules
 
 For Transit dynamic-module scenarios, keep the `.so` inside the custom Envoy
@@ -166,7 +221,13 @@ When the suite fails after Envoy Gateway is installed:
 3. Port-forward Envoy admin and inspect `/config_dump`.
 4. Confirm the generated cluster name targeted by EnvoyPatchPolicy.
 5. Check the custom Envoy pod logs for dynamic module load errors.
-6. Keep the cluster with `KEEP_CLUSTER=1` only for interactive debugging.
+   EnvoyPatchPolicy can report `Programmed=True` even when Envoy later rejects
+   a dynamic-module cluster update. Look for messages such as
+   `Failed to create in-module cluster configuration` or module-specific parse
+   errors.
+6. If Envoy pods are created but not Ready, inspect Envoy Gateway logs for xDS
+   authentication errors such as missing `tokenreviews` permission.
+7. Keep the cluster with `KEEP_CLUSTER=1` only for interactive debugging.
 
 ## Make targets
 

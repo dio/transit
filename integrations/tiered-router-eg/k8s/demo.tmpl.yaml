@@ -1,0 +1,238 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tiered-router-control
+  namespace: transit-dataplane
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tiered-router-control
+  template:
+    metadata:
+      labels:
+        app: tiered-router-control
+    spec:
+      containers:
+      - name: control
+        image: "{{.ControlPlaneImage}}"
+        imagePullPolicy: IfNotPresent
+        args: ["control", "--addr=:8080"]
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tiered-router-control
+  namespace: transit-dataplane
+spec:
+  selector:
+    app: tiered-router-control
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: l1-placeholder-backend
+  namespace: transit-dataplane
+spec:
+  selector:
+    app: tiered-router-control
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: l2-a-placeholder-backend
+  namespace: transit-dataplane
+spec:
+  selector:
+    app: upstream-a
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: l2-b-placeholder-backend
+  namespace: transit-dataplane
+spec:
+  selector:
+    app: upstream-c
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: upstream-a
+  namespace: transit-dataplane
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: upstream-a
+  template:
+    metadata:
+      labels:
+        app: upstream-a
+    spec:
+      containers:
+      - name: upstream
+        image: "{{.ControlPlaneImage}}"
+        imagePullPolicy: IfNotPresent
+        args: ["upstream", "--name=upstream-a", "--addr=:8080"]
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: upstream-a
+  namespace: transit-dataplane
+spec:
+  selector:
+    app: upstream-a
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: upstream-b
+  namespace: transit-dataplane
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: upstream-b
+  template:
+    metadata:
+      labels:
+        app: upstream-b
+    spec:
+      containers:
+      - name: upstream
+        image: "{{.ControlPlaneImage}}"
+        imagePullPolicy: IfNotPresent
+        args: ["upstream", "--name=upstream-b", "--addr=:8080"]
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: upstream-b
+  namespace: transit-dataplane
+spec:
+  selector:
+    app: upstream-b
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: upstream-c
+  namespace: transit-dataplane
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: upstream-c
+  template:
+    metadata:
+      labels:
+        app: upstream-c
+    spec:
+      containers:
+      - name: upstream
+        image: "{{.ControlPlaneImage}}"
+        imagePullPolicy: IfNotPresent
+        args: ["upstream", "--name=upstream-c", "--addr=:8080"]
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: upstream-c
+  namespace: transit-dataplane
+spec:
+  selector:
+    app: upstream-c
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: upstream-d
+  namespace: transit-dataplane
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: upstream-d
+  template:
+    metadata:
+      labels:
+        app: upstream-d
+    spec:
+      containers:
+      - name: upstream
+        image: "{{.ControlPlaneImage}}"
+        imagePullPolicy: IfNotPresent
+        args: ["upstream", "--name=upstream-d", "--addr=:8080"]
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: upstream-d
+  namespace: transit-dataplane
+spec:
+  selector:
+    app: upstream-d
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080

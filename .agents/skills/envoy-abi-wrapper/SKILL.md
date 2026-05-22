@@ -146,6 +146,14 @@ clusters:
 examples and e2e tests, prefer `google.protobuf.StringValue` carrying JSON so
 the module can parse the config without protobuf dependencies.
 
+Do not add TLS, SNI, ALPN, or HTTP protocol knobs to `HostSpec` unless Envoy's
+dynamic module ABI requires it. Transit's Cluster Extension host selection owns
+which host is selected; Envoy owns upstream transport through cluster config
+such as `transport_socket`, `UpstreamTlsContext`, and HTTP protocol options.
+Examples may keep endpoint metadata in their own config (`scheme`, `authority`,
+`sni`, `protocol`) so integration patching can configure Envoy correctly, but
+that metadata should not leak into the low-level ABI wrapper prematurely.
+
 ## Cluster main-thread scheduling
 
 `ClusterHandle` methods that mutate cluster state must run on Envoy's main

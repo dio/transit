@@ -58,6 +58,10 @@ coverage does not cover LB Policy behavior.
 
 - Prefer black-box HTTP requests through Envoy over direct calls into filter
   code.
+- Prefer `github.com/stretchr/testify/require` for test assertions and setup
+  checks. Use `require.NoError`, `require.Equal`, `require.Contains`, and
+  `require.Eventually` before hand-written `if ... t.Fatalf` blocks unless a
+  custom helper needs a clearer failure message.
 - Use existing helpers such as `mustDo`, `readBody`, `waitReady`, and sink
   `Wait*` methods when available.
 - For asynchronous telemetry or access-log assertions, use bounded waits with

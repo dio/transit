@@ -3,10 +3,17 @@ package e2e
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	_ "embed"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -19,19 +26,21 @@ import (
 	"time"
 
 	"github.com/dio/transit/examples/internal/e2etest"
+	"github.com/stretchr/testify/require"
 )
 
 //go:embed testdata/envoy.tmpl.yaml
 var envoyConfigTmpl string
 
 var (
-	proxyURL     string
-	envoyCmd     *exec.Cmd
-	examplesRoot string
-	control      *configServer
-	upstreamA    *upstreamServer
-	upstreamB    *upstreamServer
-	upstreamC    *upstreamServer
+	proxyURL      string
+	envoyCmd      *exec.Cmd
+	examplesRoot  string
+	control       *configServer
+	upstreamA     *upstreamServer
+	upstreamB     *upstreamServer
+	upstreamC     *upstreamServer
+	httpsProvider *upstreamServer
 )
 
 func TestMain(m *testing.M) {
@@ -63,6 +72,8 @@ func TestMain(m *testing.M) {
 	upstreamA = startUpstream("upstream a")
 	upstreamB = startUpstream("upstream b")
 	upstreamC = startUpstream("upstream c")
+	var cleanupHTTPSProvider func()
+	httpsProvider, cleanupHTTPSProvider = startHTTPSProvider("https provider", "provider.local")
 	initial := snapshot{
 		Version: "initial",
 		Models: map[string]model{
@@ -89,11 +100,28 @@ func TestMain(m *testing.M) {
 		"timeout_millis": 500,
 		"initial":        initial,
 	})
+	httpsProviderInitial := snapshot{
+		Version: "https-provider",
+		Models: map[string]model{
+			"gpt-secure": {
+				Target:     httpsProvider.target(),
+				Provider:   "openai",
+				AuthHeader: "Bearer https-provider-token",
+			},
+		},
+	}
+	httpsProviderClusterConfigJSON := marshalJSON(map[string]any{
+		"scope":          "https-provider",
+		"timeout_millis": 500,
+		"initial":        httpsProviderInitial,
+	})
 
 	cfgPath := e2etest.WriteEnvoyConfig("cluster-router-e2e", envoyConfigTmpl, envoyConfigData{
-		ProxyPort:         proxyPort,
-		AdminPort:         adminPort,
-		ClusterConfigJSON: clusterConfigJSON,
+		ProxyPort:                      proxyPort,
+		AdminPort:                      adminPort,
+		ClusterConfigJSON:              clusterConfigJSON,
+		HTTPSProviderClusterConfigJSON: httpsProviderClusterConfigJSON,
+		HTTPSProviderCAPath:            httpsProvider.caPath,
 	})
 
 	envoyCmd = exec.Command(bin, "-c", cfgPath, "--log-level", "warning",
@@ -106,6 +134,7 @@ func TestMain(m *testing.M) {
 	envoyCmd.Stderr = os.Stderr
 	if err := envoyCmd.Start(); err != nil {
 		os.Remove(cfgPath)
+		cleanupHTTPSProvider()
 		fmt.Fprintf(os.Stderr, "e2e: envoy start failed: %v\n", err)
 		os.Exit(1)
 	}
@@ -116,6 +145,7 @@ func TestMain(m *testing.M) {
 		envoyCmd.Process.Kill()
 		envoyCmd.Wait()
 		os.Remove(cfgPath)
+		cleanupHTTPSProvider()
 		fmt.Fprintln(os.Stderr, "e2e: envoy not ready in time")
 		os.Exit(1)
 	}
@@ -126,6 +156,7 @@ func TestMain(m *testing.M) {
 	envoyCmd.Process.Kill()
 	envoyCmd.Wait()
 	os.Remove(cfgPath)
+	cleanupHTTPSProvider()
 	os.Exit(code)
 }
 
@@ -149,29 +180,19 @@ func TestClusterRouterEndToEnd(t *testing.T) {
 	t.Run("dumps active config without secrets", func(t *testing.T) {
 		body := requireDebugDump(t)
 		for _, want := range []string{"gpt-fast", "claude-safe", "initial"} {
-			if !strings.Contains(body, want) {
-				t.Fatalf("debug dump does not contain %q: %s", want, body)
-			}
+			require.Contains(t, body, want)
 		}
-		if strings.Contains(body, "Bearer") {
-			t.Fatalf("debug dump leaked auth header: %s", body)
-		}
+		require.NotContains(t, body, "Bearer")
 	})
 
 	t.Run("rejects unknown models", func(t *testing.T) {
 		req, err := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
-		if err != nil {
-			t.Fatalf("new request: %v", err)
-		}
+		require.NoError(t, err)
 		req.Header.Set("x-model", "unknown-model")
 		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("GET unknown model: %v", err)
-		}
+		require.NoError(t, err)
 		defer resp.Body.Close()
-		if resp.StatusCode == http.StatusOK {
-			t.Fatalf("unknown model unexpectedly returned 200")
-		}
+		require.NotEqual(t, http.StatusOK, resp.StatusCode)
 	})
 
 	t.Run("refreshes config and adds a new upstream", func(t *testing.T) {
@@ -227,32 +248,39 @@ func TestClusterRouterEndToEnd(t *testing.T) {
 
 		body := requireDebugDump(t)
 		for _, want := range []string{"gpt-slow", "kimi-fast", "updated"} {
-			if !strings.Contains(body, want) {
-				t.Fatalf("debug dump does not contain %q after refresh: %s", want, body)
-			}
+			require.Contains(t, body, want)
 		}
-		if strings.Contains(body, "Bearer") {
-			t.Fatalf("debug dump leaked auth header after refresh: %s", body)
-		}
+		require.NotContains(t, body, "Bearer")
+	})
+
+	t.Run("egresses to an HTTPS provider with SNI and validation", func(t *testing.T) {
+		body, status, err := modelRequestPath("gpt-secure", "/https-provider/v1/chat/completions")
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, status)
+		require.Contains(t, body, "https provider")
+		requireLastRequest(t, httpsProvider, observedRequest{
+			Auth:     "Bearer https-provider-token",
+			Provider: "openai",
+			Version:  "https-provider",
+			SNI:      "provider.local",
+		})
 	})
 }
 
 func requireModel(t *testing.T, model string, want string) {
 	t.Helper()
 	body, status, err := modelRequest(model)
-	if err != nil {
-		t.Fatalf("GET model %s: %v", model, err)
-	}
-	if status != http.StatusOK {
-		t.Fatalf("model %s: want 200, got %d with body %q", model, status, body)
-	}
-	if !strings.Contains(body, want) {
-		t.Fatalf("model %s: body %q does not contain %q", model, body, want)
-	}
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, status)
+	require.Contains(t, body, want)
 }
 
 func modelRequest(model string) (string, int, error) {
-	req, err := http.NewRequest(http.MethodPost, proxyURL+"/v1/chat/completions", bytes.NewBufferString(`{"model":"`+model+`"}`))
+	return modelRequestPath(model, "/v1/chat/completions")
+}
+
+func modelRequestPath(model string, path string) (string, int, error) {
+	req, err := http.NewRequest(http.MethodPost, proxyURL+path, bytes.NewBufferString(`{"model":"`+model+`"}`))
 	if err != nil {
 		return "", 0, err
 	}
@@ -270,38 +298,23 @@ func modelRequest(model string) (string, int, error) {
 func requireDebugDump(t *testing.T) string {
 	t.Helper()
 	resp, err := http.Get(proxyURL + "/__cluster-router/config") //nolint:noctx
-	if err != nil {
-		t.Fatalf("GET debug dump: %v", err)
-	}
+	require.NoError(t, err)
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("debug dump: want 200, got %d with body %q", resp.StatusCode, body)
-	}
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
 	return string(body)
 }
 
 func requireLastRequest(t *testing.T, upstream *upstreamServer, want observedRequest) {
 	t.Helper()
 	got, ok := upstream.last()
-	if !ok {
-		t.Fatalf("%s saw no request", upstream.label)
-	}
-	if got.Auth != want.Auth || got.Provider != want.Provider || got.Version != want.Version {
-		t.Fatalf("%s headers: got %+v, want %+v", upstream.label, got, want)
-	}
+	require.True(t, ok, "%s saw no request", upstream.label)
+	require.Equal(t, want, got, "%s headers", upstream.label)
 }
 
 func eventually(t *testing.T, timeout time.Duration, fn func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if fn() {
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	t.Fatalf("condition was not met within %s; active config: %s", timeout, requireDebugDump(t))
+	require.Eventually(t, fn, timeout, 100*time.Millisecond, "active config: %s", requireDebugDump(t))
 }
 
 type snapshot struct {
@@ -354,6 +367,7 @@ func (s *configServer) url() string {
 type upstreamServer struct {
 	label    string
 	port     int
+	caPath   string
 	mu       sync.Mutex
 	requests []observedRequest
 }
@@ -362,6 +376,7 @@ type observedRequest struct {
 	Auth     string
 	Provider string
 	Version  string
+	SNI      string
 }
 
 func startUpstream(label string) *upstreamServer {
@@ -387,6 +402,102 @@ func startUpstream(label string) *upstreamServer {
 	return s
 }
 
+func startHTTPSProvider(label string, serverName string) (*upstreamServer, func()) {
+	dir, err := os.MkdirTemp("", "cluster-router-provider-tls-*")
+	if err != nil {
+		panic("startHTTPSProvider: " + err.Error())
+	}
+	cert, caPEM := generateProviderCert(serverName)
+	caPath := filepath.Join(dir, "ca.pem")
+	if err := os.WriteFile(caPath, caPEM, 0o600); err != nil {
+		_ = os.RemoveAll(dir)
+		panic("startHTTPSProvider: " + err.Error())
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		panic("startHTTPSProvider: " + err.Error())
+	}
+	s := &upstreamServer{
+		label:  label,
+		port:   l.Addr().(*net.TCPAddr).Port,
+		caPath: caPath,
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		seen := observedRequest{
+			Auth:     r.Header.Get("authorization"),
+			Provider: r.Header.Get("x-llm-provider"),
+			Version:  r.Header.Get("x-cluster-router-version"),
+		}
+		if r.TLS != nil {
+			seen.SNI = r.TLS.ServerName
+		}
+		s.mu.Lock()
+		s.requests = append(s.requests, seen)
+		s.mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(label))
+	})
+	server := &http.Server{
+		Handler: mux,
+		TLSConfig: &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS12,
+		},
+	}
+	go server.Serve(tls.NewListener(l, server.TLSConfig)) //nolint:errcheck
+	return s, func() {
+		_ = server.Close()
+		_ = os.RemoveAll(dir)
+	}
+}
+
+func generateProviderCert(serverName string) (tls.Certificate, []byte) {
+	now := time.Now()
+	caKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		panic("generateProviderCert ca key: " + err.Error())
+	}
+	caTemplate := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "cluster-router e2e provider ca"},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.Add(time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	if err != nil {
+		panic("generateProviderCert ca cert: " + err.Error())
+	}
+	serverKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		panic("generateProviderCert server key: " + err.Error())
+	}
+	serverTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: serverName},
+		DNSNames:     []string{serverName},
+		NotBefore:    now.Add(-time.Hour),
+		NotAfter:     now.Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	serverDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, caTemplate, &serverKey.PublicKey, caKey)
+	if err != nil {
+		panic("generateProviderCert server cert: " + err.Error())
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverDER})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(serverKey)})
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		panic("generateProviderCert server key pair: " + err.Error())
+	}
+	return cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
+}
+
 func (s *upstreamServer) target() string {
 	return net.JoinHostPort("localhost", fmt.Sprint(s.port))
 }
@@ -401,9 +512,11 @@ func (s *upstreamServer) last() (observedRequest, bool) {
 }
 
 type envoyConfigData struct {
-	ProxyPort         int
-	AdminPort         int
-	ClusterConfigJSON string
+	ProxyPort                      int
+	AdminPort                      int
+	ClusterConfigJSON              string
+	HTTPSProviderClusterConfigJSON string
+	HTTPSProviderCAPath            string
 }
 
 func marshalJSON(v any) string {

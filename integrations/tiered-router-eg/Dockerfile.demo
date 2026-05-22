@@ -1,0 +1,9 @@
+ARG TARGETARCH
+
+FROM gcr.io/distroless/static-debian12:nonroot
+
+ARG TARGETARCH
+
+COPY dist/tiered-router-demo.linux-${TARGETARCH} /tiered-router-demo
+
+ENTRYPOINT ["/tiered-router-demo"]

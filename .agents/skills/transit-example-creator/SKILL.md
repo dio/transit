@@ -78,6 +78,11 @@ additional helper commands.
    `clean`, and `download-envoy`. Do not add per-example targets to the root
    `Makefile`; examples own their local lifecycle.
 
+Use `github.com/stretchr/testify/require` for example unit and e2e assertions.
+Prefer `require.NoError`, `require.Equal`, `require.Contains`, and
+`require.Eventually` over hand-written `if ... t.Fatalf` checks unless a helper
+needs a very specific failure message.
+
 Do not put CGO details in examples. The only `down/abi_impl` detail examples
 should carry is the required blank import in `cmd/main.go`.
 
@@ -125,6 +130,14 @@ For cluster-router-style examples, live refresh is valid only when there is
 separate root e2e coverage for `ClusterHandle.Schedule` dispatch. Keep example
 e2e focused on the user-visible behavior, and use the root scheduler probe to
 catch ABI callback regressions.
+
+For provider-routing examples, keep transport concerns explicit but outside the
+Transit host-selection API. Model config may carry provider endpoint metadata
+such as `scheme`, `authority`, `sni`, and optional `protocol`, but Envoy should
+originate TLS through the cluster transport socket. Do not mix plaintext local
+mock upstreams and HTTPS internet providers in the same dynamic-module cluster;
+use a separate TLS-enabled provider route or patched cluster. Add HTTP/2 or
+another transport variant only after ordinary HTTPS has a concrete assertion.
 
 ## Per-example Makefile
 

@@ -7,19 +7,27 @@ the upstream host from the request model.
 
 ## Scenario
 
-The test starts five local processes in one Go test:
+The test starts six local processes in one Go test:
 
 - Envoy, using `testdata/envoy.tmpl.yaml`.
 - A tiny config server that serves model routing JSON.
 - Upstream A, which returns `upstream a`.
 - Upstream B, which returns `upstream b`.
 - Upstream C, which returns `upstream c`.
+- An HTTPS provider upstream with a generated CA and server certificate.
 
-Envoy has one listener and one route. Every request routes to the same
-Cluster Extension cluster:
+Envoy has one listener and two provider paths. Normal local models route to the
+plaintext Cluster Extension cluster:
 
 ```yaml
 route: { cluster: cluster-router }
+```
+
+The HTTPS provider model routes through a separate Cluster Extension cluster
+with an Envoy TLS transport socket:
+
+```yaml
+route: { cluster: cluster-router-https-provider }
 ```
 
 The Cluster Extension owns host discovery and selection. The upstream HTTP
@@ -104,6 +112,26 @@ The test waits until:
 - upstream C receives `x-llm-provider: moonshot`.
 - the active config dump includes `gpt-slow`, `kimi-fast`, and `updated`.
 - the active config dump still redacts bearer tokens.
+
+## HTTPS Provider Egress
+
+The suite sends `x-model: gpt-secure` to:
+
+```http
+POST /https-provider/v1/chat/completions
+```
+
+That request routes to `cluster-router-https-provider`. The Cluster Extension
+still chooses the host from Go, but Envoy owns TLS origination through
+`UpstreamTlsContext`.
+
+The test asserts:
+
+- the response comes from the HTTPS provider upstream
+- the provider receives `authorization: Bearer https-provider-token`
+- the provider receives `x-llm-provider: openai`
+- the provider receives `x-cluster-router-version: https-provider`
+- the provider observes SNI `provider.local`
 
 ## Why This Matters
 

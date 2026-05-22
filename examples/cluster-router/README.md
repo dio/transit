@@ -34,6 +34,8 @@ The current example proves these behaviors with unit and e2e tests:
 - A background `up.Group` can fetch config and update the cluster through
   `ClusterHandle.Schedule`.
 - An upstream HTTP filter can inject provider-specific headers after selection.
+- A separate TLS-enabled provider cluster can use the same Cluster Extension
+  logic while Envoy originates HTTPS with SNI and certificate validation.
 - The active config can be dumped without leaking configured auth headers.
 
 The e2e test bootstraps two models:
@@ -48,6 +50,12 @@ Then the config server publishes an additive update:
 
 That gives us three real upstream hosts and proves that model selection is not
 one Envoy route or one Envoy cluster per destination.
+
+The e2e suite also includes `gpt-secure` on a separate HTTPS provider route.
+That path uses the same Go host selection and upstream header injection, but
+the Envoy cluster has an `UpstreamTlsContext`. The local provider presents a
+test certificate, Envoy validates it with a generated CA, and the provider
+observes SNI.
 
 ## High-Level Flow
 
@@ -136,6 +144,28 @@ The cluster config should include:
 Initial config makes Envoy startup deterministic. The `config_url` and refresh
 settings then let the e2e add `gpt-slow` and `kimi-fast` without changing Envoy
 routes or clusters.
+
+HTTPS provider egress uses a separate cluster config scope:
+
+```json
+{
+  "scope": "https-provider",
+  "timeout_millis": 500,
+  "initial": {
+    "version": "https-provider",
+    "models": {
+      "gpt-secure": {
+        "target": "provider.local:443",
+        "provider": "openai",
+        "auth_header": "Bearer provider-token"
+      }
+    }
+  }
+}
+```
+
+The `scope` keeps the HTTPS provider route snapshot separate from the plaintext
+demo route snapshot. TLS remains Envoy config, not Transit config.
 
 ## Runtime State
 
