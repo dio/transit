@@ -20,6 +20,7 @@ TARGET="${TARGET:-}"
 args=()
 for arg in "$@"; do
     [[ "$arg" == "--unresolved-symbols="* ]] && continue
+    [[ "$arg" == "-Wl,--unresolved-symbols="* ]] && continue
     [[ "$arg" == "-Wl,--compress-debug-sections="* ]] && continue
     args+=("$arg")
 done

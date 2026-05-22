@@ -1,0 +1,172 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cluster-router-control
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cluster-router-control
+  template:
+    metadata:
+      labels:
+        app: cluster-router-control
+    spec:
+      containers:
+      - name: control
+        image: "{{.ControlPlaneImage}}"
+        imagePullPolicy: IfNotPresent
+        args: ["control", "--addr=:8080"]
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cluster-router-control
+  namespace: default
+spec:
+  selector:
+    app: cluster-router-control
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cluster-router-backend
+  namespace: default
+spec:
+  selector:
+    app: cluster-router-control
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: upstream-a
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: upstream-a
+  template:
+    metadata:
+      labels:
+        app: upstream-a
+    spec:
+      containers:
+      - name: upstream
+        image: "{{.ControlPlaneImage}}"
+        imagePullPolicy: IfNotPresent
+        args: ["upstream", "--name=upstream-a", "--addr=:8080"]
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: upstream-a
+  namespace: default
+spec:
+  selector:
+    app: upstream-a
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: upstream-b
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: upstream-b
+  template:
+    metadata:
+      labels:
+        app: upstream-b
+    spec:
+      containers:
+      - name: upstream
+        image: "{{.ControlPlaneImage}}"
+        imagePullPolicy: IfNotPresent
+        args: ["upstream", "--name=upstream-b", "--addr=:8080"]
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: upstream-b
+  namespace: default
+spec:
+  selector:
+    app: upstream-b
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: upstream-c
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: upstream-c
+  template:
+    metadata:
+      labels:
+        app: upstream-c
+    spec:
+      containers:
+      - name: upstream
+        image: "{{.ControlPlaneImage}}"
+        imagePullPolicy: IfNotPresent
+        args: ["upstream", "--name=upstream-c", "--addr=:8080"]
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: upstream-c
+  namespace: default
+spec:
+  selector:
+    app: upstream-c
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/dio/transit/up"
@@ -42,6 +43,7 @@ type routerCluster struct {
 	store   *routeStore
 	timeout time.Duration
 	refresh time.Duration
+	startMu sync.Mutex
 }
 
 func (c *routerCluster) Init(h up.ClusterHandle) {
@@ -54,10 +56,20 @@ func (c *routerCluster) Init(h up.ClusterHandle) {
 		}
 	}
 	h.PreInitComplete()
+	c.startFetchLoop()
 }
 
 func (c *routerCluster) ServerInitialized(_ up.ClusterHandle) {
+	c.startFetchLoop()
+}
+
+func (c *routerCluster) startFetchLoop() {
 	if c.cfg.ConfigURL == "" {
+		return
+	}
+	c.startMu.Lock()
+	defer c.startMu.Unlock()
+	if c.group != nil {
 		return
 	}
 	// Config fetching is module-scoped work, not request-scoped work. up.Group

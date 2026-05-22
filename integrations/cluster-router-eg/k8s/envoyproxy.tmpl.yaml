@@ -1,0 +1,27 @@
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: cluster-router-proxy
+  namespace: default
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        type: ClusterIP
+      envoyDeployment:
+        container:
+          image: "{{.EnvoyImage}}"
+          env:
+          - name: GODEBUG
+            value: "cgocheck=0"
+          - name: ENVOY_DYNAMIC_MODULES_SEARCH_PATH
+            value: "/etc/envoy/dynamic-modules"
+  dynamicModules:
+  - name: cluster-router
+    source:
+      type: Local
+      local:
+        path: /etc/envoy/dynamic-modules/libcluster-router.so
+    doNotClose: true
+    loadGlobally: false

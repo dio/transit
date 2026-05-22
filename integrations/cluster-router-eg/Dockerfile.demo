@@ -1,0 +1,9 @@
+ARG TARGETARCH
+
+FROM gcr.io/distroless/static-debian12:nonroot
+
+ARG TARGETARCH
+
+COPY dist/cluster-router-demo.linux-${TARGETARCH} /cluster-router-demo
+
+ENTRYPOINT ["/cluster-router-demo"]
