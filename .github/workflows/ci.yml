@@ -109,14 +109,24 @@ jobs:
       - run: make -C examples/spa e2e
 
   # ---------------------------------------------------------------------------
-  # cluster-router-eg: Kubernetes integration against Envoy Gateway in k3d.
+  # integration-eg: Kubernetes integrations against Envoy Gateway in k3d.
   # Uses ttl.sh images so the k3d node pulls the same images a remote cluster
   # would pull, instead of relying on local Docker image import.
   # ---------------------------------------------------------------------------
-  cluster-router-eg:
-    name: cluster-router-eg
+  integration-eg:
+    name: ${{ matrix.integration }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - integration: cluster-router-eg
+            image-prefix: transit-cluster-router-eg
+            control-image-prefix: transit-cluster-router-eg-control
+          - integration: tiered-router-eg
+            image-prefix: transit-tiered-router-eg
+            control-image-prefix: transit-tiered-router-eg-control
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -145,15 +155,19 @@ jobs:
         run: |
           set -euxo pipefail
           image_tag="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          publish_image="ttl.sh/transit-cluster-router-eg-${image_tag}:1h"
-          publish_control_image="ttl.sh/transit-cluster-router-eg-control-${image_tag}:1h"
+          publish_image="ttl.sh/${IMAGE_PREFIX}-${image_tag}:1h"
+          publish_control_image="ttl.sh/${CONTROL_IMAGE_PREFIX}-${image_tag}:1h"
 
           echo "PUBLISH_IMAGE=${publish_image}" >> "${GITHUB_ENV}"
           echo "PUBLISH_CONTROL_PLANE_IMAGE=${publish_control_image}" >> "${GITHUB_ENV}"
 
-          make -C integrations/cluster-router-eg publish \
+          make -C "integrations/${INTEGRATION}" publish \
             PUBLISH_IMAGE="${publish_image}" \
             PUBLISH_CONTROL_PLANE_IMAGE="${publish_control_image}"
+        env:
+          INTEGRATION: ${{ matrix.integration }}
+          IMAGE_PREFIX: ${{ matrix.image-prefix }}
+          CONTROL_IMAGE_PREFIX: ${{ matrix.control-image-prefix }}
 
       - name: run Envoy Gateway demo e2e
         run: |
@@ -162,4 +176,6 @@ jobs:
           K3D_SKIP_IMAGE_IMPORT=1 \
           IMAGE="${PUBLISH_IMAGE}" \
           CONTROL_PLANE_IMAGE="${PUBLISH_CONTROL_PLANE_IMAGE}" \
-          make -C integrations/cluster-router-eg e2e
+          make -C "integrations/${INTEGRATION}" e2e
+        env:
+          INTEGRATION: ${{ matrix.integration }}
