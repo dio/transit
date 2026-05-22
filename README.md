@@ -65,36 +65,31 @@ Registration happens in `init`, and the registered name must match the
 
 ## Handler options
 
-Use the smallest registration form that matches the lifecycle you need:
+Start with `up.Register`. Move to a larger registration form only when the
+filter needs another stream phase or lifecycle hook.
 
-`up.Register(name, handler)`
+| Use case | Register with |
+| --- | --- |
+| Request headers only | `up.Register(name, onReq)` |
+| Request and response headers | `up.RegisterWithResponse(name, onReq, onResp)` |
+| Streaming request body chunks | `up.RegisterWithBody(name, onReq, onBody, onResp)` |
+| Buffered body reads or body replacement | `up.RegisterWithMutableBody(name, onReq, onBody, onResp)` |
+| Per-config metrics setup | `up.RegisterWithConfig(name, configure, onReq, onResp)` |
+| Background goroutines tied to the loaded filter config | `up.RegisterWithGroup(name, group, onReq)` |
+| Access logs after the stream is complete | `up.RegisterAccessLogger(name, factory)` |
+| Envoy Cluster Extension modules | `up.RegisterCluster(name, factory)` |
+| Envoy LB Policy modules | `up.RegisterLBPolicy(name, factory)` |
 
-Use this for request headers only.
+The request handler, usually named `onReq` above, always has this shape:
 
-`up.RegisterWithResponse(name, onReq, onResp)`
+```go
+func(w *up.Writer, r *up.Request)
+```
 
-Use this when you need request and response headers.
-
-`up.RegisterWithBody(name, onReq, onBody, onResp)`
-
-Use this for streaming request body handling.
-
-`up.RegisterWithMutableBody(name, onReq, onBody, onResp)`
-
-Use this when you need buffered, replaceable body content.
-
-`up.RegisterWithGroup(name, group, handler)`
-
-Use this when the filter owns background goroutines with the same lifetime as
-the loaded filter config.
-
-`up.RegisterAccessLogger(name, factory)`
-
-Use this for access logs that run after the stream is complete.
-
-`up.RegisterCluster(name, factory)` and `up.RegisterLBPolicy(name, factory)`
-
-Use these for Envoy Cluster Extension and LB Policy modules.
+Response and body handlers are separate callbacks because Envoy calls them at
+different points in the stream. `RegisterWithBody` sees request body chunks as
+they arrive. `RegisterWithMutableBody` buffers the body first so the handler can
+read or replace the complete content.
 
 ## What Writer can do
 
@@ -168,9 +163,19 @@ make -C examples/hello e2e
 make -C examples/lb-policy e2e
 make -C examples/cluster e2e
 make -C examples/cluster-dfp e2e
+make -C examples/cluster-router e2e
+make -C examples/cluster-shard-router e2e
+make -C examples/mcp-profile-router e2e
 make -C examples/request-ui e2e
 make -C examples/sse-tap e2e
 make -C examples/spa e2e
+```
+
+Run Envoy Gateway integration suites from their own directories:
+
+```sh
+make -C integrations/cluster-router-eg e2e
+make -C integrations/tiered-router-eg e2e
 ```
 
 For faster e2e iteration after a successful shared library build:
@@ -211,14 +216,50 @@ handling live. Keep ordinary handler code out of that layer.
 
 ## Examples
 
-The `examples/` module shows several ways to use transit:
+The `examples/` module shows Transit at different layers of Envoy's dynamic
+module surface. Start with `examples/hello` if you are new to the project.
 
-- `hello` for a minimal HTTP filter
-- `lb-policy` for a custom LB Policy
-- `cluster` for a custom Cluster Extension
-- `cluster-dfp` for model-based host selection with Go DNS discovery
-- `sse-tap` for observing server sent events
-- `request-ui` for request capture with a small UI
-- `spa` for serving embedded static assets from a module
+### Cluster Routing
 
-Start with `examples/hello` if you are new to the project.
+The cluster examples show request-aware upstream selection without creating one
+Envoy route or static cluster per destination:
+
+| Example | What it shows |
+| --- | --- |
+| `cluster` | Minimal Cluster Extension: add hosts during cluster init and choose a healthy host. |
+| `cluster-dfp` | Model-to-target routing with Go DNS resolution and `ClusterLB.ChooseHost`. |
+| `cluster-router` | LLM/MCP-style model routing, live config refresh, upstream auth injection, redacted config dump, and HTTPS provider egress with Envoy-owned TLS. |
+| `cluster-shard-router` | L1 shard selection before model routing: derive a stable tag from request identity and choose the L2 shard. |
+
+Use `cluster-router` when you want the current end-to-end shape for model or
+provider routing. It keeps one public Envoy route, lets Go own the model
+snapshot and host selection, and uses an upstream HTTP filter only for final
+request shaping such as provider headers.
+
+Use `cluster-shard-router` for the tiered L1 problem: choose where user-adjacent
+state lives before an L2 `cluster-router` applies provider/model routing.
+
+### HTTP Filters And UI
+
+| Example | What it shows |
+| --- | --- |
+| `hello` | Minimal downstream HTTP filter. |
+| `request-ui` | Request capture with a small UI. |
+| `sse-tap` | Observing server-sent events. |
+| `spa` | Serving embedded static assets from a module. |
+
+### Envoy Extension Points
+
+| Example | What it shows |
+| --- | --- |
+| `lb-policy` | Custom LB Policy when Envoy owns the host set and Go only chooses among existing hosts. |
+| `mcp-profile-router` | Local MCP profile aggregation: one profile URL, multiple backend MCP sessions, tool fan-out, namespaced tool calls, and redacted backend credentials. |
+
+### Envoy Gateway Integrations
+
+The `integrations/` module runs Kubernetes demos with Envoy Gateway and k3d:
+
+| Integration | What it proves |
+| --- | --- |
+| `cluster-router-eg` | Envoy Gateway with a custom Envoy image, EnvoyPatchPolicy, Transit Cluster Extension routing, upstream provider header injection, live model updates, and a redacted config CLI. |
+| `tiered-router-eg` | Planned two-stage Gateway shape: L1 shard placement first, L2 model/provider routing inside the selected shard. |
