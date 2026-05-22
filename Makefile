@@ -21,6 +21,12 @@ ZIG_OS := $(if $(filter darwin,$(GOOS)),macos,$(GOOS))
 ZIG_URL   = https://ziglang.org/download/$(ZIG_VERSION)/zig-$(_ARCH)-$(ZIG_OS)-$(ZIG_VERSION).tar.xz
 ENVOY_URL = https://archive.tetratelabs.io/envoy/download/v$(ENVOY_VERSION)/envoy-v$(ENVOY_VERSION)-$(GOOS)-$(GOARCH).tar.xz
 
+# Dev Envoy: raw binaries published by dio/envoy-builder, tagged envoy-{8-char commit}.
+# The commit is read from down/abi_impl/VERSION so make update-sdk keeps it in sync.
+ENVOY_DEV_COMMIT := $(shell grep '^SDK_COMMIT=' down/abi_impl/VERSION | cut -d= -f2 | cut -c1-8)
+ENVOY_DEV_TAG    := envoy-$(ENVOY_DEV_COMMIT)
+ENVOY_DEV_URL     = https://github.com/dio/envoy-builder/releases/download/$(ENVOY_DEV_TAG)/envoy-$(GOOS)-$(GOARCH)
+
 # Host target triple for zig cc.
 ifeq ($(GOOS),darwin)
 HOST_TARGET = $(_ARCH)-macos
@@ -53,9 +59,8 @@ download-envoy: $(ENVOY_BIN)
 .PHONY: download-envoy-dev
 download-envoy-dev:
 	@mkdir -p $$(dirname $(ENVOY_BIN))
-	@echo "Downloading Envoy dev for $(GOOS)-$(GOARCH)..."
-	@curl -fsSL "https://archive.tetratelabs.io/envoy/download/dev/envoy-dev-$(GOOS)-$(GOARCH).tar.xz" \
-		| tar -xJ --strip-components=2 -C $$(dirname $(ENVOY_BIN))
+	@echo "Downloading Envoy dev $(ENVOY_DEV_TAG) ($(GOOS)-$(GOARCH))..."
+	@curl -fsSL -L "$(ENVOY_DEV_URL)" -o $(ENVOY_BIN)
 	@chmod +x $(ENVOY_BIN)
 
 .PHONY: build
