@@ -4,8 +4,7 @@ EXAMPLES_GO_TOOL := GOWORK=off go tool -modfile=$(CURDIR)/tools/go.mod
 ZIG_VERSION   ?= 0.16.0
 ZIG_BIN       ?= $(CURDIR)/.bin/zig-dist/zig
 
-ENVOY_VERSION ?= 1.38.0
-ENVOY_BIN     ?= $(CURDIR)/.bin/envoy
+ENVOY_BIN ?= $(CURDIR)/.bin/envoy
 
 EXAMPLE     ?= hello
 EXAMPLE_CMD ?= ./examples/$(EXAMPLE)/cmd
@@ -17,15 +16,14 @@ GOARCH := $(shell go env GOARCH)
 _ARCH  := $(shell uname -m | sed 's/arm64/aarch64/')
 ZIG_OS := $(if $(filter darwin,$(GOOS)),macos,$(GOOS))
 
-# Deferred so overriding ZIG_VERSION / ENVOY_VERSION on the command line takes effect.
-ZIG_URL   = https://ziglang.org/download/$(ZIG_VERSION)/zig-$(_ARCH)-$(ZIG_OS)-$(ZIG_VERSION).tar.xz
-ENVOY_URL = https://archive.tetratelabs.io/envoy/download/v$(ENVOY_VERSION)/envoy-v$(ENVOY_VERSION)-$(GOOS)-$(GOARCH).tar.xz
+# Zig download URL (deferred so ZIG_VERSION overrides take effect).
+ZIG_URL = https://ziglang.org/download/$(ZIG_VERSION)/zig-$(_ARCH)-$(ZIG_OS)-$(ZIG_VERSION).tar.xz
 
-# Dev Envoy: raw binaries published by dio/envoy-builder, tagged envoy-{8-char commit}.
-# The commit is read from down/abi_impl/VERSION so make update-sdk keeps it in sync.
-ENVOY_DEV_COMMIT := $(shell grep '^SDK_COMMIT=' down/abi_impl/VERSION | cut -d= -f2 | cut -c1-8)
-ENVOY_DEV_TAG    := envoy-$(ENVOY_DEV_COMMIT)
-ENVOY_DEV_URL     = https://github.com/dio/envoy-builder/releases/download/$(ENVOY_DEV_TAG)/envoy-$(GOOS)-$(GOARCH)
+# Envoy: raw binaries from dio/envoy-builder, tagged envoy-{8-char commit}.
+# ENVOY_TAG is derived from SDK_COMMIT in down/abi_impl/VERSION at parse time
+# so make update-sdk keeps the download URL in sync automatically.
+ENVOY_TAG := envoy-$(shell grep '^SDK_COMMIT=' down/abi_impl/VERSION | cut -d= -f2 | cut -c1-8)
+ENVOY_URL  = https://github.com/dio/envoy-builder/releases/download/$(ENVOY_TAG)/envoy-$(GOOS)-$(GOARCH)
 
 # Host target triple for zig cc.
 ifeq ($(GOOS),darwin)
@@ -46,8 +44,8 @@ $(ZIG_BIN):
 # Download Envoy on demand.
 $(ENVOY_BIN):
 	@mkdir -p $$(dirname $(ENVOY_BIN))
-	@echo "Downloading Envoy $(ENVOY_VERSION) for $(GOOS)-$(GOARCH)..."
-	@curl -fsSL "$(ENVOY_URL)" | tar -xJ --strip-components=2 -C $$(dirname $(ENVOY_BIN))
+	@echo "Downloading Envoy $(ENVOY_TAG) ($(GOOS)-$(GOARCH))..."
+	@curl -fsSL -L "$(ENVOY_URL)" -o $(ENVOY_BIN)
 	@chmod +x $(ENVOY_BIN)
 
 .PHONY: download-zig
@@ -55,13 +53,6 @@ download-zig: $(ZIG_BIN)
 
 .PHONY: download-envoy
 download-envoy: $(ENVOY_BIN)
-
-.PHONY: download-envoy-dev
-download-envoy-dev:
-	@mkdir -p $$(dirname $(ENVOY_BIN))
-	@echo "Downloading Envoy dev $(ENVOY_DEV_TAG) ($(GOOS)-$(GOARCH))..."
-	@curl -fsSL -L "$(ENVOY_DEV_URL)" -o $(ENVOY_BIN)
-	@chmod +x $(ENVOY_BIN)
 
 .PHONY: build
 build: $(ZIG_BIN)

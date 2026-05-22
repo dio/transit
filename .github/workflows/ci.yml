@@ -76,7 +76,7 @@ jobs:
 
       - name: download envoy
         if: steps.cache-envoy.outputs.cache-hit != 'true'
-        run: make download-envoy-dev
+        run: make download-envoy
 
       - run: make e2e
       - run: make e2e-hello
