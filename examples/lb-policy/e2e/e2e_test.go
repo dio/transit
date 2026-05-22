@@ -1,8 +1,8 @@
 // Package e2e runs integration tests for the lb-policy filter against a real
 // Envoy instance.
 //
-// TestMain builds liblb-policy.so, starts an in-process upstream, starts Envoy
-// with the custom LB policy loaded, runs all tests, then tears everything down.
+// TestMain starts an in-process upstream, starts Envoy with the Makefile-built
+// custom LB policy loaded, runs all tests, then tears everything down.
 //
 // Prerequisites:
 //   - Envoy binary at .bin/envoy in the transit root (run: make download-envoy)
@@ -15,8 +15,6 @@
 // Or directly (from the examples/ directory):
 //
 //	ENVOY_BIN=../.bin/envoy GOWORK=off go test ./lb-policy/e2e/... -v -timeout=60s
-//
-// Set TRANSIT_SKIP_BUILD=1 to reuse an already-compiled .so.
 package e2e
 
 import (
@@ -33,6 +31,8 @@ import (
 	"testing"
 	"text/template"
 	"time"
+
+	"github.com/dio/transit/examples/internal/e2etest"
 )
 
 //go:embed testdata/envoy.tmpl.yaml
@@ -56,27 +56,9 @@ func TestMain(m *testing.M) {
 	}
 
 	lbPolicyDir := filepath.Join(examplesRoot, "lb-policy")
-	soPath := filepath.Join(lbPolicyDir, "liblb-policy.so")
-
-	if os.Getenv("TRANSIT_SKIP_BUILD") == "" {
-		fmt.Fprintln(os.Stderr, "e2e: building liblb-policy.so ...")
-		cmd := exec.Command("go", "build", "-trimpath", "-buildmode=c-shared",
-			"-o", soPath, "./lb-policy/cmd")
-		cmd.Dir = examplesRoot
-		cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
-		cmd.Stdout = os.Stderr
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "e2e: build failed: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Fprintln(os.Stderr, "e2e: build OK")
-	} else {
-		if _, err := os.Stat(soPath); err != nil {
-			fmt.Fprintf(os.Stderr, "e2e: TRANSIT_SKIP_BUILD=1 but %s not found\n", soPath)
-			os.Exit(1)
-		}
-		fmt.Fprintln(os.Stderr, "e2e: reusing existing liblb-policy.so (TRANSIT_SKIP_BUILD=1)")
+	if err := e2etest.CheckSharedLibrary(examplesRoot, "lb-policy", "liblb-policy.so"); err != nil {
+		fmt.Fprintf(os.Stderr, "e2e: %v\n", err)
+		os.Exit(1)
 	}
 
 	upstreamPort := startUpstream()

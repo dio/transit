@@ -16,6 +16,8 @@ import (
 	"testing"
 	"text/template"
 	"time"
+
+	"github.com/dio/transit/examples/internal/e2etest"
 )
 
 //go:embed testdata/envoy.tmpl.yaml
@@ -38,27 +40,9 @@ func TestMain(m *testing.M) {
 	}
 
 	clusterDir := filepath.Join(examplesRoot, "cluster")
-	soPath := filepath.Join(clusterDir, "libcluster.so")
-
-	if os.Getenv("TRANSIT_SKIP_BUILD") == "" {
-		fmt.Fprintln(os.Stderr, "e2e: building libcluster.so ...")
-		cmd := exec.Command("go", "build", "-trimpath", "-buildmode=c-shared",
-			"-o", soPath, "./cluster/cmd")
-		cmd.Dir = examplesRoot
-		cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
-		cmd.Stdout = os.Stderr
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "e2e: build failed: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Fprintln(os.Stderr, "e2e: build OK")
-	} else {
-		if _, err := os.Stat(soPath); err != nil {
-			fmt.Fprintf(os.Stderr, "e2e: TRANSIT_SKIP_BUILD=1 but %s not found\n", soPath)
-			os.Exit(1)
-		}
-		fmt.Fprintln(os.Stderr, "e2e: reusing existing libcluster.so (TRANSIT_SKIP_BUILD=1)")
+	if err := e2etest.CheckSharedLibrary(examplesRoot, "cluster", "libcluster.so"); err != nil {
+		fmt.Fprintf(os.Stderr, "e2e: %v\n", err)
+		os.Exit(1)
 	}
 
 	upstreamPort := startUpstream()

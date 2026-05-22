@@ -681,7 +681,7 @@ For example:
 
 ```text
 github.search
-linear.search
+kiwi.search_flights
 docs.search
 ```
 
@@ -720,7 +720,7 @@ only to the GitHub MCP server:
 
 ```text
 tools/list
-  -> aggregate github.search, linear.search, docs.search
+  -> aggregate github.search, kiwi.search_flights, docs.search
 
 tools/call name=github.search
   -> strip or map the public name back to search
@@ -731,25 +731,150 @@ This can also happen in a router layer instead of the aggregator, but the first
 demo should keep list and call ownership together. The component that creates
 the public tool name should also know how to reverse-map that name.
 
+### MCP Profiles And Credentials
+
+The user-facing product shape is an MCP profile:
+
+```text
+https://proxy.example.com/mcp/profiles/engineering
+```
+
+A profile is one proxy URL that bundles several backend MCP servers. The MCP
+client authenticates once to the proxy profile, and the proxy delivers the
+right backend credential when it talks to each MCP server.
+
+Keep the auth layers separate:
+
+- **Profile auth** protects access to the bundle. First demo modes should be
+  `none` and `api_key`; OAuth can come later.
+- **Backend credential delivery** authenticates to each MCP server. This should
+  mirror the LLM proxy model: BYOK-like user credentials, platform-managed
+  static credentials, or no auth.
+
+Example profile:
+
+```json
+{
+  "id": "engineering",
+  "public_auth": {
+    "type": "api_key",
+    "key_ref": "profile-key"
+  },
+  "credential_policies": {
+    "github-user": {
+      "type": "byok",
+      "header": "authorization"
+    },
+    "docs-platform": {
+      "type": "static",
+      "header": "authorization"
+    }
+  },
+  "servers": {
+    "github": {
+      "target": "mcp-github.transit-dataplane.svc.cluster.local:8080",
+      "prefix": "github",
+      "credential_ref": "github-user"
+    },
+    "docs": {
+      "target": "mcp-docs.transit-dataplane.svc.cluster.local:8080",
+      "prefix": "docs",
+      "credential_ref": "docs-platform"
+    },
+    "local": {
+      "target": "mcp-local.transit-dataplane.svc.cluster.local:8080",
+      "prefix": "local"
+    }
+  }
+}
+```
+
+Runtime behavior:
+
+```text
+client -> proxy profile
+  authorization: Bearer proxy-profile-api-key
+
+proxy -> GitHub MCP server
+  authorization: Bearer user-github-token
+
+proxy -> Docs MCP server
+  authorization: Bearer platform-docs-token
+```
+
+The profile API key does not become the backend credential. It only authorizes
+access to the profile. Backend credentials are delivered per server based on
+the profile config and are never returned in `tools/list`, dumps, logs, or
+JSON-RPC errors.
+
+For `tools/list`, the aggregator fans out with each server's credential:
+
+```text
+github server -> BYOK/user GitHub token
+docs server   -> platform docs token
+local server  -> no auth
+```
+
+For `tools/call github.search`, the aggregator routes only to the GitHub MCP
+server and sends only the GitHub credential. A missing or expired GitHub
+credential should not affect Docs unless the profile policy says the whole
+profile must fail closed.
+
+The active dump should show credential state without leaking values:
+
+```json
+{
+  "profile": "engineering",
+  "servers": {
+    "github": {
+      "prefix": "github",
+      "credential_ref": "github-user",
+      "credential_configured": true
+    },
+    "docs": {
+      "prefix": "docs",
+      "credential_ref": "docs-platform",
+      "credential_configured": true
+    }
+  }
+}
+```
+
 ### Control-Plane Shape
 
-The control plane should describe MCP server groups separately from model
-provider routes:
+The control plane should describe MCP profiles separately from model provider
+routes:
 
 ```json
 {
   "version": "mcp-bootstrap",
-  "mcp_groups": {
-    "default": {
+  "mcp_profiles": {
+    "engineering": {
+      "public_auth": {
+        "type": "api_key",
+        "key_ref": "profile-key"
+      },
       "timeout_millis": 800,
+      "credential_policies": {
+        "github-user": {
+          "type": "byok",
+          "header": "authorization"
+        },
+        "kiwi-platform": {
+          "type": "byok",
+          "header": "authorization"
+        }
+      },
       "servers": {
         "github": {
           "target": "mcp-github.transit-dataplane.svc.cluster.local:8080",
-          "prefix": "github"
+          "prefix": "github",
+          "credential_ref": "github-user"
         },
-        "linear": {
-          "target": "mcp-linear.transit-dataplane.svc.cluster.local:8080",
-          "prefix": "linear"
+        "kiwi": {
+          "target": "mcp-kiwi.transit-dataplane.svc.cluster.local:8080",
+          "prefix": "kiwi",
+          "credential_ref": "kiwi-platform"
         }
       }
     }
@@ -760,7 +885,7 @@ provider routes:
 Shard-local variants can use the existing L1/L2 split:
 
 ```text
-L1 tag a-demo -> L2 A MCP aggregator -> mcp-github-a + mcp-linear-a
+L1 tag a-demo -> L2 A MCP aggregator -> mcp-github-a + mcp-kiwi-a
 L1 tag b-demo -> L2 B MCP aggregator -> mcp-github-b + mcp-docs-b
 ```
 
@@ -773,24 +898,432 @@ Do not start inside Envoy. Start with a deterministic Go aggregator service in
 the integration:
 
 - `tiered-router-demo mcp-server --id github`
-- `tiered-router-demo mcp-server --id linear`
-- `tiered-router-demo mcp-aggregator --group default`
-- `tiered-router-demo mcp tools-list`
-- `tiered-router-demo mcp tools-call github.search`
+- `tiered-router-demo mcp-server --id kiwi`
+- `tiered-router-demo mcp-aggregator --profile engineering`
+- `tiered-router-demo mcp tools-list --profile-url http://127.0.0.1:19081/mcp/profiles/engineering`
+- `tiered-router-demo mcp tools-call github.search --profile-url http://127.0.0.1:19081/mcp/profiles/engineering`
 
 The e2e should assert:
 
+- valid proxy profile API key can access the MCP profile.
+- invalid proxy profile API key is rejected before fan-out.
 - `tools/list` fans out to at least two shard-local MCP servers.
 - returned tool names are namespaced and deterministic.
+- each backend receives the credential configured for that server.
+- backend credentials are redacted from active dumps and errors.
 - one slow MCP server does not block the whole response past the parent budget.
 - one failed MCP server is visible in the aggregator dump.
 - `tools/call` for a namespaced tool routes to exactly one MCP server.
+- `tools/call` sends only the owning server's credential.
 - `tools/call` for an unknown tool returns a controlled JSON-RPC error.
 
 Only after those semantics are stable should we consider moving fan-out into a
 Transit HTTP filter. That move needs a real outbound subrequest API and clear
 body buffering limits. Until then, a service-level aggregator is the right
 place to learn.
+
+### Fan-Out Shape For Tiered Router
+
+The research direction is to treat MCP fan-out as an L2 capability, not an L1
+capability.
+
+L1 should still do one job: derive the tag and select the shard that owns the
+user's profile, BYOK keys, quota state, and provider account mapping. Once the
+request lands in a shard, the L2 side can decide whether the request is an LLM
+model request, a normal single-server MCP request, or a fan-out MCP discovery
+request.
+
+That gives us this first product shape:
+
+```text
+client
+  |
+  | GET or POST /mcp/profiles/engineering
+  | authorization: Bearer profile-api-key
+  | x-transit-tag: a-demo
+  v
+L1 cluster-shard-router
+  |
+  | selects Service/l2-a
+  | injects x-transit-l1-shard: a
+  v
+L2 shard A
+  |
+  +--> cluster-router for LLM and single-target MCP calls
+  |
+  +--> mcp-aggregator-a for tools/list
+        |
+        +--> github MCP with user GitHub token
+        +--> kiwi MCP with platform Kiwi token
+        +--> docs MCP with platform token
+```
+
+The L2 shard owns the MCP profile because the profile is stateful. It knows
+which backend MCP servers are enabled, which credentials are configured, and
+which public tool names map back to which server. L1 does not need those
+details and should not receive backend credentials.
+
+### MCP Request Classification
+
+The first implementation should classify MCP requests at the aggregator, not
+inside Envoy:
+
+| Request | Target | Behavior |
+| --- | --- | --- |
+| `tools/list` | aggregator | fan out to profile servers and merge |
+| `tools/call` with `github.search` | aggregator | route to GitHub only |
+| `tools/call` with unknown tool | aggregator | return controlled JSON-RPC error |
+| non-MCP LLM request | cluster-router | route by model/provider |
+
+The aggregator can expose one HTTP endpoint per profile:
+
+```text
+POST /mcp/profiles/{profile}
+```
+
+That endpoint accepts JSON-RPC MCP messages. For the first cut, do not support
+streaming transport, session resumption, or server-initiated notifications. The
+goal is to prove profile auth, backend credential delivery, tool discovery
+merge, and single-target tool execution.
+
+### Protocol Constraints To Respect
+
+Keep the first implementation close to MCP's HTTP shape, but deliberately small:
+
+- Use JSON-RPC 2.0 request and response bodies.
+- Treat `POST /mcp/profiles/{profile}` as the MCP endpoint for that profile.
+- Accept only `application/json` responses for the first demo, even though real
+  clients must be ready for `text/event-stream`.
+- Preserve the JSON-RPC `id` from the client when returning `tools/list` and
+  `tools/call` responses.
+- Return HTTP `202` only for accepted notifications or responses. The first
+  demo can reject notifications with a clear error until we need them.
+- Return protocol-level JSON-RPC errors for unknown tools and malformed
+  requests.
+- Return tool execution errors inside `result.isError` only when the selected
+  backend tool ran and failed.
+- Keep public tool names within the safe MCP tool-name alphabet. Dot-separated
+  names such as `github.search` are valid and match the first namespace policy.
+- Ignore backend pagination in the first cut by making demo MCP servers return
+  a single page with no `nextCursor`. Add cursor fan-out only after the basic
+  merge and routing behavior is stable.
+
+### Aggregator Responsibilities
+
+The L2 MCP aggregator should own these concerns:
+
+- validate profile auth before any backend call
+- load the shard-local profile config
+- resolve backend credentials without exposing secret values
+- fan out `tools/list` with bounded concurrency
+- preserve request IDs in JSON-RPC responses
+- merge tools in deterministic order
+- namespace public tool names as `<server-id>.<tool-name>`
+- remember the reverse mapping for `tools/call`
+- route `tools/call` to exactly one backend server
+- enforce a parent timeout and smaller per-server timeouts
+- expose a redacted `/dump` endpoint
+
+Keep the aggregator stateless enough for the demo. It can rebuild the
+`tools/call` reverse mapping from the active profile config plus the last
+successful `tools/list` cache. If there is no cache, it can lazily call the
+owning server or return a clear error. The first e2e should use `tools/list`
+before `tools/call` so the behavior is explicit.
+
+### Active Dump Shape
+
+The active dump must be useful for operators but safe to show during demos.
+It should include profile names, server IDs, public prefixes, timeout budgets,
+last error summaries, and whether credentials are configured. It must not
+include API keys, OAuth tokens, bearer tokens, or raw backend error bodies that
+may contain secrets.
+
+Example:
+
+```json
+{
+  "mcp_profiles": {
+    "engineering": {
+      "shard": "a",
+      "public_auth": {
+        "type": "api_key",
+        "configured": true
+      },
+      "timeout_millis": 800,
+      "servers": {
+        "github": {
+          "target": "mcp-github-a.transit-dataplane.svc.cluster.local:8080",
+          "prefix": "github",
+          "credential_ref": "github-user",
+          "credential_configured": true,
+          "last_tools_list": "ok"
+        },
+        "kiwi": {
+          "target": "mcp-kiwi-a.transit-dataplane.svc.cluster.local:8080",
+          "prefix": "kiwi",
+          "credential_ref": "kiwi-platform",
+          "credential_configured": true,
+          "last_tools_list": "timeout"
+        }
+      }
+    }
+  }
+}
+```
+
+### Research Priority
+
+1. Add demo-only MCP backend servers.
+
+   Verification: each server returns a deterministic `tools/list`, records the
+   received authorization header internally, and exposes a redacted inspection
+   endpoint for tests.
+
+2. Add an L2 MCP aggregator service.
+
+   Verification: `tools/list` against one profile returns namespaced tools from
+   at least two servers in stable order.
+
+3. Add profile auth.
+
+   Verification: a missing or wrong profile API key is rejected before any
+   backend server receives a request.
+
+4. Add backend credential delivery.
+
+   Verification: GitHub receives only the GitHub credential, Kiwi receives
+   only the Kiwi credential, and dumps show only credential refs plus
+   configured booleans.
+
+5. Add `tools/call` single-server routing.
+
+   Verification: `tools/call github.search` reaches only GitHub, strips or maps
+   the public tool name back to `search`, and preserves the JSON-RPC request ID.
+
+6. Add partial failure behavior.
+
+   Verification: one slow or failing MCP server does not hide tools from the
+   healthy server, and the failed server is visible in the redacted dump.
+
+7. Route profile traffic through the tiered Envoy Gateway topology.
+
+   Verification: the same profile name can resolve differently in shard A and
+   shard B, with L1 deciding the shard and L2 deciding the profile contents.
+
+### Session Model Borrowed From Envoy AI Gateway
+
+The useful design from Envoy AI Gateway's MCP proxy is the composite session:
+
+- the client initializes once against the public MCP endpoint
+- the proxy initializes each backend MCP server
+- each backend may return its own `mcp-session-id`
+- the proxy returns one client-facing `mcp-session-id`
+- later POST requests must include that client-facing session ID
+- the proxy expands it back into per-backend session IDs before forwarding
+
+That is the right shape for Transit profiles too. An MCP profile is one public
+endpoint, but the backing servers may be stateful and independent. The proxy
+therefore cannot treat `tools/list` as a stateless fan-out forever.
+
+For the simple example, the composite session can stay plaintext and
+process-local. For the integration and production shape, session state should
+be signed or encrypted so a client cannot forge backend session mappings.
+
+### Implementation Plan
+
+Start with `examples/mcp-profile-router`. That example proves MCP JSON-RPC,
+profile auth, composite sessions, backend credential delivery, `tools/list`
+fan-out, and single-server `tools/call` without Envoy Gateway in the loop.
+
+After that example is green, bring the same aggregator shape into
+`integrations/tiered-router-eg`.
+
+For the integration work:
+
+1. Add MCP config types.
+
+   Proposed files:
+
+   - `internal/demo/mcp_config.go`
+   - `internal/demo/mcp_config_test.go`
+
+   Proposed config:
+
+   ```go
+   type MCPProfileConfig struct {
+       PublicAuth         PublicAuthConfig             `json:"public_auth"`
+       TimeoutMillis      int                          `json:"timeout_millis,omitempty"`
+       CredentialPolicies map[string]CredentialPolicy  `json:"credential_policies,omitempty"`
+       Servers            map[string]MCPServerConfig   `json:"servers"`
+   }
+
+   type MCPServerConfig struct {
+       Target        string `json:"target"`
+       Prefix        string `json:"prefix"`
+       CredentialRef string `json:"credential_ref,omitempty"`
+   }
+   ```
+
+   Store profiles shard-locally under `L2Config`, next to `models`, so L2 A and
+   L2 B can return different profile contents for the same profile name.
+
+2. Add control-plane APIs.
+
+   Proposed endpoints:
+
+   ```text
+   GET  /l2/{shard}/mcp/profiles.json
+   GET  /l2/{shard}/mcp/profiles/{profile}.json
+   POST /l2/{shard}/mcp/profiles
+   GET  /dump
+   ```
+
+   The existing `/dump` should grow a redacted `mcp_profiles` section. It must
+   show `credential_ref` and `credential_configured`, never credential values.
+
+3. Add demo MCP backend servers.
+
+   Proposed command:
+
+   ```sh
+   tiered-router-demo mcp-server \
+     --id github \
+     --addr :8080 \
+     --tools search,repo_read \
+     --expected-auth "Bearer github-token"
+   ```
+
+   The server should implement:
+
+   ```text
+   POST /mcp
+   GET  /healthz
+   GET  /dump
+   ```
+
+   `tools/list` returns deterministic tools. `tools/call` echoes the server ID,
+   tool name, request arguments, and whether the expected credential was seen.
+   `/dump` records request counts and redacted auth state for e2e assertions.
+
+4. Add the L2 MCP aggregator.
+
+   Proposed command:
+
+   ```sh
+   tiered-router-demo mcp-aggregator \
+     --shard a \
+     --addr :8080 \
+     --control-url http://tiered-router-control:8080
+   ```
+
+   The aggregator should implement:
+
+   ```text
+   POST /mcp/profiles/{profile}
+   GET  /healthz
+   GET  /dump
+   ```
+
+   `tools/list` loads the profile for its shard, validates profile auth, fans
+   out to each configured server, prefixes tool names, sorts results by server
+   ID and tool name, and updates the redacted dump.
+
+   `tools/call` validates profile auth, splits `<server-id>.<tool-name>`, sends
+   one request to the owning server with only that server's credential, maps the
+   tool name back to the backend name, and preserves the request ID.
+
+5. Add host-side CLI commands.
+
+   Proposed commands:
+
+   ```sh
+   tiered-router-demo mcp profiles a
+   tiered-router-demo mcp tools-list engineering \
+     --gateway-url http://127.0.0.1:19081 \
+     --host tiered-router.example.com \
+     --tag a-demo \
+     --api-key profile-a-key
+   tiered-router-demo mcp tools-call engineering github.search \
+     --arguments '{"query":"transit"}' \
+     --gateway-url http://127.0.0.1:19081 \
+     --host tiered-router.example.com \
+     --tag a-demo \
+     --api-key profile-a-key
+   ```
+
+   The CLI should build JSON-RPC requests and print JSON responses. Keep raw
+   curl out of the main demo path.
+
+6. Wire the Kubernetes demo.
+
+   Add shard-local MCP backend deployments and services:
+
+   ```text
+   mcp-github-a, mcp-kiwi-a
+   mcp-github-b, mcp-docs-b
+   ```
+
+   Add one aggregator deployment per L2 shard:
+
+   ```text
+   mcp-aggregator-a
+   mcp-aggregator-b
+   ```
+
+   L2 Gateway routes should send `/mcp/profiles/*` to the shard-local
+   aggregator service. L1 still selects `Service/l2-a` or `Service/l2-b`.
+   That keeps the public path unchanged while making profile contents
+   shard-local.
+
+7. Add tests in layers.
+
+   Unit tests:
+
+   - config validation rejects duplicate prefixes and missing targets
+   - profile auth validation rejects missing or wrong API keys
+   - credential redaction never returns secret values
+   - tool prefixing and reverse mapping are deterministic
+
+   In-process HTTP tests:
+
+   - demo MCP backend handles `tools/list` and `tools/call`
+   - aggregator merges two healthy servers
+   - aggregator fail-opens when one server times out
+   - aggregator routes `tools/call` to exactly one server
+
+   k3d e2e:
+
+   - `a-demo` + `tools/list` returns shard A tools
+   - `b-demo` + `tools/list` returns shard B tools
+   - invalid profile key reaches no backend
+   - `github.search` reaches only the GitHub backend
+   - `/dump` shows profile/server state and no bearer tokens
+
+### Concrete First PR Scope
+
+Keep the first PR smaller than the full Kubernetes demo:
+
+- Add `examples/mcp-profile-router`.
+- Use GitHub and Kiwi demo backends.
+- Implement `initialize` and composite `mcp-session-id` handling.
+- Implement profile API key auth.
+- Implement backend credential delivery.
+- Implement `tools/list` fan-out.
+- Implement `tools/call github.search` single-backend routing.
+- Add unit tests, local e2e, README, and Makefile.
+
+Defer k3d manifest wiring until the local aggregator behavior is green. That
+lets us debug JSON-RPC, credentials, and merge behavior without Envoy Gateway
+in the loop.
+
+### Non-Goals For The First MCP Demo
+
+- Do not implement streaming MCP transport.
+- Do not fan out `tools/call`.
+- Do not add tool aliases until namespaced tool names are proven.
+- Do not put secret values in Envoy dynamic module config.
+- Do not move aggregation into a Transit HTTP filter until outbound subrequests
+  and buffering limits are explicit.
 
 Each L2 logical shard asks the control plane for its own config:
 

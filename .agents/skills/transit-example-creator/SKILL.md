@@ -178,12 +178,16 @@ Every example must have an e2e entry point in its own Makefile:
 
 ```
 .PHONY: e2e
-e2e:
+e2e: build
 	cd $(ROOT)/examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./<name>/e2e/... -v -timeout=60s -count=1
 ```
 
 SPA/browser examples may use a script-backed e2e target, but `make -C
 examples/<name> e2e` should remain the public command.
+
+Keep `.so` builds in the example Makefile. Example Go e2e tests should verify
+that `lib<name>.so` exists before starting Envoy, but they should not invoke
+`go build` themselves.
 
 Use `transit-e2e-authoring` for the test harness details.
 

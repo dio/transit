@@ -8,6 +8,7 @@ type Request struct {
 	Path       string
 	Host       string
 	FilterName string
+	Context    *any
 	headers    shared.HeaderMap
 }
 
@@ -36,8 +37,8 @@ func (r *Request) Header(name string) string {
 	return v.ToString()
 }
 
-func newRequest(headers shared.HeaderMap, name string) *Request {
-	r := &Request{headers: headers, FilterName: name}
+func newRequestWithContext(headers shared.HeaderMap, name string, ctx *any) *Request {
+	r := &Request{headers: headers, FilterName: name, Context: ctx}
 	if v := headers.GetOne(":method"); v.Len > 0 {
 		r.Method = v.ToString()
 	}
@@ -48,6 +49,10 @@ func newRequest(headers shared.HeaderMap, name string) *Request {
 		r.Host = v.ToString()
 	}
 	return r
+}
+
+func newRequest(headers shared.HeaderMap, name string) *Request {
+	return newRequestWithContext(headers, name, nil)
 }
 
 // NewRequest constructs a Request from a HeaderMap for use in tests.

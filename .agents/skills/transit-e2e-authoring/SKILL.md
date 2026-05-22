@@ -87,9 +87,9 @@ The example `TestMain` normally:
 
 - locates `examples/` with `runtime.Caller`,
 - checks `ENVOY_BIN` or `../.bin/envoy`,
-- builds `lib<name>.so` with `go build -trimpath -buildmode=c-shared`; the
-  example `cmd/main.go` must blank-import `github.com/dio/transit/down/abi_impl`
-  so Envoy ABI exports are linked only into the `.so`,
+- verifies that `lib<name>.so` already exists; the example Makefile owns
+  building the `.so`, including the `go build -trimpath -buildmode=c-shared`
+  command,
 - starts any in-process upstream/test server,
 - embeds `testdata/envoy.tmpl.yaml` with `//go:embed` and renders a temp Envoy
   config,
@@ -141,6 +141,11 @@ make -C examples/spa e2e
 For new Go-backed example e2e targets, include `-count=1` in the Makefile
 target so Envoy actually starts during verification instead of reusing cached
 `go test` results.
+
+Example e2e tests must not run `go build` themselves. Wire the local Makefile
+as `e2e: build`, and have the Go e2e verify that the expected `.so` is present
+before starting Envoy. This keeps build responsibility in one place and makes
+direct `go test ./<name>/e2e/...` fail with a clear "run make build" message.
 
 Fast rerun after a successful build:
 

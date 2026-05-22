@@ -23,7 +23,7 @@ test:
 	cd $(ROOT)/examples && GOWORK=off go test ./$(EXAMPLE)/...
 
 ## e2e: build .so + testserver, start Envoy, run Go e2e tests
-e2e:
+e2e: build
 	cd $(ROOT)/examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./$(EXAMPLE)/e2e/... -v -timeout=120s -count=1
 
 ## simulate: zero-dependency demo (no Envoy, no Postgres)

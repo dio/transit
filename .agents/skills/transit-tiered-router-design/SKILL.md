@@ -112,16 +112,48 @@ MCP fan-out is not ordinary Cluster Extension host selection. Cluster Extension
 chooses one host. Fan-out creates one logical response from several upstream
 MCP servers.
 
+Treat MCP fan-out as an L2 capability. L1 should only select the shard that
+owns the user's state. The L2 shard owns the MCP profile, backend server list,
+credential refs, tool namespace mapping, and partial failure policy.
+
 Start fan-out above the cluster layer as a small Go MCP aggregator service:
 
 - Fan out `tools/list` first because it is discovery and can be merged.
 - Do not fan out `tools/call` by default. Route it to the one server that owns
   the selected namespaced tool.
 - Namespace tool names as `<server-id>.<tool-name>` for the first demo.
+- Treat an MCP profile as the user-facing unit: one proxy URL bundles several
+  backend MCP servers under one profile auth policy.
+- Keep profile auth separate from backend credentials. The proxy API key or
+  OAuth token authorizes access to the profile; backend credentials are
+  delivered per MCP server using the same BYOK/static/no-auth model as LLM
+  provider routing.
+- Redact backend credentials in active dumps, logs, and JSON-RPC errors. Dumps
+  may show credential refs and whether a credential is configured.
 - Keep timeout budgets, partial failure accounting, result ordering, and merge
   policy in the aggregator until the semantics are stable.
 - Use Cluster Extension only to route to the shard-local aggregator or to one
   selected MCP server for non-fan-out calls.
+- Profile auth is not backend auth. The proxy API key or OAuth token authorizes
+  the profile URL. Backend credentials are delivered separately to each MCP
+  server.
+- The first aggregator endpoint should be `POST /mcp/profiles/{profile}` with
+  ordinary JSON-RPC request and response bodies. Leave streaming transport,
+  session resumption, and server-initiated notifications for later.
+- Adopt the Envoy AI Gateway MCP proxy session lesson: initialize each backend,
+  return one client-facing composite `mcp-session-id`, require that session ID
+  on later POST requests, and forward the right per-backend session ID when
+  calling each backend. The simple example may keep this plaintext; integration
+  or production work should sign or encrypt it.
+- For the first demo, accept only ordinary JSON responses from backend MCP
+  servers. Preserve JSON-RPC IDs, reject unsupported notifications clearly, and
+  keep SSE/streamable response handling for a later transport-focused step.
+- Dot-separated names such as `github.search` are valid for the initial
+  namespace policy. Keep aliases out until namespaced routing is proven.
+- The active dump should include profile names, server IDs, public prefixes,
+  timeout budgets, last error summaries, credential refs, and
+  `credential_configured` booleans. It must not include API keys, OAuth tokens,
+  bearer tokens, or raw backend error bodies.
 
 Only consider a Transit HTTP-filter implementation after the service-level
 aggregator proves the JSON-RPC semantics and Transit has an outbound subrequest
@@ -140,3 +172,30 @@ Prove the topology incrementally:
 5. Provider egress: route one model to a TLS internet endpoint.
 6. MCP fan-out: aggregate `tools/list` across shard-local MCP servers, then
    route `tools/call` for a namespaced tool to exactly one server.
+
+For MCP fan-out, verify in this order:
+
+1. Demo MCP backend servers return deterministic `tools/list` results.
+2. L2 aggregator merges namespaced tools from at least two servers.
+3. Missing or wrong profile auth is rejected before backend calls.
+4. Each backend receives only its own configured credential.
+5. Dumps redact credentials and expose only refs/configured booleans.
+6. `tools/call <server>.<tool>` reaches exactly one backend.
+7. One failed or slow backend is visible in the dump and does not hide healthy
+   tools when the profile policy is fail-open.
+
+Implementation order:
+
+1. Add `examples/mcp-profile-router` to prove local MCP profile behavior.
+2. Add demo MCP backend servers with deterministic `tools/list` and echoing
+   `tools/call`.
+3. Add an aggregator service with profile auth, composite session handling,
+   credential delivery, bounded fan-out, namespaced tool merge, and
+   single-server `tools/call`.
+4. Add CLI commands that build JSON-RPC requests for `mcp tools-list` and
+   `mcp tools-call`.
+5. Add unit and in-process HTTP tests before k3d wiring.
+6. Add shard-local MCP profile config under tiered-router `L2Config`.
+7. Add control-plane read/update APIs and redacted dumps for MCP profiles.
+8. Only after local behavior is green, wire `/mcp/profiles/*` through the
+   tiered Envoy Gateway topology and add black-box k3d e2e assertions.

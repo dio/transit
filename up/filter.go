@@ -101,7 +101,7 @@ func (f *filter) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool) sh
 	}
 
 	w := &Writer{handle: f.handle}
-	f.handler(w, newRequest(headers, f.name))
+	f.handler(w, newRequestWithContext(headers, f.name, &f.context))
 	if w.stopped {
 		return shared.HeadersStatusStop
 	}
@@ -115,6 +115,9 @@ func (f *filter) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool) sh
 				ContentEncoding: f.requestContentEncoding,
 				Context:         &f.context,
 			})
+		}
+		if w.stopped {
+			return shared.HeadersStatusStop
 		}
 		return shared.HeadersStatusContinue
 	}

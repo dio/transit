@@ -54,19 +54,9 @@ func TestMain(m *testing.M) {
 	}
 
 	exampleDir := filepath.Join(examplesRoot, "cluster-router")
-	if os.Getenv("TRANSIT_SKIP_BUILD") == "" {
-		fmt.Fprintln(os.Stderr, "e2e: building libcluster-router.so ...")
-		if err := e2etest.BuildSharedLibrary(examplesRoot, "cluster-router", "libcluster-router.so"); err != nil {
-			fmt.Fprintf(os.Stderr, "e2e: build failed: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Fprintln(os.Stderr, "e2e: build OK")
-	} else {
-		if err := e2etest.BuildSharedLibrary(examplesRoot, "cluster-router", "libcluster-router.so"); err != nil {
-			fmt.Fprintf(os.Stderr, "e2e: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Fprintln(os.Stderr, "e2e: reusing existing libcluster-router.so (TRANSIT_SKIP_BUILD=1)")
+	if err := e2etest.CheckSharedLibrary(examplesRoot, "cluster-router", "libcluster-router.so"); err != nil {
+		fmt.Fprintf(os.Stderr, "e2e: %v\n", err)
+		os.Exit(1)
 	}
 
 	upstreamA = startUpstream("upstream a")

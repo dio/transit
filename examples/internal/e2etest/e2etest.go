@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"text/template"
 	"time"
@@ -22,22 +21,15 @@ func EnvoyBin(examplesRoot string) string {
 	return filepath.Join(examplesRoot, "..", ".bin", "envoy")
 }
 
-// BuildSharedLibrary compiles one example command as the dynamic module Envoy
-// will load. Tests can set TRANSIT_SKIP_BUILD=1 while iterating on assertions.
-func BuildSharedLibrary(examplesRoot, exampleName, output string) error {
-	if os.Getenv("TRANSIT_SKIP_BUILD") != "" {
-		if _, err := os.Stat(filepath.Join(examplesRoot, exampleName, output)); err != nil {
-			return fmt.Errorf("TRANSIT_SKIP_BUILD=1 but %s not found: %w", output, err)
-		}
-		return nil
+// CheckSharedLibrary verifies that the example Makefile has already built the
+// dynamic module Envoy will load. Example e2e tests should not run go build
+// themselves; make -C examples/<name> e2e owns that build step.
+func CheckSharedLibrary(examplesRoot, exampleName, output string) error {
+	path := filepath.Join(examplesRoot, exampleName, output)
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("%s not found; run `make -C examples/%s build` before direct e2e: %w", path, exampleName, err)
 	}
-	cmd := exec.Command("go", "build", "-trimpath", "-buildmode=c-shared",
-		"-o", filepath.Join(exampleName, output), "./"+exampleName+"/cmd")
-	cmd.Dir = examplesRoot
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return nil
 }
 
 // FreePort reserves a loopback port long enough for the caller to learn it.
