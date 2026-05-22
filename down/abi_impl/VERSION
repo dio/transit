@@ -10,5 +10,5 @@
 #   make update-sdk ENVOY_COMMIT=<full-or-short-commit>
 
 SDK_MODULE=github.com/envoyproxy/envoy/source/extensions/dynamic_modules
-SDK_VERSION=v0.0.0-20260521012914-4616750da8df
-SDK_COMMIT=4616750da8df
+SDK_VERSION=v0.0.0-20260521055639-0d6e3c60aa55
+SDK_COMMIT=0d6e3c60aa55

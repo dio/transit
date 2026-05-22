@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	github.com/andybalholm/brotli v1.2.1
-	github.com/envoyproxy/envoy/source/extensions/dynamic_modules v0.0.0-20260521012914-4616750da8df
+	github.com/envoyproxy/envoy/source/extensions/dynamic_modules v0.0.0-20260521055639-0d6e3c60aa55
 	github.com/klauspost/compress v1.18.6
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/mock v0.6.0
