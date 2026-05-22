@@ -3,7 +3,8 @@
 ## Run from this directory: make <target>
 ## Or from the project root: make -C examples/request-ui <target>
 
-OUTPUT := librequest-ui.so
+EXAMPLE := request-ui
+OUTPUT  := librequest-ui.so
 
 ROOT      := $(shell git rev-parse --show-toplevel)
 ENVOY_BIN ?= $(ROOT)/.bin/envoy
@@ -14,21 +15,21 @@ GOARCH    ?= $(shell go env GOARCH)
 ## build: compile librequest-ui.so for the current host
 build:
 	cd $(ROOT)/examples && CGO_ENABLED=1 GOWORK=off go build -trimpath -buildmode=c-shared \
-	  -o request-ui/$(OUTPUT) ./request-ui/cmd
+	  -o $(EXAMPLE)/$(OUTPUT) ./$(EXAMPLE)/cmd
 	@echo "built: $(OUTPUT)"
 
 ## test: run unit tests (no Envoy required)
 test:
-	cd $(ROOT)/examples && GOWORK=off go test ./request-ui/...
+	cd $(ROOT)/examples && GOWORK=off go test ./$(EXAMPLE)/...
 
 ## e2e: build .so + testserver, start Envoy, run Go e2e tests
 e2e:
-	cd $(ROOT)/examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./request-ui/e2e/... -v -timeout=120s
+	cd $(ROOT)/examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./$(EXAMPLE)/e2e/... -v -timeout=120s -count=1
 
 ## simulate: zero-dependency demo (no Envoy, no Postgres)
 ##           generates synthetic traffic; UI at http://localhost:6062/
 simulate:
-	cd $(ROOT) && REQUI_ADDR=0.0.0.0:6062 go run ./examples/request-ui/cmd/simulate
+	cd $(ROOT) && REQUI_ADDR=0.0.0.0:6062 go run ./examples/$(EXAMPLE)/cmd/simulate
 
 ## run: build, then start Envoy with the request-ui filter
 ##      UI at http://localhost:6062/ ; proxy at http://localhost:10000/

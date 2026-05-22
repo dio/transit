@@ -1,10 +1,10 @@
-## examples/cluster-dfp/Makefile - build and test targets for the cluster-dfp example.
+## examples/cluster-router/Makefile - build and test targets for the cluster-router example.
 ##
 ## Run from this directory: make <target>
-## Or from the project root: make -C examples/cluster-dfp <target>
+## Or from the project root: make -C examples/cluster-router <target>
 
-EXAMPLE := cluster-dfp
-OUTPUT  := libcluster-dfp.so
+EXAMPLE := cluster-router
+OUTPUT  := libcluster-router.so
 
 ROOT      := $(shell git rev-parse --show-toplevel)
 ENVOY_BIN ?= $(ROOT)/.bin/envoy
@@ -20,7 +20,7 @@ test:
 	cd $(ROOT)/examples && GOWORK=off go test ./$(EXAMPLE)
 
 e2e:
-	cd $(ROOT)/examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./$(EXAMPLE)/e2e/... -v -timeout=60s -count=1
+	cd $(ROOT)/examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./$(EXAMPLE)/e2e/... -v -timeout=90s -count=1
 
 run: build $(ENVOY_BIN)
 	GODEBUG=cgocheck=0 \

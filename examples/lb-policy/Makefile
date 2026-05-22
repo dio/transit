@@ -20,7 +20,7 @@ test:
 	cd $(ROOT)/examples && GOWORK=off go test ./$(EXAMPLE)
 
 e2e:
-	cd $(ROOT)/examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./$(EXAMPLE)/e2e/... -v -timeout=60s
+	cd $(ROOT)/examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./$(EXAMPLE)/e2e/... -v -timeout=60s -count=1
 
 run: build $(ENVOY_BIN)
 	GODEBUG=cgocheck=0 \

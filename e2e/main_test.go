@@ -58,6 +58,7 @@ var (
 	upstreamAuthGroupAddr string
 	lbPolicyAddr          string
 	clusterExtensionAddr  string
+	clusterSchedulerAddr  string
 	adminAddr             string
 )
 
@@ -96,6 +97,7 @@ func TestMain(m *testing.M) {
 	upstreamFilterUpstreamPort := startPlainUpstream()
 	lbPolicyPort := freePort()
 	clusterExtensionPort := freePort()
+	clusterSchedulerPort := freePort()
 	adminPort := freePort()
 
 	echoAddr = fmt.Sprintf("http://localhost:%d", echoPort)
@@ -113,6 +115,7 @@ func TestMain(m *testing.M) {
 	upstreamAuthGroupAddr = fmt.Sprintf("http://localhost:%d", upstreamAuthGroupPort)
 	lbPolicyAddr = fmt.Sprintf("http://localhost:%d", lbPolicyPort)
 	clusterExtensionAddr = fmt.Sprintf("http://localhost:%d", clusterExtensionPort)
+	clusterSchedulerAddr = fmt.Sprintf("http://localhost:%d", clusterSchedulerPort)
 	adminAddr = fmt.Sprintf("http://localhost:%d", adminPort)
 
 	otelSink = otelsink.New()
@@ -171,6 +174,7 @@ func TestMain(m *testing.M) {
 		LbPolicyUpstreamPort:         upstreamFilterUpstreamPort,
 		ClusterExtensionPort:         clusterExtensionPort,
 		ClusterExtensionUpstreamPort: upstreamFilterUpstreamPort,
+		ClusterSchedulerPort:         clusterSchedulerPort,
 		AdminPort:                    adminPort,
 	})
 
@@ -310,6 +314,7 @@ type envoyPorts struct {
 	LbPolicyUpstreamPort         int
 	ClusterExtensionPort         int
 	ClusterExtensionUpstreamPort int
+	ClusterSchedulerPort         int
 	AdminPort                    int
 }
 

@@ -94,12 +94,25 @@ The example `TestMain` normally:
 - waits for admin `/ready`,
 - runs tests and tears Envoy down.
 
+Generated e2e shared libraries and c-shared headers are build artifacts. Clean
+or ignore `e2e/libe2e.so`, `e2e/libe2e.h`, `examples/*/lib*.so`, and
+`examples/*/lib*.h`; never commit them.
+
 Reuse the nearest existing example e2e harness (`hello`, `lb-policy`,
 `sse-tap`, or `request-ui`) rather than writing a new harness from memory.
+When a helper is shared only by example e2e suites, put it in the examples
+module, for example `examples/internal/e2etest`. Do not import the separate
+root `e2e` module from `examples/` just to share small harness helpers.
 
 If an e2e example depends on embedded static assets, keep a minimal tracked
 fixture under the embedded path. CI lint/typecheck runs from a clean checkout
 and will fail on `//go:embed` patterns that only exist after a local asset build.
+
+For Cluster Extension refresh coverage, distinguish bootstrap host discovery
+from live cluster mutation. If `ClusterHandle.Schedule` is involved, keep a
+minimal root e2e regression for scheduler dispatch in addition to the example
+e2e. This makes ABI scheduler regressions obvious instead of hiding them behind
+DNS, config fetch, or host mutation behavior.
 
 ## Validation commands
 
@@ -120,6 +133,10 @@ make -C examples/cluster e2e
 make -C examples/cluster-dfp e2e
 make -C examples/spa e2e
 ```
+
+For new Go-backed example e2e targets, include `-count=1` in the Makefile
+target so Envoy actually starts during verification instead of reusing cached
+`go test` results.
 
 Fast rerun after a successful build:
 

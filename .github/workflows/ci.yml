@@ -58,6 +58,7 @@ jobs:
           make -C examples/lb-policy test
           make -C examples/cluster test
           make -C examples/cluster-dfp test
+          make -C examples/cluster-router test
           make -C examples/spa test
 
   # ---------------------------------------------------------------------------
@@ -99,4 +100,5 @@ jobs:
       - run: make -C examples/lb-policy e2e
       - run: make -C examples/cluster e2e
       - run: make -C examples/cluster-dfp e2e
+      - run: make -C examples/cluster-router e2e
       - run: make -C examples/spa e2e

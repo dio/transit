@@ -4,4 +4,7 @@ dist/
 !examples/spa/ui/dist/**
 *.o
 *.so
+dist/*.h
+e2e/libe2e.h
+examples/*/lib*.h
 .graymatter/

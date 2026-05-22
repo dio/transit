@@ -90,6 +90,9 @@ var envoyConfigTmpl string
 
 Render the embedded template to a temp file before starting Envoy. This keeps
 the test self-contained and makes missing template files fail at compile time.
+If multiple example e2e suites need small shared harness helpers, keep them in
+the examples module, such as `examples/internal/e2etest`, so the examples module
+does not depend on the separate root `e2e` module.
 
 For examples that use `//go:embed`, make sure the embedded files exist in a
 clean checkout. `golangci-lint` typechecks packages in CI and fails on missing
@@ -118,6 +121,11 @@ resolve or look up the target asynchronously, mutate hosts through
 `ClusterHandle.Schedule`, then complete host selection with
 `ClusterLBCompletion`.
 
+For cluster-router-style examples, live refresh is valid only when there is
+separate root e2e coverage for `ClusterHandle.Schedule` dispatch. Keep example
+e2e focused on the user-visible behavior, and use the root scheduler probe to
+catch ABI callback regressions.
+
 ## Per-example Makefile
 
 Every example should have its own Makefile so users can work locally without
@@ -136,12 +144,20 @@ Use the examples module for Go commands inside those targets:
 cd $(ROOT)/examples && GOWORK=off go test ./<name>/...
 ```
 
+Prefer the standard `EXAMPLE := <name>` variable and use `$(EXAMPLE)` in build,
+test, e2e, and helper targets. This keeps examples consistent and avoids
+hard-coded paths drifting when Makefiles are copied.
+
 Build shared libraries into the example directory for local runs:
 
 ```
 cd $(ROOT)/examples && CGO_ENABLED=1 GOWORK=off go build -trimpath -buildmode=c-shared \
   -o <name>/lib<name>.so ./<name>/cmd
 ```
+
+Generated shared libraries and c-shared headers must stay out of git. The repo
+ignores `*.so`, `dist/*.h`, `e2e/libe2e.h`, and `examples/*/lib*.h`; Makefile
+`clean` targets should remove both `$(OUTPUT)` and `$(OUTPUT:.so=.h)`.
 
 ## E2E expectations
 
@@ -150,7 +166,7 @@ Every example must have an e2e entry point in its own Makefile:
 ```
 .PHONY: e2e
 e2e:
-	cd $(ROOT)/examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./<name>/e2e/... -v -timeout=60s
+	cd $(ROOT)/examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./<name>/e2e/... -v -timeout=60s -count=1
 ```
 
 SPA/browser examples may use a script-backed e2e target, but `make -C

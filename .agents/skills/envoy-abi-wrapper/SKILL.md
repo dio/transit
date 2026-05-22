@@ -160,6 +160,52 @@ Use `up.Group` for user-owned background goroutines. Start it from the user's
 cluster lifecycle code and stop it from `Close`/`Shutdown`; do not add generic
 goroutine management to `abi_impl`.
 
+### Debugging scheduler failures
+
+When `ClusterHandle.Schedule` appears not to run, debug the ABI boundary before
+debugging the example:
+
+1. Add or run a minimal root `e2e/` probe that calls `h.Schedule` from
+   `Cluster.ServerInitialized` and exposes simple committed/ran counters through
+   an HTTP filter. Keep this separate from feature examples so config parsing,
+   DNS, and host mutation do not hide the scheduler signal.
+2. Verify the shared library exports the optional callback:
+
+   ```
+   nm -g e2e/libe2e.so | rg envoy_dynamic_module_on_cluster_scheduled
+   ```
+
+3. Temporarily instrument `down/abi_impl/cluster.go` at scheduler creation,
+   `Schedule`, `envoy_dynamic_module_on_cluster_scheduled`, and `runPending`.
+   The split is:
+   - `Schedule` logs but `on_cluster_scheduled` does not: Envoy did not dispatch
+     the posted scheduler event.
+   - `on_cluster_scheduled` logs but `runPending` misses: event ID or wrapper
+     lookup is wrong.
+   - `runPending` runs but the feature fails: debug the user callback, host
+     mutation, or snapshot publication.
+4. Inspect the Envoy-side implementation for object lifetime assumptions. In
+   one scheduler bug, creating the scheduler in `on_cluster_new` was too early:
+   Envoy's scheduler captured `cluster->weak_from_this()` before the C++ cluster
+   was owned by a `shared_ptr`, so later commits were no-ops. Creating the
+   scheduler lazily on first `Schedule` fixed the path.
+5. Once fixed, keep the minimal e2e probe as regression coverage, then rerun the
+   original example e2e that exposed the problem.
+
+```mermaid
+flowchart TD
+  new[on_cluster_new] --> early[Early scheduler creation]
+  early --> weak[weak_from_this is empty]
+  weak --> commit1[scheduler_commit]
+  commit1 --> noop[No scheduled callback]
+
+  server[ServerInitialized or later] --> lazy[Lazy scheduler creation]
+  lazy --> live[weak_from_this is live]
+  live --> commit2[scheduler_commit]
+  commit2 --> callback[on_cluster_scheduled]
+  callback --> pending[runPending executes Go callback]
+```
+
 ## Async ClusterLB host selection
 
 `ClusterLB.ChooseHost` returns:

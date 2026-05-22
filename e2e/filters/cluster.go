@@ -3,12 +3,15 @@ package filters
 import (
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/dio/transit/up"
 )
 
 func init() {
 	up.RegisterCluster("static-hosts", &clusterStaticHostsFactory{})
+	up.RegisterCluster("scheduler-probe", &clusterSchedulerProbeFactory{})
+	up.Register("e2e-cluster-scheduler-state", clusterSchedulerState)
 }
 
 type clusterStaticHostsFactory struct{}
@@ -64,8 +67,10 @@ func (c *clusterStaticHostsCluster) NewClusterLB() up.ClusterLB {
 	return &clusterFirstHealthyLB{}
 }
 
-func (c *clusterStaticHostsCluster) ServerInitialized(_ up.ClusterHandle) {}
-func (c *clusterStaticHostsCluster) DrainStarted(_ up.ClusterHandle)      {}
+func (c *clusterStaticHostsCluster) ServerInitialized(h up.ClusterHandle) {
+	scheduleClusterProbe(h)
+}
+func (c *clusterStaticHostsCluster) DrainStarted(_ up.ClusterHandle) {}
 func (c *clusterStaticHostsCluster) Shutdown(_ up.ClusterHandle, done func()) {
 	done()
 }
@@ -78,4 +83,65 @@ func (lb *clusterFirstHealthyLB) ChooseHost(h up.ClusterLBHandle, _ up.ClusterLB
 		return nil, nil
 	}
 	return h.HealthyHost(0, 0), nil
+}
+
+var (
+	clusterSchedulerCommitted atomic.Int64
+	clusterSchedulerRan       atomic.Int64
+)
+
+type clusterSchedulerProbeFactory struct{}
+
+func (f *clusterSchedulerProbeFactory) Create(_ []byte) (up.ClusterConfigFactory, error) {
+	return &clusterSchedulerProbeConfigFactory{}, nil
+}
+
+type clusterSchedulerProbeConfigFactory struct{}
+
+func (cf *clusterSchedulerProbeConfigFactory) NewCluster(_ up.ClusterHandle) up.Cluster {
+	return &clusterSchedulerProbeCluster{}
+}
+
+func (cf *clusterSchedulerProbeConfigFactory) Close() {}
+
+type clusterSchedulerProbeCluster struct{}
+
+func (c *clusterSchedulerProbeCluster) Init(h up.ClusterHandle) {
+	h.PreInitComplete()
+}
+
+func (c *clusterSchedulerProbeCluster) NewClusterLB() up.ClusterLB {
+	return &clusterSchedulerProbeLB{}
+}
+
+func (c *clusterSchedulerProbeCluster) ServerInitialized(h up.ClusterHandle) {
+	scheduleClusterProbe(h)
+}
+
+func scheduleClusterProbe(h up.ClusterHandle) {
+	// Schedule from a goroutine so the test covers the real background-worker
+	// path used by config refresh code, not only same-thread scheduling.
+	go func() {
+		clusterSchedulerCommitted.Add(1)
+		h.Schedule(func() {
+			clusterSchedulerRan.Add(1)
+		})
+	}()
+}
+
+func (c *clusterSchedulerProbeCluster) DrainStarted(_ up.ClusterHandle) {}
+func (c *clusterSchedulerProbeCluster) Shutdown(_ up.ClusterHandle, done func()) {
+	done()
+}
+func (c *clusterSchedulerProbeCluster) Close() {}
+
+type clusterSchedulerProbeLB struct{ up.EmptyClusterLB }
+
+func (lb *clusterSchedulerProbeLB) ChooseHost(_ up.ClusterLBHandle, _ up.ClusterLBContext) (up.HostPtr, *up.ClusterLBCompletion) {
+	return nil, nil
+}
+
+func clusterSchedulerState(w *up.Writer, _ *up.Request) {
+	body := fmt.Appendf(nil, "committed=%d ran=%d", clusterSchedulerCommitted.Load(), clusterSchedulerRan.Load())
+	w.SendLocalResponse(200, body, [2]string{"content-type", "text/plain"})
 }

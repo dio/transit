@@ -67,7 +67,6 @@ func newClusterHandle(envoyPtr C.envoy_dynamic_module_type_cluster_envoy_ptr) *c
 		envoyPtr: envoyPtr,
 		pending:  make(map[uint64]func()),
 	}
-	h.schedulerPtr = C.envoy_dynamic_module_callback_cluster_scheduler_new(envoyPtr)
 	return h
 }
 
@@ -148,11 +147,15 @@ func (h *clusterHandleImpl) PreInitComplete() {
 
 func (h *clusterHandleImpl) Schedule(fn func()) {
 	h.mu.Lock()
+	if h.schedulerPtr == nil {
+		h.schedulerPtr = C.envoy_dynamic_module_callback_cluster_scheduler_new(h.envoyPtr)
+	}
 	id := h.nextID
 	h.nextID++
 	h.pending[id] = fn
+	scheduler := h.schedulerPtr
 	h.mu.Unlock()
-	C.envoy_dynamic_module_callback_cluster_scheduler_commit(h.schedulerPtr, C.uint64_t(id))
+	C.envoy_dynamic_module_callback_cluster_scheduler_commit(scheduler, C.uint64_t(id))
 }
 
 func (h *clusterHandleImpl) runPending(id uint64) {
