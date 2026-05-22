@@ -50,6 +50,14 @@ download-zig: $(ZIG_BIN)
 .PHONY: download-envoy
 download-envoy: $(ENVOY_BIN)
 
+.PHONY: download-envoy-dev
+download-envoy-dev:
+	@mkdir -p $$(dirname $(ENVOY_BIN))
+	@echo "Downloading Envoy dev for $(GOOS)-$(GOARCH)..."
+	@curl -fsSL "https://archive.tetratelabs.io/envoy/download/dev/envoy-dev-$(GOOS)-$(GOARCH).tar.xz" \
+		| tar -xJ --strip-components=2 -C $$(dirname $(ENVOY_BIN))
+	@chmod +x $(ENVOY_BIN)
+
 .PHONY: build
 build: $(ZIG_BIN)
 	@mkdir -p dist .bin
