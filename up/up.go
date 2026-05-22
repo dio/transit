@@ -2,7 +2,6 @@ package up
 
 import (
 	"github.com/dio/transit/down"
-	_ "github.com/dio/transit/down/abi_impl"
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
 )
 
