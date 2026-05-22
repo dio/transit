@@ -1,5 +1,5 @@
-GO_TOOL          := GOWORK=off go tool -modfile=tools/go.mod
-EXAMPLES_GO_TOOL := GOWORK=off go tool -modfile=$(CURDIR)/tools/go.mod
+GO_TOOL := GOWORK=off go tool -modfile=$(CURDIR)/tools/go.mod
+GOLANGCI_CONFIG := $(CURDIR)/.golangci.yml
 
 ZIG_VERSION   ?= 0.16.0
 ZIG_BIN       ?= $(CURDIR)/.bin/zig-dist/zig
@@ -100,24 +100,31 @@ vet:
 
 .PHONY: format
 format:
-	$(GO_TOOL) golangci-lint fmt
-	cd examples && $(EXAMPLES_GO_TOOL) golangci-lint fmt
+	$(GO_TOOL) golangci-lint fmt --config $(GOLANGCI_CONFIG)
+	cd examples && $(GO_TOOL) golangci-lint fmt --config $(GOLANGCI_CONFIG)
+	cd e2e && $(GO_TOOL) golangci-lint fmt --config $(GOLANGCI_CONFIG)
+	cd integrations && $(GO_TOOL) golangci-lint fmt --config $(GOLANGCI_CONFIG)
 
 .PHONY: format-check
 format-check:
-	$(GO_TOOL) golangci-lint fmt --diff .
-	cd examples && $(EXAMPLES_GO_TOOL) golangci-lint fmt --diff .
+	$(GO_TOOL) golangci-lint fmt --config $(GOLANGCI_CONFIG) --diff .
+	cd examples && $(GO_TOOL) golangci-lint fmt --config $(GOLANGCI_CONFIG) --diff .
+	cd e2e && $(GO_TOOL) golangci-lint fmt --config $(GOLANGCI_CONFIG) --diff .
+	cd integrations && $(GO_TOOL) golangci-lint fmt --config $(GOLANGCI_CONFIG) --diff .
 
 .PHONY: lint
 lint:
-	$(GO_TOOL) golangci-lint run --timeout 5m
-	cd examples && $(EXAMPLES_GO_TOOL) golangci-lint run --timeout 5m
+	$(GO_TOOL) golangci-lint run --config $(GOLANGCI_CONFIG) --timeout 5m
+	cd examples && $(GO_TOOL) golangci-lint run --config $(GOLANGCI_CONFIG) --timeout 5m
+	cd e2e && $(GO_TOOL) golangci-lint run --config $(GOLANGCI_CONFIG) --timeout 5m
+	cd integrations && $(GO_TOOL) golangci-lint run --config $(GOLANGCI_CONFIG) --timeout 5m
 
 .PHONY: tidy
 tidy:
 	go mod tidy
 	cd e2e && GOWORK=off go mod tidy
 	cd examples && GOWORK=off go mod tidy
+	cd integrations && GOWORK=off go mod tidy
 	cd tools && GOWORK=off go mod tidy
 
 # update-sdk upgrades the Envoy dynamic modules SDK to the given Envoy commit and

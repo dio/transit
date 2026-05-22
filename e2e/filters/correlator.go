@@ -20,6 +20,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/dio/transit/e2e/internal/e2etest"
 	"github.com/dio/transit/up"
 )
 
@@ -45,7 +46,8 @@ func (p *correlatorMap) loadAndDelete(requestID string) (int, bool) {
 	if !ok {
 		return 0, false
 	}
-	return v.(int), true
+	status, ok := v.(int)
+	return status, ok
 }
 
 // HTTP filter: request side is a no-op; correlation data comes from the response.
@@ -129,5 +131,5 @@ func (l *correlatorLogger) OnLog(h up.AccessLoggerHandle, logType up.AccessLogTy
 		fmt.Fprintf(os.Stderr, "e2e-correlator-logger: POST failed: %v\n", err)
 		return
 	}
-	resp.Body.Close()
+	e2etest.CloseBody(resp)
 }

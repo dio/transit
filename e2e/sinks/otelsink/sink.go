@@ -13,6 +13,7 @@ import (
 	"net"
 	"sync"
 
+	"github.com/dio/transit/e2e/internal/e2etest"
 	otlpcollectorlogs "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	otlpcollectormetrics "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	otlpcollectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
@@ -55,7 +56,7 @@ func (s *Sink) Start() int {
 	otlpcollectormetrics.RegisterMetricsServiceServer(srv, &metricsSvc{sink: s})
 	otlpcollectortrace.RegisterTraceServiceServer(srv, &tracesSvc{sink: s})
 	go srv.Serve(l) //nolint:errcheck
-	return l.Addr().(*net.TCPAddr).Port
+	return e2etest.MustTCPPort(l.Addr())
 }
 
 // WaitForRecord blocks until a LogRecord matching predicate arrives or ctx is

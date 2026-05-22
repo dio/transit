@@ -13,6 +13,7 @@ import (
 	"net"
 	"sync"
 
+	"github.com/dio/transit/e2e/internal/e2etest"
 	accesslogdatav3 "github.com/envoyproxy/go-control-plane/envoy/data/accesslog/v3"
 	accesslogv3 "github.com/envoyproxy/go-control-plane/envoy/service/accesslog/v3"
 	"google.golang.org/grpc"
@@ -40,7 +41,7 @@ func (s *Sink) Start() int {
 	srv := grpc.NewServer()
 	accesslogv3.RegisterAccessLogServiceServer(srv, s)
 	go srv.Serve(l) //nolint:errcheck
-	return l.Addr().(*net.TCPAddr).Port
+	return e2etest.MustTCPPort(l.Addr())
 }
 
 // StreamAccessLogs implements AccessLogServiceServer.

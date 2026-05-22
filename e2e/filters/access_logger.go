@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/dio/transit/e2e/internal/e2etest"
 	"github.com/dio/transit/up"
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
 )
@@ -80,7 +81,7 @@ func (l *e2eLogger) OnLog(h up.AccessLoggerHandle, logType up.AccessLogType) {
 		fmt.Fprintf(os.Stderr, "e2e-logger: POST failed: %v\n", err)
 		return
 	}
-	resp.Body.Close()
+	e2etest.CloseBody(resp)
 }
 
 func bytes2reader(b []byte) *bytes.Reader { return bytes.NewReader(b) }

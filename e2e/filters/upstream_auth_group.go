@@ -21,7 +21,15 @@ func init() {
 
 	up.RegisterWithGroup("e2e-upstream-auth-group", g, func(w *up.Writer, _ *up.Request) {
 		headers.Range(func(k, v any) bool {
-			w.SetRequestHeader(k.(string), v.(string))
+			name, ok := k.(string)
+			if !ok {
+				return true
+			}
+			value, ok := v.(string)
+			if !ok {
+				return true
+			}
+			w.SetRequestHeader(name, value)
 			return true
 		})
 	})
