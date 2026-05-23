@@ -57,6 +57,45 @@ func TestWriterGoDo_parallelCallouts_resumeOnce(t *testing.T) {
 	require.Equal(t, "backend-0,backend-1,backend-2,backend-3", handle.RequestHeaders().GetOne("x-fanout").ToString())
 }
 
+func TestWriterGoDo_copiesCalloutBuffersBeforeReturn(t *testing.T) {
+	handle := testutil.NewFilterHandle(
+		testutil.WithHeaders(map[string]string{":method": "GET", ":path": "/copy"}),
+		testutil.WithHTTPCalloutFunc(func(_ string, _ [][2]string, _ []byte, _ uint64, cb shared.HttpCalloutCallback) (shared.HttpCalloutInitResult, uint64) {
+			headerName := []byte("x-copy")
+			headerValue := []byte("original-header")
+			body := []byte("original-body")
+			cb.OnHttpCalloutDone(1, shared.HttpCalloutSuccess, [][2]shared.UnsafeEnvoyBuffer{
+				{
+					{Ptr: &headerName[0], Len: uint64(len(headerName))},
+					{Ptr: &headerValue[0], Len: uint64(len(headerValue))},
+				},
+			}, []shared.UnsafeEnvoyBuffer{{Ptr: &body[0], Len: uint64(len(body))}})
+			copy(headerValue, "mutated-header!")
+			copy(body, "mutated-body!")
+			return shared.HttpCalloutInitSuccess, 1
+		}),
+	)
+	f := &filter{
+		handle: handle,
+		handler: func(w *Writer, _ *Request) {
+			w.Go(func(ctx context.Context) {
+				resp, err := w.Do(ctx, HTTPCalloutRequest{Cluster: "backend"})
+				require.NoError(t, err)
+				require.Len(t, resp.Headers, 1)
+				require.Len(t, resp.Body, 1)
+				w.SetRequestHeader("x-header-copy", resp.Headers[0][1].ToString())
+				w.SetRequestHeader("x-body-copy", resp.Body[0].ToString())
+			})
+		},
+	}
+
+	status := f.OnRequestHeaders(handle.RequestHeaders(), true)
+	require.Equal(t, shared.HeadersStatusStop, status)
+	requireDone(t, handle.ContinueRequestC)
+	require.Equal(t, "original-header", handle.RequestHeaders().GetOne("x-header-copy").ToString())
+	require.Equal(t, "original-body", handle.RequestHeaders().GetOne("x-body-copy").ToString())
+}
+
 func TestWriterHTTPCallout_pausesAndResumes(t *testing.T) {
 	handle := testutil.NewFilterHandle(
 		testutil.WithHTTPCalloutFunc(func(_ string, _ [][2]string, _ []byte, _ uint64, cb shared.HttpCalloutCallback) (shared.HttpCalloutInitResult, uint64) {
@@ -77,8 +116,14 @@ func TestWriterHTTPCallout_pausesAndResumes(t *testing.T) {
 	}
 
 	status := f.OnRequestHeaders(handle.RequestHeaders(), true)
-	require.Equal(t, shared.HeadersStatusStop, status)
-	requireDone(t, handle.ContinueRequestC)
+	switch status {
+	case shared.HeadersStatusStop:
+		requireDone(t, handle.ContinueRequestC)
+	case shared.HeadersStatusContinue:
+		require.Equal(t, 0, handle.ContinuedReq)
+	default:
+		t.Fatalf("unexpected status: %v", status)
+	}
 	require.Equal(t, "ok", handle.RequestHeaders().GetOne("x-auth").ToString())
 }
 

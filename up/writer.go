@@ -16,15 +16,15 @@ import (
 // OnRequestHeaders has had a chance to return HeadersStatusStop. The four
 // states handle both orderings without a mutex:
 //
-//   Active  → Paused   OnRequestHeaders got here first; it returns Stop and
-//                      expects OnHttpCalloutDone to call flush+ContinueRequest.
-//   Active  → Done     OnHttpCalloutDone fired first (synchronous callback);
-//                      OnRequestHeaders detects Done, flushes inline, returns
-//                      Continue — no Stop, no ContinueRequest needed.
-//   Paused  → Flushed  Normal async path: callback fires after Stop was returned;
-//                      flush(true) calls ContinueRequest to resume the stream.
-//   Done    → Flushed  Sync-done path: OnRequestHeaders flushes with flush(false)
-//                      because it will return Continue itself.
+//	Active  → Paused   OnRequestHeaders got here first; it returns Stop and
+//	                   expects OnHttpCalloutDone to call flush+ContinueRequest.
+//	Active  → Done     OnHttpCalloutDone fired first (synchronous callback);
+//	                   OnRequestHeaders detects Done, flushes inline, returns
+//	                   Continue — no Stop, no ContinueRequest needed.
+//	Paused  → Flushed  Normal async path: callback fires after Stop was returned;
+//	                   flush(true) calls ContinueRequest to resume the stream.
+//	Done    → Flushed  Sync-done path: OnRequestHeaders flushes with flush(false)
+//	                   because it will return Continue itself.
 const (
 	calloutStateActive int32 = iota
 	calloutStatePaused
@@ -267,7 +267,11 @@ func (w *Writer) Do(ctx context.Context, req HTTPCalloutRequest) (*HTTPCalloutRe
 			req.Body,
 			req.TimeoutMillis,
 			doCallbackFunc(func(_ uint64, r HTTPCalloutResult, headers [][2]shared.UnsafeEnvoyBuffer, body []shared.UnsafeEnvoyBuffer) {
-				ch <- result{resp: &HTTPCalloutResponse{Result: r, Headers: headers, Body: body}}
+				ch <- result{resp: &HTTPCalloutResponse{
+					Result:  r,
+					Headers: copyUnsafeEnvoyHeaderBuffers(headers),
+					Body:    copyUnsafeEnvoyBuffers(body),
+				}}
 			}),
 		)
 		calloutInit := HTTPCalloutInitResult(init)

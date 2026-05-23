@@ -38,10 +38,7 @@ const (
 )
 
 // HTTPCalloutResponse is the result returned by Writer.Do.
-// Headers and Body point into Envoy-owned memory that is only valid during
-// the scheduled callback that receives this value. Copy any field that must
-// outlive the callback (e.g. before sending it on a channel to a goroutine
-// that may run after the callback returns).
+// Headers and Body are Go-owned copies, safe to use after Do returns.
 type HTTPCalloutResponse struct {
 	Result  HTTPCalloutResult
 	Headers [][2]shared.UnsafeEnvoyBuffer
@@ -151,4 +148,37 @@ func (f doCallbackFunc) OnHttpCalloutDone(
 	body []shared.UnsafeEnvoyBuffer,
 ) {
 	f(calloutID, HTTPCalloutResult(result), headers, body)
+}
+
+func copyUnsafeEnvoyBuffer(raw shared.UnsafeEnvoyBuffer) shared.UnsafeEnvoyBuffer {
+	owned := raw.ToBytes()
+	if len(owned) == 0 {
+		return shared.UnsafeEnvoyBuffer{}
+	}
+	return shared.UnsafeEnvoyBuffer{Ptr: &owned[0], Len: uint64(len(owned))}
+}
+
+func copyUnsafeEnvoyBuffers(raw []shared.UnsafeEnvoyBuffer) []shared.UnsafeEnvoyBuffer {
+	if raw == nil {
+		return nil
+	}
+	out := make([]shared.UnsafeEnvoyBuffer, len(raw))
+	for i, b := range raw {
+		out[i] = copyUnsafeEnvoyBuffer(b)
+	}
+	return out
+}
+
+func copyUnsafeEnvoyHeaderBuffers(raw [][2]shared.UnsafeEnvoyBuffer) [][2]shared.UnsafeEnvoyBuffer {
+	if raw == nil {
+		return nil
+	}
+	out := make([][2]shared.UnsafeEnvoyBuffer, len(raw))
+	for i, h := range raw {
+		out[i] = [2]shared.UnsafeEnvoyBuffer{
+			copyUnsafeEnvoyBuffer(h[0]),
+			copyUnsafeEnvoyBuffer(h[1]),
+		}
+	}
+	return out
 }
