@@ -18,6 +18,30 @@ Use this skill for non-e2e tests in transit: root packages, `down`, `up`,
 - Do not call Envoy C callbacks from ordinary unit tests. They are provided by
   the running Envoy process, not by Go test binaries.
 
+### What unit tests cannot detect
+
+`FakeFilterHandle` methods (`SendLocalResponse`, `ContinueRequest`, etc.) are
+pure Go. They never make CGO calls and never re-enter Go from C.
+
+This means unit tests cannot detect **lock-while-CGO deadlocks**. A filter
+that holds a Go mutex while calling a handle method will pass all unit tests
+and deadlock silently against real Envoy. The symptom is a filter that accepts
+the connection but never sends a response.
+
+Transit's own `HTTPCallout` path is mutex-free by design — everything runs on
+the Envoy worker thread. The Go+Do path uses `atomic.Bool`, not a mutex. Both
+paths are structurally safe. However, any custom code that wraps handle methods
+inside a mutex is still vulnerable to this deadlock.
+
+If a custom callout or async filter hangs in e2e after passing unit tests,
+search for `defer s.mu.Unlock()` or `s.mu.Lock()` scopes in the async path
+that contain any `handle.*` call. The fix is: snapshot state under the lock,
+release the lock, then call handle methods with no lock held. See
+`docs/async-http-callouts.md` for the design invariants.
+
+E2e coverage of every async/callout code path is mandatory -- unit tests alone
+are not sufficient to verify correctness against a real Envoy binary.
+
 ## Main commands
 
 Root unit/race suite:

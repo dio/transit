@@ -154,3 +154,39 @@ TRANSIT_SKIP_BUILD=1 make e2e
 ```
 
 Do not rely on `TRANSIT_SKIP_BUILD=1` for final verification after code changes.
+
+## Debugging: filter accepts connection but never responds
+
+If an e2e test hangs (client connects, Envoy accepts, no response ever arrives),
+work through these steps in order.
+
+For transit's built-in callout path:
+
+1. Verify `w.calloutFn` is set inside `Writer.HTTPCallout` before the callout
+   is initiated.
+
+2. Verify `calloutWriter` is non-nil when `OnHttpCalloutDone` fires. If it is
+   nil the callback has no writer to flush through.
+
+3. Check the e2e filter registration name matches the `filter_name` in
+   `e2e/testdata/envoy.tmpl.yaml`. A name mismatch means the filter is never
+   instantiated and the callout callback never fires.
+
+4. Add `w.Log` calls before and after `w.flush(true)` in the callout callback
+   and rebuild. If the log before fires but the one after does not, inspect
+   the mutations queued on `Writer` and whether `ContinueRequest` or
+   `SendLocalResponse` was called.
+
+For custom user code that wraps handle methods:
+
+5. Search for `defer s.mu.Unlock()` or `s.mu.Lock()` scopes that contain any
+   `handle.*` call. That is a lock-while-CGO deadlock. Transit's own callout
+   path is mutex-free by design, but custom wrappers can still introduce this.
+
+6. Fix custom code: snapshot all state under the lock, release, then call
+   handle methods with no lock held. See `docs/async-http-callouts.md`.
+
+This class of bug passes all unit tests. `FakeFilterHandle` is pure Go and
+never re-enters Go from C, so the deadlock only surfaces against a real Envoy
+binary. Do not conclude the filter is correct just because unit tests pass --
+e2e coverage of every async code path is mandatory.

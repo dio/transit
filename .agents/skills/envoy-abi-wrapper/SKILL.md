@@ -59,6 +59,46 @@ are the source of truth for parameter order, return types, and pointer lifetimes
   `RegisterAccessLoggerConfigFactory`, `RegisterCluster`, and
   `RegisterLBPolicy` behavior.
 
+## CGO re-entrancy rule
+
+**Never hold a Go mutex when calling any `handle.*` method or Envoy callback.**
+
+Envoy can call back into Go re-entrantly from within a CGO call. For example,
+`envoy_dynamic_module_callback_http_send_response` may fire `OnStreamComplete`
+before it returns. If Go code holds a mutex during that CGO call, the
+re-entrant callback will try to acquire the same mutex and deadlock -- the
+goroutine blocks against itself and the request hangs forever with no panic or
+error.
+
+The safe pattern: **snapshot all state under the lock, release the lock, then
+make all handle/CGO calls with no lock held.**
+
+```go
+// WRONG
+s.mu.Lock()
+defer s.mu.Unlock()
+s.handle.SendLocalResponse(...)  // may re-enter; defer never fires
+
+// CORRECT
+s.mu.Lock()
+snapshot := s.data
+s.mu.Unlock()                    // released before any CGO
+s.handle.SendLocalResponse(...)  // safe
+```
+
+This class of bug is **invisible in unit tests**. Fake handles are pure Go and
+never re-enter Go from C. Only a real Envoy binary exposes the deadlock.
+Symptom: filter passes all unit tests, hangs forever in e2e with a connected
+but never-responding Envoy.
+
+Transit's own `HTTPCallout` path and Go+Do path are structurally designed to
+avoid this: the HTTPCallout path is mutex-free (everything on the worker
+thread), and the Go+Do path uses `atomic.Bool` instead of a mutex. This rule
+applies to **custom code** in ABI wrapper callbacks or user-written async paths
+that call handle methods. If you see a custom filter hang in e2e, search for
+`defer s.mu.Unlock()` or `s.mu.Lock()` scopes that contain any `handle.*`
+call.
+
 ## Pointer and memory rules
 
 - Use `manager[T]` for Envoy-to-Go module pointer round trips. Record wrapper

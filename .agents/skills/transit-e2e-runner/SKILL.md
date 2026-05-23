@@ -40,7 +40,7 @@ make -C examples/spa e2e
 Direct equivalents:
 
 ```
-cd e2e && ENVOY_BIN=../.bin/envoy go test ./... -v -timeout=90s
+cd e2e && ENVOY_BIN=../.bin/envoy go test ./... -v -timeout=30s
 cd examples && ENVOY_BIN=../.bin/envoy GOWORK=off go test ./hello/e2e/... -v -timeout=60s
 cd examples && ENVOY_BIN=../.bin/envoy GOWORK=off go test ./sse-tap/e2e/... -v -timeout=60s
 cd examples && ENVOY_BIN=../.bin/envoy GOWORK=off go test ./request-ui/e2e/... -v -timeout=120s
