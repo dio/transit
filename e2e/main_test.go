@@ -75,6 +75,7 @@ var (
 	asyncCalloutLocalResponseAddr     string
 	mutableBodyUpstreamAddr           string
 	lbPolicySelectionAddr             string
+	accessLoggerLocalReplyAddr        string
 	adminAddr                         string
 )
 
@@ -134,6 +135,7 @@ func TestMain(m *testing.M) {
 	lbPolicySelectionPort := freePort()
 	lbPolicyHost0Port := startIdentifiedUpstream("lb-host-0")
 	lbPolicyHost1Port := startIdentifiedUpstream("lb-host-1")
+	accessLoggerLocalReplyPort := freePort()
 	adminPort := freePort()
 
 	echoAddr = fmt.Sprintf("http://localhost:%d", echoPort)
@@ -159,6 +161,7 @@ func TestMain(m *testing.M) {
 	mutableBodyUpstreamAddr = fmt.Sprintf("http://localhost:%d", mutableBodyUpstreamPort)
 	asyncCalloutLocalResponseAddr = fmt.Sprintf("http://localhost:%d", asyncCalloutLocalResponsePort)
 	lbPolicySelectionAddr = fmt.Sprintf("http://localhost:%d", lbPolicySelectionPort)
+	accessLoggerLocalReplyAddr = fmt.Sprintf("http://localhost:%d", accessLoggerLocalReplyPort)
 	adminAddr = fmt.Sprintf("http://localhost:%d", adminPort)
 
 	otelSink = otelsink.New()
@@ -238,6 +241,7 @@ func TestMain(m *testing.M) {
 		LbPolicySelectionPort:              lbPolicySelectionPort,
 		LbPolicyHost0Port:                  lbPolicyHost0Port,
 		LbPolicyHost1Port:                  lbPolicyHost1Port,
+		AccessLoggerLocalReplyPort:         accessLoggerLocalReplyPort,
 		AdminPort:                          adminPort,
 	})
 
@@ -723,6 +727,7 @@ type envoyPorts struct {
 	LbPolicySelectionPort              int
 	LbPolicyHost0Port                  int
 	LbPolicyHost1Port                  int
+	AccessLoggerLocalReplyPort         int
 	AdminPort                          int
 }
 

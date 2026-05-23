@@ -69,6 +69,26 @@ func (s *AccessLoggerSuite) TestDownstreamEnd_multipleRequests() {
 	}
 }
 
+// TestDownstreamEnd_localReplyResponseCode verifies that OnLog(DownstreamEnd)
+// fires with the correct response code when the stream is terminated by
+// SendLocalResponse rather than a normal upstream reply. The guard filter
+// sends a 401 local response for requests missing x-api-key.
+func (s *AccessLoggerSuite) TestDownstreamEnd_localReplyResponseCode() {
+	req, _ := http.NewRequest(http.MethodGet, accessLoggerLocalReplyAddr+"/", nil)
+	// deliberately omit x-api-key so guard sends SendLocalResponse(401, ...)
+	resp := mustDo(s.T(), req)
+	readBody(s.T(), resp)
+	s.Require().Equal(http.StatusUnauthorized, resp.StatusCode)
+
+	entries := accessloggersink.Drain(5 * time.Second)
+	s.Require().Len(entries, 1, "expected exactly one access log entry for the local reply")
+
+	e := entries[0]
+	s.Equal(6, e.LogType, "expected DownstreamEnd (6)")
+	s.Equal(uint32(401), e.ResponseCode, "response code must reflect the local reply status")
+	s.GreaterOrEqual(e.DurationMs, int64(0))
+}
+
 // TestDownstreamEnd_flagsField verifies that the flags field is present
 // (may be empty for a clean 200) and does not contain garbage.
 func (s *AccessLoggerSuite) TestDownstreamEnd_flagsField() {
