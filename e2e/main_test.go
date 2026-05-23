@@ -511,6 +511,13 @@ func (r *recorderUpstream) WaitForNone(t *testing.T, duration time.Duration) {
 	case <-r.arrived:
 		t.Fatalf("recorderUpstream.WaitForNone: unexpected request received within %v", duration)
 	case <-timer.C:
+		// Re-check after timer expiry: under a busy scheduler both channels may
+		// become ready before this goroutine is scheduled, and Go's select picks
+		// one uniformly at random — the timer branch may win even though a request
+		// was recorded during the wait window.
+		if r.Len() > 0 {
+			t.Fatalf("recorderUpstream.WaitForNone: unexpected request received within %v", duration)
+		}
 	}
 }
 
