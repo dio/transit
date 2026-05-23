@@ -182,6 +182,14 @@ type filter struct {
 	// machine. Zero value = calloutStateActive.
 	calloutState atomic.Int32
 
+	// responseEndSeen is set when the responseHandler has been called with
+	// EndStream=true (either from OnResponseBody or the synthetic call for
+	// bodyless responses). OnStreamComplete uses this to detect streams where
+	// Envoy closed the connection without delivering a final endOfStream body
+	// frame (common for HTTP/1.1 SSE and chunked transfers), and synthesizes
+	// the missing EndStream=true call so response handlers can finalize state.
+	responseEndSeen bool
+
 	// streamDone is set by OnStreamComplete to prevent a late OnHttpCalloutDone
 	// from calling flush on a terminated stream.
 	streamDone atomic.Bool
@@ -460,11 +468,29 @@ func (f *filter) flushCompletedCallout(calloutStarted bool) {
 // any in-flight callout from resuming a dead stream and cancels a running
 // goroutine.
 //
+// If a responseHandler is registered and EndStream=true was never delivered
+// (e.g. HTTP/1.1 SSE where the upstream closes without an explicit EOS frame),
+// OnStreamComplete synthesizes the missing EndStream=true body call so the
+// handler can finalize per-stream state (flush counters, emit metadata, etc.).
+//
 // Does NOT reset mutation queues: a goroutine may still be writing them at
 // this point (cancel() unblocks ctx.Done() but the goroutine may not have
 // returned yet). The goroutine sees done()==true and exits without calling
 // flush, so the stale mutations are never applied.
 func (f *filter) OnStreamComplete() {
+	if f.responseHandler != nil && !f.responseEndSeen {
+		// Synthesize the missing EndStream=true body call.
+		// Use directWrite=true so IncrementCounter and other mutations apply
+		// immediately via CGO rather than queuing for a flush that won't happen.
+		w := &Writer{f: f, directWrite: true}
+		f.responseHandler(w, &ResponseChunk{
+			EndStream:       true,
+			ContentEncoding: f.responseContentEncoding,
+			ContentType:     f.responseContentType,
+			Context:         &f.context,
+		})
+		f.responseEndSeen = true
+	}
 	f.streamDone.Store(true)
 	if f.goStarted {
 		f.goCompleted.Store(true)
@@ -494,7 +520,10 @@ func (f *filter) OnResponseHeaders(headers shared.HeaderMap, endOfStream bool) s
 		statusCode, _ = strconv.Atoi(v.ToString())
 	}
 
-	w := &Writer{f: f}
+	// Response-phase Writers use directWrite=true: counter/histogram mutations
+	// must apply inline via CGO because there is no flush() call on the response
+	// path (flush is request-only, tied to ContinueRequest).
+	w := &Writer{f: f, directWrite: true}
 	f.responseHandler(w, &ResponseChunk{
 		StatusCode:      statusCode,
 		Headers:         headers,
@@ -505,6 +534,7 @@ func (f *filter) OnResponseHeaders(headers shared.HeaderMap, endOfStream bool) s
 	})
 
 	if endOfStream {
+		f.responseEndSeen = true
 		// Synthesize a body call for bodyless responses (204, HEAD, 304, etc.).
 		f.responseHandler(w, &ResponseChunk{
 			EndStream:       true,
@@ -535,7 +565,7 @@ func (f *filter) OnResponseBody(body shared.BodyBuffer, endOfStream bool) shared
 		data = append(data, chunk.ToBytes()...)
 	}
 
-	w := &Writer{f: f}
+	w := &Writer{f: f, directWrite: true}
 	f.responseHandler(w, &ResponseChunk{
 		Data:            data,
 		EndStream:       endOfStream,
@@ -543,6 +573,10 @@ func (f *filter) OnResponseBody(body shared.BodyBuffer, endOfStream bool) shared
 		ContentType:     f.responseContentType,
 		Context:         &f.context,
 	})
+
+	if endOfStream {
+		f.responseEndSeen = true
+	}
 
 	if f.bufferBody && f.hasResponseBodyReplacement {
 		buf := f.handle.BufferedResponseBody()
