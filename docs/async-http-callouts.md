@@ -81,16 +81,23 @@ client needs a merged response.
 
 ### HTTPCallout path
 
-`w.HTTPCallout` is mutex-free by design. `OnRequestHeaders` initiates the
-callout; `OnHttpCalloutDone` fires the user callback and calls `w.flush(true)`.
+`w.HTTPCallout` is mutex-free by design. It can be initiated from request
+headers or request body callbacks. `OnHttpCalloutDone` fires the user callback
+and calls `flush(true)` when the initiating callback has already returned Stop.
 
-`OnHttpCalloutDone` may fire from a different goroutine before `OnRequestHeaders`
-returns — Envoy does not guarantee the callback is deferred. Transit handles
-this with an atomic `calloutState` handoff (`Active→Paused/Done→Flushed`): if
-the callback fires early, it transitions `Active→Done` and the headers callback
-detects `Done` and flushes inline without calling `ContinueRequest`. If the
-callback fires after the headers callback returns `Stop`, it transitions
-`Paused→Flushed` and calls `ContinueRequest` to resume the request.
+`OnHttpCalloutDone` may fire from a different goroutine before the initiating
+request callback returns — Envoy does not guarantee the callback is deferred.
+Transit handles this with an atomic `calloutState` handoff
+(`Active→Paused/Done→Flushed`): if the callback fires early, it transitions
+`Active→Done` and the initiating callback detects `Done` and flushes inline
+without calling `ContinueRequest`. If the callback fires after the initiating
+callback returns `Stop`, it transitions `Paused→Flushed` and calls
+`ContinueRequest` to resume the request.
+
+For body-callback callouts, prefer local responses or body replacement. Request
+header mutations from a body callback can be too late to affect upstream routing
+or forwarded headers if request headers already continued before the body
+callback ran.
 
 There is no mutex on this path. No extra struct is allocated.
 

@@ -85,6 +85,12 @@ Choose the right in-process upstream or listener for each test scenario:
   starting an upstream unless the test must prove the upstream was NOT reached.
 - If the feature involves **async resume** (HTTPCallout, Go+Do, scheduler),
   prefer root `e2e/` over `examples/` so ABI regressions are caught centrally.
+- If `HTTPCallout` is initiated from a request body callback, add root e2e
+  coverage that proves the local-response path and, when relevant, body
+  replacement on resume. Unit tests can validate the state machine, but only
+  Envoy verifies that body `StopAndBuffer` actually prevents fallback routing
+  before the callout callback runs. Do not assert late request header mutations
+  from body callbacks unless headers were intentionally stopped earlier.
 - If **body replacement** is involved, the harness must assert the upstream-
   observed body length/content, not just the client-visible status code.
 - If **multiple Transit APIs compose**, write one minimal root regression per

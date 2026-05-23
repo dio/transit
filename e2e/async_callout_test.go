@@ -75,6 +75,36 @@ func (s *AsyncCalloutSuite) TestPost_goDoBodyCallbackProceedsAfterResume() {
 	s.Require().Equal("5", resp.Header.Get("x-received-x-body-len"))
 }
 
+func (s *AsyncCalloutSuite) TestPost_bodyHTTPCalloutLocalResponse() {
+	// The request body callback initiates HTTPCallout and sends a local response
+	// from the callout callback. If the body path does not pause correctly, this
+	// request continues to the fallback forward-echo route instead.
+	req, err := http.NewRequest(http.MethodPost, asyncCalloutBodyAddr+"/body-callout-local", strings.NewReader("hello"))
+	s.Require().NoError(err)
+	req.Header.Set("content-type", "text/plain")
+
+	resp := mustDo(s.T(), req)
+	body := readBody(s.T(), resp)
+
+	s.Require().Equal(http.StatusOK, resp.StatusCode)
+	s.Require().Equal("ok", resp.Header.Get("x-async-body-callout"))
+	s.Require().Equal("body-callout:body-callout-local", body)
+}
+
+func (s *AsyncCalloutSuite) TestPost_bodyHTTPCalloutMutatesAndForwards() {
+	// The request body callback initiates HTTPCallout, then resumes the request
+	// with a body replacement that the forward-echo upstream reflects.
+	req, err := http.NewRequest(http.MethodPost, asyncCalloutBodyAddr+"/body-callout-forward", strings.NewReader("hello"))
+	s.Require().NoError(err)
+	req.Header.Set("content-type", "text/plain")
+
+	resp := mustDo(s.T(), req)
+	body := readBody(s.T(), resp)
+
+	s.Require().Equal(http.StatusOK, resp.StatusCode)
+	s.Require().Equal("body-callout-forward", body)
+}
+
 func (s *AsyncCalloutSuite) TestGet_calloutLocalResponseUpstreamNotReached() {
 	// The /checked path calls SendLocalResponse inside the callout callback.
 	// The listener for this test routes to the recorder upstream instead of the

@@ -206,6 +206,97 @@ func TestWriterHTTPCallout_synchronousLocalResponseStopsWithoutContinue(t *testi
 	require.Equal(t, uint32(503), handle.LocalResponses[0].Status)
 }
 
+func TestWriterHTTPCallout_fromRequestBodyLocalResponseDoesNotContinue(t *testing.T) {
+	var cb shared.HttpCalloutCallback
+	handle := testutil.NewFilterHandle(
+		testutil.WithHTTPCalloutFunc(func(_ string, _ [][2]string, _ []byte, _ uint64, calloutCB shared.HttpCalloutCallback) (shared.HttpCalloutInitResult, uint64) {
+			cb = calloutCB
+			return shared.HttpCalloutInitSuccess, 1
+		}),
+	)
+	f := &filter{
+		handle:  handle,
+		handler: noopHandler,
+		requestBodyHandler: func(w *Writer, _ *BodyChunk) {
+			init, err := w.HTTPCallout(HTTPCalloutRequest{Cluster: "body-auth"}, func(_ HTTPCalloutResult, _ [][2]shared.UnsafeEnvoyBuffer, _ []shared.UnsafeEnvoyBuffer) {
+				w.SendLocalResponse(403, []byte("blocked"), [2]string{"content-type", "text/plain"})
+			})
+			require.NoError(t, err)
+			require.Equal(t, HTTPCalloutInitSuccess, init)
+		},
+	}
+
+	status := f.OnRequestBody(fake.NewFakeBodyBuffer([]byte("hello")), true)
+	require.Equal(t, shared.BodyStatusStopAndBuffer, status)
+	require.NotNil(t, cb)
+
+	cb.OnHttpCalloutDone(1, shared.HttpCalloutSuccess, nil, nil)
+	requireDone(t, handle.LocalResponseC)
+	require.Equal(t, 0, handle.ContinuedReq)
+	require.Equal(t, uint32(403), handle.LocalResponses[0].Status)
+	require.Equal(t, "blocked", string(handle.LocalResponses[0].Body))
+}
+
+func TestWriterHTTPCallout_fromRequestBodyReplacesBodyAndContinues(t *testing.T) {
+	var cb shared.HttpCalloutCallback
+	handle := testutil.NewFilterHandle(
+		testutil.WithHTTPCalloutFunc(func(_ string, _ [][2]string, _ []byte, _ uint64, calloutCB shared.HttpCalloutCallback) (shared.HttpCalloutInitResult, uint64) {
+			cb = calloutCB
+			return shared.HttpCalloutInitSuccess, 1
+		}),
+	)
+	f := &filter{
+		handle:     handle,
+		handler:    noopHandler,
+		bufferBody: true,
+		requestBodyHandler: func(w *Writer, _ *BodyChunk) {
+			init, err := w.HTTPCallout(HTTPCalloutRequest{Cluster: "body-auth"}, func(_ HTTPCalloutResult, _ [][2]shared.UnsafeEnvoyBuffer, body []shared.UnsafeEnvoyBuffer) {
+				require.Len(t, body, 1)
+				w.SetRequestBody([]byte(body[0].ToString()))
+			})
+			require.NoError(t, err)
+			require.Equal(t, HTTPCalloutInitSuccess, init)
+		},
+	}
+
+	status := f.OnRequestBody(fake.NewFakeBodyBuffer([]byte("hello")), true)
+	require.Equal(t, shared.BodyStatusStopAndBuffer, status)
+	require.NotNil(t, cb)
+
+	cb.OnHttpCalloutDone(1, shared.HttpCalloutSuccess, nil, []shared.UnsafeEnvoyBuffer{unsafeBuffer("ok")})
+	requireDone(t, handle.ContinueRequestC)
+	require.Equal(t, 1, handle.ContinuedReq)
+	require.Empty(t, handle.LocalResponses)
+	require.Equal(t, []byte("ok"), handle.BufferedRequestBody().(*fake.FakeBodyBuffer).Body)
+	require.Equal(t, "2", handle.RequestHeaders().GetOne("content-length").ToString())
+}
+
+func TestWriterHTTPCallout_fromRequestBodySynchronousLocalResponseStops(t *testing.T) {
+	handle := testutil.NewFilterHandle(
+		testutil.WithHTTPCalloutFunc(func(_ string, _ [][2]string, _ []byte, _ uint64, cb shared.HttpCalloutCallback) (shared.HttpCalloutInitResult, uint64) {
+			cb.OnHttpCalloutDone(1, shared.HttpCalloutSuccess, nil, nil)
+			return shared.HttpCalloutInitSuccess, 1
+		}),
+	)
+	f := &filter{
+		handle:  handle,
+		handler: noopHandler,
+		requestBodyHandler: func(w *Writer, _ *BodyChunk) {
+			init, err := w.HTTPCallout(HTTPCalloutRequest{Cluster: "body-auth"}, func(_ HTTPCalloutResult, _ [][2]shared.UnsafeEnvoyBuffer, _ []shared.UnsafeEnvoyBuffer) {
+				w.SendLocalResponse(403, []byte("blocked"), [2]string{"content-type", "text/plain"})
+			})
+			require.NoError(t, err)
+			require.Equal(t, HTTPCalloutInitSuccess, init)
+		},
+	}
+
+	status := f.OnRequestBody(fake.NewFakeBodyBuffer([]byte("hello")), true)
+	require.Equal(t, shared.BodyStatusStopAndBuffer, status)
+	requireDone(t, handle.LocalResponseC)
+	require.Equal(t, 0, handle.ContinuedReq)
+	require.Equal(t, uint32(403), handle.LocalResponses[0].Status)
+}
+
 func TestWriterGo_panicsAfterHTTPCallout(t *testing.T) {
 	handle := testutil.NewFilterHandle(
 		testutil.WithHTTPCalloutFunc(func(_ string, _ [][2]string, _ []byte, _ uint64, _ shared.HttpCalloutCallback) (shared.HttpCalloutInitResult, uint64) {

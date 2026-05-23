@@ -195,8 +195,8 @@ type filter struct {
 // Go+Do path, Writer.Go uses goScheduler.Schedule to hop back first.
 //
 // continueReq=true:  async path — stream was paused; call ContinueRequest to resume.
-// continueReq=false: sync-done path — OnRequestHeaders returns Continue itself;
-//                    do NOT call ContinueRequest (would double-resume).
+// continueReq=false: sync-done path — the initiating request callback returns
+// Continue itself; do NOT call ContinueRequest (would double-resume).
 //
 // Stale-mutation reset: every queue is drained to zero before flush returns so
 // that a later callback on the same stream starts with empty queues.
@@ -338,7 +338,9 @@ func (f *filter) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool) sh
 
 // OnRequestBody is called for each body data frame. Mutations queued during the
 // body handler are applied by flush(false) before returning Continue, so they
-// are visible to upstream before the request is forwarded.
+// are visible to upstream before the request is forwarded. HTTPCallout uses the
+// same Active/Paused/Done handoff as OnRequestHeaders; a pending body callout
+// returns StopAndBuffer and resumes from OnHttpCalloutDone.
 //
 // Body replacement flags are cleared after application so they cannot replay
 // if another body frame arrives (buffered mode delivers all frames at endOfStream,
@@ -360,7 +362,7 @@ func (f *filter) OnRequestBody(body shared.BodyBuffer, endOfStream bool) shared.
 		data = append(data, chunk.ToBytes()...)
 	}
 
-	w := &Writer{f: f}
+	w := &Writer{f: f, calloutCB: f}
 	f.requestBodyHandler(w, &BodyChunk{
 		Data:            data,
 		EndStream:       endOfStream,
@@ -368,11 +370,17 @@ func (f *filter) OnRequestBody(body shared.BodyBuffer, endOfStream bool) shared.
 		ContentEncoding: f.requestContentEncoding,
 		Context:         &f.context,
 	})
+	if f.pausePendingCallout(w.calloutStarted) {
+		// Callback has not fired yet; OnHttpCalloutDone will call flush(true).
+		// Keep the buffered body available for any callback mutation.
+		return shared.BodyStatusStopAndBuffer
+	}
 	if f.goStarted {
 		// Goroutine started; flush(true) will run after it exits via goScheduler.
 		// Do not reset body replacement here — the goroutine may call SetRequestBody.
 		return shared.BodyStatusStopAndBuffer
 	}
+	f.flushCompletedCallout(w.calloutStarted)
 
 	// Sync path: apply body replacement inline before flush.
 	// Clear flags first so flush's async-body-replacement branch does not double-apply.
@@ -385,12 +393,16 @@ func (f *filter) OnRequestBody(body shared.BodyBuffer, endOfStream bool) shared.
 		f.requestBodyReplacement = nil
 	}
 	f.flush(false) // apply header mutations and other queued state
+	if f.stopped {
+		return shared.BodyStatusStopAndBuffer
+	}
 	return shared.BodyStatusContinue
 }
 
 // OnHttpCalloutDone implements shared.HttpCalloutCallback. Envoy invokes it
 // when an outbound callout response arrives. It may fire from a different
-// goroutine (early synchronous callback) before OnRequestHeaders returns.
+// goroutine (early synchronous callback) before the initiating request callback
+// returns.
 //
 // streamDone guards against late callbacks after OnStreamComplete. The calloutFn
 // nil-check guards against spurious duplicate deliveries.
@@ -398,8 +410,9 @@ func (f *filter) OnRequestBody(body shared.BodyBuffer, endOfStream bool) shared.
 // State machine:
 //
 //	Paused→Flushed  Normal path: stream was paused. flush(true) resumes it.
-//	Active→Done     Early path: stream not yet paused. OnRequestHeaders detects
-//	                Done and calls flush(false) before returning Continue.
+//	Active→Done     Early path: stream not yet paused. The initiating request
+//	                callback detects Done and calls flush(false) before
+//	                returning Continue.
 func (f *filter) OnHttpCalloutDone(
 	_ uint64,
 	result shared.HttpCalloutResult,
@@ -413,18 +426,18 @@ func (f *filter) OnHttpCalloutDone(
 	f.calloutFn = nil
 	fn(HTTPCalloutResult(result), headers, body)
 	if f.calloutState.CompareAndSwap(calloutStatePaused, calloutStateFlushed) {
-		// Normal path: OnRequestHeaders already returned Stop. We own the resume.
+		// Normal path: the request callback already returned Stop. We own the resume.
 		f.flush(true)
 		return
 	}
-	// Early path: callback fired before OnRequestHeaders reached pausePendingCallout.
-	// Mark Done; OnRequestHeaders will CAS Done→Flushed and call flush(false).
+	// Early path: callback fired before the request callback reached pausePendingCallout.
+	// Mark Done; the request callback will CAS Done→Flushed and call flush(false).
 	f.calloutState.CompareAndSwap(calloutStateActive, calloutStateDone)
 }
 
 // pausePendingCallout returns true if a callout is in flight and the CAS
-// Active→Paused succeeded. OnRequestHeaders should return Stop and wait for
-// OnHttpCalloutDone. Returns false if no callout started or the callback
+// Active→Paused succeeded. The request callback should return Stop and wait
+// for OnHttpCalloutDone. Returns false if no callout started or the callback
 // already fired (state is Done — use flushCompletedCallout instead).
 func (f *filter) pausePendingCallout(calloutStarted bool) bool {
 	if !calloutStarted {

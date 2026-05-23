@@ -148,8 +148,13 @@ func asyncCallout(w *up.Writer, r *up.Request) {
 }
 
 // asyncCalloutBodyHeaders is the request-headers handler for e2e-async-callout-body.
-// It launches a Go+Do callout; the result is set as x-go-result on the forwarded request.
+// It records the request path for the body callback. The /go-do-body case also
+// launches a Go+Do callout; the result is set as x-go-result on the forwarded request.
 func asyncCalloutBodyHeaders(w *up.Writer, r *up.Request) {
+	*r.Context = r.Path
+	if r.Path != "/go-do-body" {
+		return
+	}
 	w.Go(func(ctx context.Context) {
 		resp, err := w.Do(ctx, up.HTTPCalloutRequest{
 			Cluster: "async-callout-upstream",
@@ -173,7 +178,60 @@ func asyncCalloutBodyHeaders(w *up.Writer, r *up.Request) {
 // asyncCalloutBodyHandler runs after the Go+Do goroutine resumes (goStarted=false).
 // It records the body length as a request header so the forward-echo upstream echoes it back.
 func asyncCalloutBodyHandler(w *up.Writer, chunk *up.BodyChunk) {
-	if chunk.EndStream {
-		w.SetRequestHeader("x-body-len", fmt.Sprintf("%d", len(chunk.Data)))
+	path, _ := (*chunk.Context).(string)
+	switch path {
+	case "/body-callout-local":
+		if !chunk.EndStream {
+			return
+		}
+		_, err := w.HTTPCallout(up.HTTPCalloutRequest{
+			Cluster: "async-callout-upstream",
+			Headers: [][2]string{
+				{":method", "GET"},
+				{":path", path},
+				{":scheme", "http"},
+				{"host", "async-callout.local"},
+			},
+			TimeoutMillis: 1000,
+		}, func(result up.HTTPCalloutResult, _ [][2]shared.UnsafeEnvoyBuffer, body []shared.UnsafeEnvoyBuffer) {
+			if result != up.HTTPCalloutSuccess || len(body) == 0 {
+				w.SendLocalResponse(503, []byte("body callout failed"), [2]string{"content-type", "text/plain"})
+				return
+			}
+			w.SendLocalResponse(
+				200,
+				[]byte("body-callout:"+body[0].ToString()),
+				[2]string{"content-type", "text/plain"},
+				[2]string{"x-async-body-callout", "ok"},
+			)
+		})
+		if err != nil {
+			w.SendLocalResponse(503, []byte(err.Error()), [2]string{"content-type", "text/plain"})
+		}
+	case "/body-callout-forward":
+		if !chunk.EndStream {
+			return
+		}
+		_, err := w.HTTPCallout(up.HTTPCalloutRequest{
+			Cluster: "async-callout-upstream",
+			Headers: [][2]string{
+				{":method", "GET"},
+				{":path", path},
+				{":scheme", "http"},
+				{"host", "async-callout.local"},
+			},
+			TimeoutMillis: 1000,
+		}, func(result up.HTTPCalloutResult, _ [][2]shared.UnsafeEnvoyBuffer, body []shared.UnsafeEnvoyBuffer) {
+			if result == up.HTTPCalloutSuccess && len(body) > 0 {
+				w.SetRequestBody([]byte(body[0].ToString()))
+			}
+		})
+		if err != nil {
+			w.SendLocalResponse(503, []byte(err.Error()), [2]string{"content-type", "text/plain"})
+		}
+	default:
+		if chunk.EndStream {
+			w.SetRequestHeader("x-body-len", fmt.Sprintf("%d", len(chunk.Data)))
+		}
 	}
 }

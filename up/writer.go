@@ -7,18 +7,18 @@ import (
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
 )
 
-// calloutState tracks the handoff between OnRequestHeaders and OnHttpCalloutDone.
+// calloutState tracks the handoff between a request callback and OnHttpCalloutDone.
 //
 // Background: Envoy does not guarantee that OnHttpCalloutDone fires after
-// OnRequestHeaders returns. HttpCallout can invoke the callback synchronously —
-// before OnRequestHeaders has had a chance to return HeadersStatusStop. This
+// the initiating request callback returns. HttpCallout can invoke the callback
+// synchronously — before Transit has had a chance to return Stop. This
 // means we have two possible orderings for every callout:
 //
-//	Normal (async) path — OnRequestHeaders returns Stop BEFORE callback fires:
+//	Normal (async) path — request callback returns Stop BEFORE callback fires:
 //	  1. HTTPCallout() sets calloutStarted=true, state=Active.
 //	  2. HttpCallout() returns; the callback has NOT fired yet.
-//	  3. OnRequestHeaders calls pausePendingCallout → CAS Active→Paused succeeds.
-//	  4. OnRequestHeaders returns HeadersStatusStop. Envoy pauses the stream.
+//	  3. request callback calls pausePendingCallout → CAS Active→Paused succeeds.
+//	  4. request callback returns Stop. Envoy pauses the stream.
 //	  5. Later: OnHttpCalloutDone fires. CAS Paused→Flushed succeeds.
 //	     flush(true) is called → ContinueRequest resumes the stream.
 //
@@ -28,27 +28,27 @@ import (
 //	  3. OnHttpCalloutDone fires. CAS Paused→Flushed fails (state is Active).
 //	     CAS Active→Done succeeds. Mutations are queued. Callback returns.
 //	  4. HttpCallout() returns. HTTPCallout() returns.
-//	  5. OnRequestHeaders calls pausePendingCallout → CAS Active→Paused fails
+//	  5. request callback calls pausePendingCallout → CAS Active→Paused fails
 //	     (state is Done). pausePendingCallout returns false.
-//	  6. OnRequestHeaders calls flushCompletedCallout → CAS Done→Flushed succeeds.
-//	     flush(false) applies mutations. NO ContinueRequest — OnRequestHeaders
-//	     returns HeadersStatusContinue itself. Stream was never paused.
+//	  6. request callback calls flushCompletedCallout → CAS Done→Flushed succeeds.
+//	     flush(false) applies mutations. NO ContinueRequest — the callback
+//	     returns Continue itself. Stream was never paused.
 //
 // The four states form a one-way ratchet; transitions never go backwards.
-// No mutex is needed because the two competing parties (OnRequestHeaders on the
-// worker thread, and OnHttpCalloutDone which may race it) each attempt exactly
-// one CAS and only one wins.
+// No mutex is needed because the two competing parties (the initiating request
+// callback on the worker thread, and OnHttpCalloutDone which may race it) each
+// attempt exactly one CAS and only one wins.
 const (
 	// calloutStateActive is the initial state: HTTPCallout has been called but
 	// neither side has yet claimed ownership of the flush.
 	calloutStateActive int32 = iota
 
-	// calloutStatePaused means OnRequestHeaders won: it returned Stop and is
+	// calloutStatePaused means the request callback won: it returned Stop and is
 	// waiting for OnHttpCalloutDone to call flush(true) + ContinueRequest.
 	calloutStatePaused
 
 	// calloutStateDone means OnHttpCalloutDone won the early path: the callback
-	// fired before OnRequestHeaders checked. OnRequestHeaders will detect this
+	// fired before the request callback checked. That callback will detect this
 	// and call flush(false) before returning Continue.
 	calloutStateDone
 
@@ -298,9 +298,9 @@ func (w *Writer) Go(fn func(ctx context.Context)) {
 	}()
 }
 
-// HTTPCallout initiates an outbound Envoy HTTP callout and pauses the request
-// until the callout completes. fn is invoked with the callout result; it may
-// queue mutations or call SendLocalResponse.
+// HTTPCallout initiates an outbound Envoy HTTP callout from a request callback
+// and pauses the request until the callout completes. fn is invoked with the
+// callout result; it may queue mutations or call SendLocalResponse.
 //
 // Returns HTTPCalloutInitSuccess and nil error if Envoy accepted the callout.
 // A non-nil error means fn will never be called.
