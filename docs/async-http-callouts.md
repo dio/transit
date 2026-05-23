@@ -14,7 +14,7 @@ request; local responses from the scheduler path are not reliable in Envoy.
 func Handler(w *up.Writer, r *up.Request) {
 	_, err := w.HTTPCallout(up.HTTPCalloutRequest{
 		Cluster:       "auth-service",
-		Headers:       [][2]string{{":method", "POST"}, {":path", "/check"}},
+		Headers:       [][2]string{{":method", "POST"}, {":path", "/check"}, {"host", "auth-service.local"}},
 		TimeoutMillis: 250,
 	}, func(result up.HTTPCalloutResult, _ [][2]shared.UnsafeEnvoyBuffer, body []shared.UnsafeEnvoyBuffer) {
 		if result != up.HTTPCalloutSuccess {

@@ -17,7 +17,7 @@ func Handler(w *up.Writer, _ *up.Request) {
 			{":method", "POST"},
 			{":path", "/check"},
 			{":scheme", "http"},
-			{":authority", "auth-service.local"},
+			{"host", "auth-service.local"},
 		},
 		Body:          []byte(`{"scope":"read"}`),
 		TimeoutMillis: 250,

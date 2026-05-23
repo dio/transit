@@ -153,9 +153,10 @@ func TestWriterHTTPCallout_synchronousCallbackDoesNotStop(t *testing.T) {
 }
 
 func TestWriterHTTPCallout_localResponseDoesNotContinue(t *testing.T) {
+	var cb shared.HttpCalloutCallback
 	handle := testutil.NewFilterHandle(
-		testutil.WithHTTPCalloutFunc(func(_ string, _ [][2]string, _ []byte, _ uint64, cb shared.HttpCalloutCallback) (shared.HttpCalloutInitResult, uint64) {
-			go cb.OnHttpCalloutDone(1, shared.HttpCalloutSuccess, nil, nil)
+		testutil.WithHTTPCalloutFunc(func(_ string, _ [][2]string, _ []byte, _ uint64, calloutCB shared.HttpCalloutCallback) (shared.HttpCalloutInitResult, uint64) {
+			cb = calloutCB
 			return shared.HttpCalloutInitSuccess, 1
 		}),
 	)
@@ -172,6 +173,8 @@ func TestWriterHTTPCallout_localResponseDoesNotContinue(t *testing.T) {
 
 	status := f.OnRequestHeaders(handle.RequestHeaders(), true)
 	require.Equal(t, shared.HeadersStatusStop, status)
+	require.NotNil(t, cb)
+	cb.OnHttpCalloutDone(1, shared.HttpCalloutSuccess, nil, nil)
 	requireDone(t, handle.LocalResponseC)
 	require.Equal(t, 0, handle.ContinuedReq)
 	require.Equal(t, uint32(503), handle.LocalResponses[0].Status)
@@ -200,6 +203,28 @@ func TestWriterHTTPCallout_synchronousLocalResponseStopsWithoutContinue(t *testi
 	requireDone(t, handle.LocalResponseC)
 	require.Equal(t, 0, handle.ContinuedReq)
 	require.Equal(t, uint32(503), handle.LocalResponses[0].Status)
+}
+
+func TestWriterGo_panicsAfterHTTPCallout(t *testing.T) {
+	handle := testutil.NewFilterHandle(
+		testutil.WithHTTPCalloutFunc(func(_ string, _ [][2]string, _ []byte, _ uint64, _ shared.HttpCalloutCallback) (shared.HttpCalloutInitResult, uint64) {
+			return shared.HttpCalloutInitSuccess, 1
+		}),
+	)
+	f := &filter{
+		handle: handle,
+		handler: func(w *Writer, _ *Request) {
+			init, err := w.HTTPCallout(HTTPCalloutRequest{Cluster: "auth"}, func(_ HTTPCalloutResult, _ [][2]shared.UnsafeEnvoyBuffer, _ []shared.UnsafeEnvoyBuffer) {})
+			require.NoError(t, err)
+			require.Equal(t, HTTPCalloutInitSuccess, init)
+			require.PanicsWithValue(t, "up: Go cannot be started after HTTPCallout", func() {
+				w.Go(func(context.Context) {})
+			})
+		},
+	}
+
+	status := f.OnRequestHeaders(handle.RequestHeaders(), true)
+	require.Equal(t, shared.HeadersStatusStop, status)
 }
 
 func TestWriterGo_streamCompleteCancelsWithoutResume(t *testing.T) {

@@ -16,7 +16,7 @@ func asyncCallout(w *up.Writer, r *up.Request) {
 			{":method", "GET"},
 			{":path", r.Path},
 			{":scheme", "http"},
-			{":authority", "async-callout.local"},
+			{"host", "async-callout.local"},
 		},
 		TimeoutMillis: 1000,
 	}, func(result up.HTTPCalloutResult, _ [][2]shared.UnsafeEnvoyBuffer, body []shared.UnsafeEnvoyBuffer) {
