@@ -12,14 +12,14 @@ ENVOY_BIN ?= $(ROOT)/.bin/envoy
 
 build:
 	cd $(ROOT)/examples && GOWORK=off go build -trimpath -o $(EXAMPLE)/$(BIN) ./$(EXAMPLE)/cmd
-	cd $(ROOT)/examples && CGO_ENABLED=1 GOWORK=off go build -trimpath -buildmode=c-shared -o $(EXAMPLE)/$(OUTPUT) ./$(EXAMPLE)/module
-	cd $(ROOT)/examples && CGO_ENABLED=1 GOWORK=off go build -trimpath -buildmode=c-shared -o $(EXAMPLE)/$(COMBO_OUTPUT) ./$(EXAMPLE)/combo
+	cd $(ROOT)/examples && CGO_ENABLED=1 GOWORK=off go build -trimpath -buildmode=c-shared -o $(EXAMPLE)/$(OUTPUT) ./$(EXAMPLE)/modules/alacarte
+	cd $(ROOT)/examples && CGO_ENABLED=1 GOWORK=off go build -trimpath -buildmode=c-shared -o $(EXAMPLE)/$(COMBO_OUTPUT) ./$(EXAMPLE)/modules/combo
 	@echo "built: $(BIN)"
 	@echo "built: $(OUTPUT)"
 	@echo "built: $(COMBO_OUTPUT)"
 
 test:
-	cd $(ROOT)/examples && GOWORK=off go test ./$(EXAMPLE)
+	cd $(ROOT)/examples && GOWORK=off go test ./$(EXAMPLE) ./$(EXAMPLE)/cmd ./$(EXAMPLE)/modules/alacarte ./$(EXAMPLE)/modules/combo
 
 e2e: build
 	cd $(ROOT)/examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./$(EXAMPLE)/e2e/... -v -timeout=60s -count=1

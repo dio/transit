@@ -54,8 +54,8 @@ func TestMCPProfileRouterEndToEnd(t *testing.T) {
 		RouteHeader:   "x-mcp-server",
 		TimeoutMillis: 2000,
 		Servers: map[string]mcpprofilerouter.Server{
-			"github": {URL: github.URL, Prefix: "github", Credential: "Bearer github-token"},
-			"kiwi":   {URL: kiwi.URL, Prefix: "kiwi", Credential: "Bearer kiwi-token"},
+			"github": {URL: proxyURL + "/_egress/github", Prefix: "github", Credential: "Bearer github-token"},
+			"kiwi":   {URL: proxyURL + "/_egress/kiwi", Prefix: "kiwi", Credential: "Bearer kiwi-token"},
 		},
 	}
 
@@ -97,16 +97,20 @@ func TestMCPProfileRouterEndToEnd(t *testing.T) {
 	must.True(e2etest.WaitURL(adminURL+"/ready", 15*time.Second), "envoy did not become ready")
 
 	sessionID := initialize(t, proxyURL)
-	list := postRPC(t, proxyURL, sessionID, mcpprofilerouter.JSONRPCRequest{
-		JSONRPC: "2.0",
-		ID:      json.RawMessage(`2`),
-		Method:  mcpprofilerouter.MethodToolsList,
-	})
-	must.Nil(list.Error)
-	raw, err := json.Marshal(list.Result)
-	must.NoError(err)
-	must.Contains(string(raw), "github.search")
-	must.Contains(string(raw), "kiwi.search_flights")
+	var raw []byte
+	must.Eventually(func() bool {
+		list := postRPC(t, proxyURL, sessionID, mcpprofilerouter.JSONRPCRequest{
+			JSONRPC: "2.0",
+			ID:      json.RawMessage(`2`),
+			Method:  mcpprofilerouter.MethodToolsList,
+		})
+		if list.Error != nil {
+			return false
+		}
+		var err error
+		raw, err = json.Marshal(list.Result)
+		return err == nil && strings.Contains(string(raw), "github.search") && strings.Contains(string(raw), "kiwi.search_flights")
+	}, 10*time.Second, 100*time.Millisecond)
 
 	call := postRPC(t, proxyURL, sessionID, mcpprofilerouter.JSONRPCRequest{
 		JSONRPC: "2.0",
