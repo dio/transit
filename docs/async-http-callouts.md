@@ -160,12 +160,12 @@ for sequential and parallel fake callouts. Fake callouts complete inline, so
 they do not show the latency benefit of parallel I/O. Use them only to track
 allocation and wrapper overhead.
 
-Before moving MCP fan-out fully into a dynamic module, add an Envoy e2e
-benchmark that compares:
+MCP profile fan-out is implemented as a dynamic module filter
+(`examples/mcp-profile-gateway`) using `HTTPCalloutAllSettled`. Before raising
+the fan-out width beyond the current profile member count, benchmark:
 
-- sequential Envoy `HttpCallout`
-- parallel Envoy `HttpCallout` callback aggregation at widths 2, 4, 8, and 16
-- a service-level aggregator using normal Go HTTP clients
+- parallel Envoy `HTTPCallout` callback aggregation at widths 2, 4, 8, and 16
+- a service-level aggregator using normal Go HTTP clients at the same widths
 
-The decision gate is whether in-filter parallel callouts are efficient enough
-at expected MCP profile fan-out sizes.
+The decision gate is whether in-filter parallel callouts remain efficient as
+profile member counts grow.
