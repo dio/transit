@@ -24,14 +24,14 @@ CLI_BIN := dist/cluster-router-demo
 .PHONY: test build-module image cli control-plane-binary control-plane-image publish eg-install e2e clean
 
 test:
-	GOWORK=off go test ./... -count=1
+	go test ./... -count=1
 
 build-module:
 	$(MAKE) -C $(ROOT) download-zig
 	@mkdir -p $(ROOT)/dist
 	cd $(ROOT)/examples && TARGET=$(ZIG_TARGET) \
 	  CC=$(ROOT)/scripts/zigcc.sh \
-	  CGO_ENABLED=1 GOOS=linux GOARCH=$(ARCH) GOWORK=off \
+	  CGO_ENABLED=1 GOOS=linux GOARCH=$(ARCH) \
 	  go build -trimpath -buildmode=c-shared \
 	    -o $(ROOT)/dist/libcluster-router.linux-$(ARCH).so ./cluster-router/cmd
 
@@ -43,11 +43,11 @@ image: build-module
 
 cli:
 	@mkdir -p dist
-	GOWORK=off go build -trimpath -o $(CLI_BIN) ./cmd/demo
+	go build -trimpath -o $(CLI_BIN) ./cmd/demo
 
 control-plane-binary:
 	@mkdir -p dist
-	CGO_ENABLED=0 GOOS=linux GOARCH=$(ARCH) GOWORK=off \
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(ARCH) \
 	  go build -trimpath -o $(CONTROL_PLANE_BIN) ./cmd/demo
 
 control-plane-image: control-plane-binary
@@ -69,7 +69,7 @@ eg-install:
 	K3D_AGENTS=$(K3D_AGENTS) \
 	KEEP_CLUSTER=$(KEEP_CLUSTER) \
 	RESET_CLUSTER=$(RESET_CLUSTER) \
-	GOWORK=off go test ./e2e/... -run TestEnvoyGatewayInstallOnly -v -timeout=10m -count=1
+	go test ./e2e/... -run TestEnvoyGatewayInstallOnly -v -timeout=10m -count=1
 
 ifeq ($(SKIP_IMAGE_BUILD),1)
 e2e:
@@ -86,7 +86,7 @@ endif
 	K3D_SKIP_IMAGE_IMPORT=$(K3D_SKIP_IMAGE_IMPORT) \
 	KEEP_CLUSTER=$(KEEP_CLUSTER) \
 	RESET_CLUSTER=$(RESET_CLUSTER) \
-	GOWORK=off go test ./e2e/... -v -timeout=15m -count=1
+	go test ./e2e/... -v -timeout=15m -count=1
 
 clean:
 	rm -f $(ROOT)/dist/libcluster-router.linux-$(ARCH).so $(ROOT)/dist/libcluster-router.linux-$(ARCH).h

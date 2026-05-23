@@ -23,24 +23,24 @@ CONTROL_PLANE_BIN := dist/mcp-profile-tiered-router-demo.linux-$(ARCH)
 .PHONY: test build-modules image control-plane-binary control-plane-image publish e2e eg-install clean
 
 test:
-	cd $(ROOT)/integrations && GOWORK=off go test ./mcp-profile-tiered-router-eg/... -count=1
+	cd $(ROOT)/integrations && go test ./mcp-profile-tiered-router-eg/... -count=1
 
 build-modules:
 	$(MAKE) -C $(ROOT) download-zig
 	@mkdir -p $(ROOT)/dist
 	cd $(ROOT)/examples && TARGET=$(ZIG_TARGET) \
 	  CC=$(ROOT)/scripts/zigcc.sh \
-	  CGO_ENABLED=1 GOOS=linux GOARCH=$(ARCH) GOWORK=off \
+	  CGO_ENABLED=1 GOOS=linux GOARCH=$(ARCH) \
 	  go build -trimpath -buildmode=c-shared \
 	    -o $(ROOT)/dist/libmcp-profile-gateway.linux-$(ARCH).so ./mcp-profile-gateway/cmd
 	cd $(ROOT)/examples && TARGET=$(ZIG_TARGET) \
 	  CC=$(ROOT)/scripts/zigcc.sh \
-	  CGO_ENABLED=1 GOOS=linux GOARCH=$(ARCH) GOWORK=off \
+	  CGO_ENABLED=1 GOOS=linux GOARCH=$(ARCH) \
 	  go build -trimpath -buildmode=c-shared \
 	    -o $(ROOT)/dist/libmcp-catalog-router.linux-$(ARCH).so ./mcp-catalog-router/cmd
 	cd $(ROOT)/examples && TARGET=$(ZIG_TARGET) \
 	  CC=$(ROOT)/scripts/zigcc.sh \
-	  CGO_ENABLED=1 GOOS=linux GOARCH=$(ARCH) GOWORK=off \
+	  CGO_ENABLED=1 GOOS=linux GOARCH=$(ARCH) \
 	  go build -trimpath -buildmode=c-shared \
 	    -o $(ROOT)/dist/libcluster-router.linux-$(ARCH).so ./cluster-router/cmd
 
@@ -54,7 +54,7 @@ demo-binary: control-plane-binary
 
 control-plane-binary:
 	@mkdir -p dist
-	cd $(ROOT)/integrations && CGO_ENABLED=0 GOOS=linux GOARCH=$(ARCH) GOWORK=off \
+	cd $(ROOT)/integrations && CGO_ENABLED=0 GOOS=linux GOARCH=$(ARCH) \
 	  go build -trimpath -o $(CURDIR)/$(CONTROL_PLANE_BIN) ./mcp-profile-tiered-router-eg/cmd/demo
 
 demo-image: control-plane-image
@@ -79,7 +79,7 @@ eg-install:
 	  K3D_AGENTS=$(K3D_AGENTS) \
 	  KEEP_CLUSTER=$(KEEP_CLUSTER) \
 	  RESET_CLUSTER=$(RESET_CLUSTER) \
-	  GOWORK=off \
+	  \
 	  go test -v -count=1 -timeout=10m ./mcp-profile-tiered-router-eg/e2e/
 
 ifeq ($(SKIP_IMAGE_BUILD),1)
@@ -98,7 +98,7 @@ endif
 	  K3D_SKIP_IMAGE_IMPORT=$(K3D_SKIP_IMAGE_IMPORT) \
 	  KEEP_CLUSTER=$(KEEP_CLUSTER) \
 	  RESET_CLUSTER=$(RESET_CLUSTER) \
-	  GOWORK=off \
+	  \
 	  go test -v -count=1 -timeout=25m ./mcp-profile-tiered-router-eg/e2e/
 
 clean:

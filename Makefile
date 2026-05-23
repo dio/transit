@@ -59,7 +59,8 @@ build: $(ZIG_BIN)
 	@mkdir -p dist .bin
 	cd .bin && TARGET=$(HOST_TARGET) \
 	CC=$(CURDIR)/scripts/zigcc.sh \
-	CGO_ENABLED=1 GOWORK=off go build -trimpath -buildmode=c-shared \
+	CGO_ENABLED=1 \
+	go build -trimpath -buildmode=c-shared \
 		-o $(CURDIR)/dist/lib$(EXAMPLE).so $(CURDIR)/$(EXAMPLE_CMD)
 
 .PHONY: build-linux-amd64
@@ -67,7 +68,7 @@ build-linux-amd64: $(ZIG_BIN)
 	@mkdir -p dist .bin
 	cd .bin && TARGET=x86_64-linux-gnu.2.28 \
 	CC=$(CURDIR)/scripts/zigcc.sh \
-	CGO_ENABLED=1 GOOS=linux GOARCH=amd64 GOWORK=off \
+	CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
 	go build -trimpath -buildmode=c-shared \
 		-o $(CURDIR)/dist/lib$(EXAMPLE).linux-amd64.so $(CURDIR)/$(EXAMPLE_CMD)
 
@@ -76,7 +77,7 @@ build-linux-arm64: $(ZIG_BIN)
 	@mkdir -p dist .bin
 	cd .bin && TARGET=aarch64-linux-gnu.2.28 \
 	CC=$(CURDIR)/scripts/zigcc.sh \
-	CGO_ENABLED=1 GOOS=linux GOARCH=arm64 GOWORK=off \
+	CGO_ENABLED=1 GOOS=linux GOARCH=arm64 \
 	go build -trimpath -buildmode=c-shared \
 		-o $(CURDIR)/dist/lib$(EXAMPLE).linux-arm64.so $(CURDIR)/$(EXAMPLE_CMD)
 
@@ -97,6 +98,9 @@ e2e: $(ENVOY_BIN)
 .PHONY: vet
 vet:
 	go vet ./...
+	cd examples && go vet ./...
+	cd e2e && go vet ./...
+	cd integrations && go vet ./...
 
 .PHONY: format
 format:
@@ -121,10 +125,11 @@ lint:
 
 .PHONY: tidy
 tidy:
+	go work sync
 	go mod tidy
-	cd e2e && GOWORK=off go mod tidy
-	cd examples && GOWORK=off go mod tidy
-	cd integrations && GOWORK=off go mod tidy
+	cd e2e && go mod tidy
+	cd examples && go mod tidy
+	cd integrations && go mod tidy
 	cd tools && GOWORK=off go mod tidy
 
 # update-sdk upgrades the Envoy dynamic modules SDK to the given Envoy commit and

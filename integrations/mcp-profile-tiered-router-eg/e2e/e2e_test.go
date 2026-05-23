@@ -93,8 +93,8 @@ func (s *mcpProfileGatewaySuite) TestMCPProfileGatewayTopology() {
 		"github":    {URL: "http://mcp-github.transit-dataplane.svc.cluster.local:8080", Credential: "Bearer github-token"},
 	})
 	renderApply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "envoyproxies.tmpl.yaml"), map[string]string{
-		"EnvoyImage":      s.envoyImage,
-		"L1ConfigJSON":    `{"catalog_servers":{"_placeholder":{"url":"http://placeholder.invalid"}}}`,
+		"EnvoyImage":       s.envoyImage,
+		"L1ConfigJSON":     `{"catalog_servers":{"_placeholder":{"url":"http://placeholder.invalid"}}}`,
 		"L2ACatalogConfig": l2ACfg,
 		"L2BCatalogConfig": l2BCfg,
 	})
@@ -139,10 +139,10 @@ func (s *mcpProfileGatewaySuite) TestMCPProfileGatewayTopology() {
 	defer stopL2AAdmin()
 	l2AInitCluster := discoverBackendCluster(s.ctx, s.T(), l2AAdminURL, "l2-a-cluster-router-init")
 	renderApply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "epp-l2.tmpl.yaml"), map[string]string{
-		"PolicyName":      "l2-a-cluster-router",
-		"GatewayName":     "l2-a",
-		"InitClusterName": l2AInitCluster,
-		"Shard":           "l2-a",
+		"PolicyName":        "l2-a-cluster-router",
+		"GatewayName":       "l2-a",
+		"InitClusterName":   l2AInitCluster,
+		"Shard":             "l2-a",
 		"BackendRoutesJSON": l2ABackendsJSON,
 	})
 	waitEnvoyPatchPolicyProgrammed(s.ctx, s.T(), dataplaneNamespace, "l2-a-cluster-router")
@@ -152,10 +152,10 @@ func (s *mcpProfileGatewaySuite) TestMCPProfileGatewayTopology() {
 	defer stopL2BAdmin()
 	l2BInitCluster := discoverBackendCluster(s.ctx, s.T(), l2BAdminURL, "l2-b-cluster-router-init")
 	renderApply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "epp-l2.tmpl.yaml"), map[string]string{
-		"PolicyName":      "l2-b-cluster-router",
-		"GatewayName":     "l2-b",
-		"InitClusterName": l2BInitCluster,
-		"Shard":           "l2-b",
+		"PolicyName":        "l2-b-cluster-router",
+		"GatewayName":       "l2-b",
+		"InitClusterName":   l2BInitCluster,
+		"Shard":             "l2-b",
 		"BackendRoutesJSON": l2BBackendsJSON,
 	})
 	waitEnvoyPatchPolicyProgrammed(s.ctx, s.T(), dataplaneNamespace, "l2-b-cluster-router")

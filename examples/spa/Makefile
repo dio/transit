@@ -12,13 +12,13 @@ ENVOY_BIN ?= $(ROOT)/.bin/envoy
 
 ## build: compile libspa.so for the current host
 build:
-	cd $(ROOT)/examples && CGO_ENABLED=1 GOWORK=off go build -trimpath -buildmode=c-shared \
+	cd $(ROOT)/examples && CGO_ENABLED=1 go build -trimpath -buildmode=c-shared \
 	  -o spa/$(OUTPUT) ./spa/cmd
 	@echo "built: $(OUTPUT)"
 
 ## test: run unit tests (no Envoy required)
 test:
-	cd $(ROOT)/examples && GOWORK=off go test ./spa/...
+	cd $(ROOT)/examples && go test ./spa/...
 
 ## e2e: build .so, start Envoy, run Lightpanda browser tests
 e2e: build

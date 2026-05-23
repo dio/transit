@@ -14,17 +14,17 @@ GOARCH    ?= $(shell go env GOARCH)
 
 ## build: compile librequest-ui.so for the current host
 build:
-	cd $(ROOT)/examples && CGO_ENABLED=1 GOWORK=off go build -trimpath -buildmode=c-shared \
+	cd $(ROOT)/examples && CGO_ENABLED=1 go build -trimpath -buildmode=c-shared \
 	  -o $(EXAMPLE)/$(OUTPUT) ./$(EXAMPLE)/cmd
 	@echo "built: $(OUTPUT)"
 
 ## test: run unit tests (no Envoy required)
 test:
-	cd $(ROOT)/examples && GOWORK=off go test ./$(EXAMPLE)/...
+	cd $(ROOT)/examples && go test ./$(EXAMPLE)/...
 
 ## e2e: build .so + testserver, start Envoy, run Go e2e tests
 e2e: build
-	cd $(ROOT)/examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./$(EXAMPLE)/e2e/... -v -timeout=120s -count=1
+	cd $(ROOT)/examples && ENVOY_BIN=$(ENVOY_BIN) go test ./$(EXAMPLE)/e2e/... -v -timeout=120s -count=1
 
 ## simulate: zero-dependency demo (no Envoy, no Postgres)
 ##           generates synthetic traffic; UI at http://localhost:6062/

@@ -11,18 +11,18 @@ ENVOY_BIN ?= $(ROOT)/.bin/envoy
 .PHONY: build test e2e run clean download-envoy
 
 build:
-	cd $(ROOT)/examples && GOWORK=off go build -trimpath -o $(EXAMPLE)/$(BIN) ./$(EXAMPLE)/cmd
-	cd $(ROOT)/examples && CGO_ENABLED=1 GOWORK=off go build -trimpath -buildmode=c-shared -o $(EXAMPLE)/$(OUTPUT) ./$(EXAMPLE)/modules/alacarte
-	cd $(ROOT)/examples && CGO_ENABLED=1 GOWORK=off go build -trimpath -buildmode=c-shared -o $(EXAMPLE)/$(COMBO_OUTPUT) ./$(EXAMPLE)/modules/combo
+	cd $(ROOT)/examples && go build -trimpath -o $(EXAMPLE)/$(BIN) ./$(EXAMPLE)/cmd
+	cd $(ROOT)/examples && CGO_ENABLED=1 go build -trimpath -buildmode=c-shared -o $(EXAMPLE)/$(OUTPUT) ./$(EXAMPLE)/modules/alacarte
+	cd $(ROOT)/examples && CGO_ENABLED=1 go build -trimpath -buildmode=c-shared -o $(EXAMPLE)/$(COMBO_OUTPUT) ./$(EXAMPLE)/modules/combo
 	@echo "built: $(BIN)"
 	@echo "built: $(OUTPUT)"
 	@echo "built: $(COMBO_OUTPUT)"
 
 test:
-	cd $(ROOT)/examples && GOWORK=off go test ./$(EXAMPLE) ./$(EXAMPLE)/cmd ./$(EXAMPLE)/modules/alacarte ./$(EXAMPLE)/modules/combo
+	cd $(ROOT)/examples && go test ./$(EXAMPLE) ./$(EXAMPLE)/cmd ./$(EXAMPLE)/modules/alacarte ./$(EXAMPLE)/modules/combo
 
 e2e: build
-	cd $(ROOT)/examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./$(EXAMPLE)/e2e/... -v -timeout=60s -count=1
+	cd $(ROOT)/examples && ENVOY_BIN=$(ENVOY_BIN) go test ./$(EXAMPLE)/e2e/... -v -timeout=60s -count=1
 
 run: build
 	@echo "Start two backends and the aggregator in separate terminals; see README.md."
