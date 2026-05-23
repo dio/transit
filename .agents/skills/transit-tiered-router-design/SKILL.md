@@ -112,11 +112,33 @@ MCP fan-out is not ordinary Cluster Extension host selection. Cluster Extension
 chooses one host. Fan-out creates one logical response from several upstream
 MCP servers.
 
-Treat MCP fan-out as an L2 capability. L1 should only select the shard that
-owns the user's state. The L2 shard owns the MCP profile, backend server list,
-credential refs, tool namespace mapping, and partial failure policy.
+**Proven boundary (mcp-profile-tiered-router-eg):** L1 owns MCP fan-out. L2
+executes cataloged server requests.
 
-Start fan-out above the cluster layer as a small Go MCP aggregator service:
+L1 owns:
+- profile auth and API key enforcement
+- composite session encode/decode
+- `initialize` and `tools/list` fan-out to all member servers
+- `tools/call` resolution to exactly one cataloged server
+- catalog server ownership map (which L2 cluster owns which server slug)
+- `HTTPCallout` / `HTTPCalloutAllSettled` for outbound subrequests
+
+L2 owns:
+- `/mcp/s/{server-slug}` semantics (handled by a catalog-router service)
+- backend credential injection
+- cluster-router extension for backend host selection
+
+Keep those boundaries strict. L2 must not own curated profile membership or
+profile auth. L1 must not know concrete backend host placement.
+
+Implementation note: the catalog-router at L2 sets `x-mcp-server` on its
+outgoing requests, not on the incoming requests. Do not patch the live catalog
+backend cluster with the cluster-router extension — that bypasses the
+catalog-router and causes no_healthy_upstream 503. Use a dedicated init
+HTTPRoute whose generated cluster is patched, leaving real catalog traffic
+untouched.
+
+Fan-out implementation:
 
 - Fan out `tools/list` first because it is discovery and can be merged.
 - Do not fan out `tools/call` by default. Route it to the one server that owns
@@ -184,18 +206,18 @@ For MCP fan-out, verify in this order:
 7. One failed or slow backend is visible in the dump and does not hide healthy
    tools when the profile policy is fail-open.
 
-Implementation order:
+Implementation order (done through step 8):
 
-1. Add `examples/mcp-profile-router` to prove local MCP profile behavior.
-2. Add demo MCP backend servers with deterministic `tools/list` and echoing
-   `tools/call`.
-3. Add an aggregator service with profile auth, composite session handling,
-   credential delivery, bounded fan-out, namespaced tool merge, and
-   single-server `tools/call`.
-4. Add CLI commands that build JSON-RPC requests for `mcp tools-list` and
-   `mcp tools-call`.
-5. Add unit and in-process HTTP tests before k3d wiring.
-6. Add shard-local MCP profile config under tiered-router `L2Config`.
-7. Add control-plane read/update APIs and redacted dumps for MCP profiles.
-8. Only after local behavior is green, wire `/mcp/profiles/*` through the
-   tiered Envoy Gateway topology and add black-box k3d e2e assertions.
+1. ✅ `examples/mcp-profile-router` — proved local MCP profile behavior.
+2. ✅ Demo MCP backends with deterministic `tools/list` and echoing `tools/call`.
+3. ✅ `examples/mcp-profile-gateway` — profile auth, composite session, fan-out,
+   namespaced tool merge, single-server `tools/call`.
+4. ✅ `integrations/mcp-profile-tiered-router-eg` — L1/L2 topology under Envoy
+   Gateway with full k3d e2e.
+
+Next steps:
+- Switch tool separator from `{server}.{tool}` to `{server}__{tool}` (MCPProxy
+  parity, required before product-stable API).
+- Buffered final-event SSE aggregate responses.
+- Dynamic L1 profile fetching replacing static `MCP_PROFILE_GATEWAY_CONFIG`.
+- Fake-mcp failure injection to cover partial-failure test matrix cases.
