@@ -551,8 +551,8 @@ static_resources:
                       domains: ["*"]
                       routes:
                         - match: { prefix: "/" }
-                          direct_response:
-                            status: 204
+                          route:
+                            cluster: async-callout-forward-upstream
 
   clusters:
     - name: compress-upstream
@@ -576,6 +576,17 @@ static_resources:
               - endpoint:
                   address:
                     socket_address: { address: 127.0.0.1, port_value: {{.AsyncCalloutUpstreamPort}} }
+
+    - name: async-callout-forward-upstream
+      connect_timeout: 5s
+      type: STATIC
+      load_assignment:
+        cluster_name: async-callout-forward-upstream
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: 127.0.0.1, port_value: {{.AsyncCalloutForwardUpstreamPort}} }
 
     - name: upstream-filter-upstream
       connect_timeout: 5s

@@ -119,6 +119,7 @@ func TestMain(m *testing.M) {
 	clusterSchedulerPort := freePort()
 	asyncCalloutPort := freePort()
 	asyncCalloutUpstreamPort := startAsyncCalloutUpstream()
+	asyncCalloutForwardUpstreamPort := startForwardEchoUpstream()
 	adminPort := freePort()
 
 	echoAddr = fmt.Sprintf("http://localhost:%d", echoPort)
@@ -211,6 +212,7 @@ func TestMain(m *testing.M) {
 		ClusterSchedulerPort:               clusterSchedulerPort,
 		AsyncCalloutPort:                   asyncCalloutPort,
 		AsyncCalloutUpstreamPort:           asyncCalloutUpstreamPort,
+		AsyncCalloutForwardUpstreamPort:    asyncCalloutForwardUpstreamPort,
 		AdminPort:                          adminPort,
 	})
 
@@ -326,6 +328,27 @@ func startAsyncCalloutUpstream() int {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(strings.TrimPrefix(r.URL.Path, "/")))
+	})
+	go http.Serve(l, mux) //nolint:errcheck
+	return l.Addr().(*net.TCPAddr).Port
+}
+
+// startForwardEchoUpstream starts an upstream that echoes received request
+// headers as "x-received-<lowercase-name>" response headers and returns the
+// request body. Used to verify that filter mutations reached upstream.
+func startForwardEchoUpstream() int {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic("startForwardEchoUpstream: " + err.Error())
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		for name, values := range r.Header {
+			w.Header().Set("x-received-"+strings.ToLower(name), values[0])
+		}
+		body, _ := io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(body)
 	})
 	go http.Serve(l, mux) //nolint:errcheck
 	return l.Addr().(*net.TCPAddr).Port
@@ -543,6 +566,7 @@ type envoyPorts struct {
 	ClusterSchedulerPort               int
 	AsyncCalloutPort                   int
 	AsyncCalloutUpstreamPort           int
+	AsyncCalloutForwardUpstreamPort    int
 	AdminPort                          int
 }
 

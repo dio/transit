@@ -54,6 +54,60 @@ For upstream selection work, check both APIs deliberately. LB Policy e2e
 coverage does not cover Cluster Extension behavior, and Cluster Extension e2e
 coverage does not cover LB Policy behavior.
 
+## Harness Shapes
+
+Choose the right in-process upstream or listener for each test scenario:
+
+- **Direct-response listener** — for filters that terminate locally or mutate
+  headers without an upstream dependency. Current: echo, guard, body, cluster-scheduler.
+- **Plain upstream echo** — for asserting forwarded request headers/body reached
+  upstream. Returns received request headers and/or body so tests can assert
+  what Envoy actually forwarded.
+- **Callout upstream** — for HTTPCallout/Do. Path echo controls which response
+  the callout callback sees; header echo controls what the callout can read and
+  set on the forwarded request.
+- **Buffered body upstream** — for framing correctness and body replacement.
+  Must return the observed request body and its content-length so tests can
+  assert the correct value was forwarded, not the stale original.
+- **Telemetry sink** — for OTLP/ALS/access log assertions with bounded waits.
+  Never sleep; use `Wait*` predicates.
+- **Cluster/LB upstream set** — for LB Policy and Cluster Extension host
+  selection. Tests need multiple hosts to verify distribution.
+- **TLS/mTLS upstream** — for transport-socket behavior owned by Envoy config.
+  Generated cert material is in a temp dir; never commit it.
+- **Scheduler probe listener** — minimal `direct_response` route used only to
+  prove that a scheduled callback runs on the worker thread.
+
+## Selection Rules
+
+- If the feature changes what Envoy **forwards**, use an upstream echo harness.
+- If the feature **terminates locally**, assert the client response and avoid
+  starting an upstream unless the test must prove the upstream was NOT reached.
+- If the feature involves **async resume** (HTTPCallout, Go+Do, scheduler),
+  prefer root `e2e/` over `examples/` so ABI regressions are caught centrally.
+- If **body replacement** is involved, the harness must assert the upstream-
+  observed body length/content, not just the client-visible status code.
+- If **multiple Transit APIs compose**, write one minimal root regression per
+  API plus one example-level workflow test — do not merge them.
+
+## Reusable Helpers
+
+Before adding a new `start*Upstream` function, check whether an existing
+upstream already covers the scenario. For new upstreams, follow the pattern in
+`startAsyncCalloutUpstream` and add the port to the template data struct.
+
+Echo helper checklist — a single upstream can serve multiple test scenarios if
+it exposes:
+- `method` and `path` of the forwarded request
+- selected request headers (e.g., `authorization`, custom `x-*` headers)
+- request body verbatim and its observed `content-length`
+- a boolean "did the request arrive" (use a channel or atomic counter so tests
+  can assert "not forwarded" without sleeps)
+
+Add a reusable "upstream recorder" type with a bounded `Wait` that returns the
+first observed request. Use it instead of `require.Eventually` + sleep for
+tests that must assert forwarding behavior.
+
 ## Assertions
 
 - Prefer black-box HTTP requests through Envoy over direct calls into filter
@@ -162,11 +216,12 @@ work through these steps in order.
 
 For transit's built-in callout path:
 
-1. Verify `w.calloutFn` is set inside `Writer.HTTPCallout` before the callout
+1. Verify `f.calloutFn` is set inside `Writer.HTTPCallout` before the callout
    is initiated.
 
-2. Verify `calloutWriter` is non-nil when `OnHttpCalloutDone` fires. If it is
-   nil the callback has no writer to flush through.
+2. Verify `f.calloutFn` is non-nil when `OnHttpCalloutDone` fires. If it is
+   nil the callback has no flush path and the stream hangs. (`calloutFn`
+   replaced the former `calloutWriter` atomic pointer in Phase 2.)
 
 3. Check the e2e filter registration name matches the `filter_name` in
    `e2e/testdata/envoy.tmpl.yaml`. A name mismatch means the filter is never
