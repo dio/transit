@@ -130,6 +130,9 @@ func (w *Writer) SendLocalResponse(status int, body []byte, headers ...[2]string
 		w.f.stopped = true
 		return
 	}
+	if w.f.stopped {
+		return
+	}
 	w.f.handle.SendLocalResponse(uint32(status), headers, body, "")
 	w.f.stopped = true
 }

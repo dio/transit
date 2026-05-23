@@ -1,6 +1,7 @@
 package up
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -389,6 +390,58 @@ func TestFilter_staleQueueNotReplayed(t *testing.T) {
 
 	f.OnRequestHeaders(handle.RequestHeaders(), false)
 	require.Empty(t, handle.RequestHeaders().GetOne("x-stale").ToString())
+}
+
+// --- Framing strip before async stop ---
+
+func TestFilter_OnRequestHeaders_stripsFramingBeforeAsyncStop(t *testing.T) {
+	// When the filter has buffered-body mode enabled and a goroutine is in flight
+	// (f.async != nil), content-length and transfer-encoding must be stripped from
+	// the request headers before OnRequestHeaders returns Stop. If they are stripped
+	// only on the sync continue path, ContinueRequest later forwards stale framing
+	// upstream before OnRequestBody has a chance to write the correct value.
+	//
+	// We simulate the async-active state by pre-setting f.async directly rather than
+	// launching a real goroutine. A real goroutine would write f.async=nil from a
+	// separate goroutine concurrently with OnRequestHeaders reading it, which is a
+	// data race that does not exist in production (Envoy's real scheduler posts back
+	// to the event loop, so f.async=nil only runs after OnRequestHeaders returns).
+	_, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	handle := testutil.NewFilterHandle(
+		testutil.WithHeaders(map[string]string{
+			":method":           "POST",
+			":path":             "/upload",
+			"content-length":    "100",
+			"transfer-encoding": "chunked",
+		}),
+	)
+	f := &filter{
+		handle:             handle,
+		bufferBody:         true,
+		async:              &asyncState{cancel: cancel},
+		handler:            func(_ *Writer, _ *Request) {},
+		requestBodyHandler: func(_ *Writer, _ *BodyChunk) {},
+	}
+	status := f.OnRequestHeaders(handle.RequestHeaders(), false)
+	// Stream paused — goroutine (simulated) is in flight.
+	require.Equal(t, shared.HeadersStatusStop, status)
+	// Strip happened synchronously before the async check; headers are already clean.
+	require.Empty(t, handle.RequestHeaders().GetOne("content-length").ToString())
+	require.Empty(t, handle.RequestHeaders().GetOne("transfer-encoding").ToString())
+}
+
+// --- Direct-write SendLocalResponse deduplication ---
+
+func TestWriter_SendLocalResponse_directWriteIgnoresDuplicate(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	handle := newMockHandle(ctrl)
+	// Expect exactly one call despite two invocations.
+	handle.EXPECT().SendLocalResponse(uint32(403), gomock.Any(), []byte("no"), "").Times(1)
+
+	w := NewWriter(handle)
+	w.SendLocalResponse(403, []byte("no"))
+	w.SendLocalResponse(200, []byte("ok")) // must be silently ignored
 }
 
 // --- Register ---

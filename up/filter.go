@@ -254,6 +254,19 @@ func (f *filter) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool) sh
 	w := &Writer{f: f, calloutCB: f}
 	f.handler(w, newRequestWithContext(headers, f.name, &f.context))
 
+	// Strip framing headers before any async/callout stop path. This guarantees
+	// upstream never receives a stale content-length or transfer-encoding even when
+	// the stream is paused here and ContinueRequest fires later (after a Go goroutine
+	// or HTTPCallout). The correct content-length is written by flush/OnRequestBody
+	// after any body replacement. Not needed when endOfStream is true (no body).
+	//
+	// Do NOT use HeadersStatusStopAllAndBuffer: the SDK has no async resume path
+	// for that status and it freezes the filter chain permanently.
+	if !endOfStream && f.bufferBody && f.requestBodyHandler != nil {
+		headers.Remove("content-length")
+		headers.Remove("transfer-encoding")
+	}
+
 	if f.pausePendingCallout(w.calloutStarted) {
 		// Callback has not fired yet; OnHttpCalloutDone will call flush(true).
 		return shared.HeadersStatusStop
@@ -291,17 +304,6 @@ func (f *filter) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool) sh
 	f.flush(false)
 	if f.stopped {
 		return shared.HeadersStatusStop
-	}
-
-	// Body is coming. Strip content-length and transfer-encoding now so upstream
-	// never sees a stale value after SetRequestBody replaces the body. The correct
-	// content-length is written in OnRequestBody after any replacement.
-	//
-	// Do NOT return HeadersStatusStopAllAndBuffer: that freezes the filter chain
-	// permanently because the SDK has no async resume path for that status.
-	if f.bufferBody && f.requestBodyHandler != nil {
-		headers.Remove("content-length")
-		headers.Remove("transfer-encoding")
 	}
 	return shared.HeadersStatusContinue
 }
