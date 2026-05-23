@@ -110,3 +110,20 @@ func (s *AsyncCalloutSuite) TestGet_goDoSetsHeaderAndForwards() {
 	s.Require().Equal(http.StatusOK, resp.StatusCode)
 	s.Require().Equal("go-do", resp.Header.Get("x-received-x-go-result"))
 }
+
+func (s *AsyncCalloutSuite) TestGet_goDoFanoutBothCalloutsSeen() {
+	// The filter issues two w.Do calls concurrently inside a single w.Go goroutine
+	// (fan-out). Each callout targets a different path on async-callout-upstream,
+	// which returns the path segment as the body. The goroutine merges both results
+	// into x-fanout-result; the forward-echo upstream reflects the header back as
+	// x-received-x-fanout-result. This proves both callouts completed and their
+	// bodies were observable under real Envoy scheduling.
+	req, err := http.NewRequest(http.MethodGet, asyncCalloutAddr+"/fanout", nil)
+	s.Require().NoError(err)
+
+	resp := mustDo(s.T(), req)
+	readBody(s.T(), resp)
+
+	s.Require().Equal(http.StatusOK, resp.StatusCode)
+	s.Require().Equal("fanout-a,fanout-b", resp.Header.Get("x-received-x-fanout-result"))
+}

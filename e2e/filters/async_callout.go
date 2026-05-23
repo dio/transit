@@ -3,6 +3,7 @@ package filters
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
 
@@ -78,6 +79,39 @@ func asyncCallout(w *up.Writer, r *up.Request) {
 			if len(resp.Body) > 0 {
 				w.SetRequestHeader("x-go-result", resp.Body[0].ToString())
 			}
+		})
+
+	case "/fanout":
+		// Two concurrent Do calls inside a single goroutine; results merged into one
+		// header so the forward-echo upstream can reflect the combined value.
+		w.Go(func(ctx context.Context) {
+			paths := []string{"/fanout-a", "/fanout-b"}
+			results := make([]string, len(paths))
+			var wg sync.WaitGroup
+			for i, path := range paths {
+				wg.Add(1)
+				go func(i int, path string) {
+					defer wg.Done()
+					resp, err := w.Do(ctx, up.HTTPCalloutRequest{
+						Cluster: "async-callout-upstream",
+						Headers: [][2]string{
+							{":method", "GET"},
+							{":path", path},
+							{":scheme", "http"},
+							{"host", "async-callout.local"},
+						},
+						TimeoutMillis: 1000,
+					})
+					if err != nil || resp.Result != up.HTTPCalloutSuccess {
+						return
+					}
+					if len(resp.Body) > 0 {
+						results[i] = resp.Body[0].ToString()
+					}
+				}(i, path)
+			}
+			wg.Wait()
+			w.SetRequestHeader("x-fanout-result", fmt.Sprintf("%s,%s", results[0], results[1]))
 		})
 
 	default:
