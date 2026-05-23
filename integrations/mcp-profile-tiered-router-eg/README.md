@@ -2,9 +2,9 @@
 
 Status: skeleton integration. The topology contract and placeholder Kubernetes
 resource shape exist; images and integration e2e assertions are not implemented
-yet. The L1 example module now exists and covers catalog forwarding plus profile
-`tools/list` fan-out, but this integration has not wired it into runnable Envoy
-Gateway images.
+yet. The L1 example module now exists and covers catalog forwarding, profile
+`initialize` session fan-out, and profile `tools/list` fan-out, but this
+integration has not wired it into runnable Envoy Gateway images.
 
 This integration should take the proven local MCP routing semantics and make the
 L1/L2 product topology explicit under Envoy Gateway.
@@ -40,7 +40,7 @@ L1 owns user-facing MCP profiles:
 - enabled tool policy
 - profile-to-catalog-server membership
 - profile credential binding and credential transport policy
-- composite session encode/decode
+- composite session envelope encode/decode
 - fan-out for `initialize` and `tools/list`
 - tool-to-server resolution for `tools/call`
 - selection of the L2 server cluster that owns each server request
@@ -208,9 +208,9 @@ not log, dump, or persist raw user-provided tokens.
 
 For the skeleton, L1 gets static profile JSON through a placeholder
 `MCP_PROFILE_GATEWAY_PROFILE` environment value. The `mcp-profile-gateway`
-module now exists. The current example implements public catalog forwarding and
-profile `tools/list` fan-out; profile `initialize`, `tools/call`, and session
-handling are still planned.
+module now exists. The current example implements public catalog forwarding,
+profile `initialize` session fan-out, and profile `tools/list` fan-out;
+profile `tools/call` is still planned.
 The Envoy Gateway templates reserve the `libmcp-profile-gateway.so` module name
 and path so the integration contract does not drift back into the older local
 example naming.
@@ -343,8 +343,9 @@ Nice-to-have later cases:
    skeleton under `k8s/`.
 3. Wire the existing `examples/mcp-profile-gateway` L1 front end into the
    integration image/resource shape. Its current implemented behavior is public
-   `/mcp/s/{server-slug}` catalog forwarding and profile `tools/list` fan-out;
-   profile session and `tools/call` routing remain later example slices.
+   `/mcp/s/{server-slug}` catalog forwarding, profile `initialize` session
+   fan-out, and profile `tools/list` fan-out; `tools/call` routing remains a
+   later example slice.
 4. Use `examples/mcp-catalog-router` as the L2 server-cluster front end for
    `/mcp/s/{server-slug}`. It sets `x-mcp-server` and calls a separate
    cluster-router-patched egress cluster.

@@ -115,13 +115,77 @@ func (g *Gateway) calloutProfileTransit(w *up.Writer, r transitRequest, body []b
 		writeTransitJSON(w, http.StatusBadRequest, errorResponse(nil, -32700, "invalid JSON-RPC request"))
 		return
 	}
-	if rpcReq.Method != mcpprofilerouter.MethodToolsList {
+	switch rpcReq.Method {
+	case mcpprofilerouter.MethodInitialize:
+		g.initializeProfileTransit(w, r, rpcReq.ID, body, profileID, profile)
+	case mcpprofilerouter.MethodToolsList:
+		g.listProfileToolsTransit(w, r, rpcReq.ID, profileID, profile)
+	default:
 		writeTransitJSON(w, http.StatusBadRequest, errorResponse(rpcReq.ID, -32601, "unsupported profile method: %s", rpcReq.Method))
+	}
+}
+
+func (g *Gateway) initializeProfileTransit(w *up.Writer, r transitRequest, id json.RawMessage, body []byte, profileID string, profile Profile) {
+	reqs, serverIDs, err := g.profileInitializeCalloutRequests(r, body, profile)
+	if err != nil {
+		writeTransitJSON(w, http.StatusInternalServerError, errorResponse(id, -32603, "profile gateway failed"))
 		return
 	}
-	reqs, serverIDs, err := g.profileToolsListCalloutRequests(r, rpcReq.ID, profile)
+	err = w.HTTPCalloutAllSettled(reqs, func(responses []up.HTTPCalloutAllSettledResponse) {
+		backends := make(map[string]string, len(responses))
+		for i, resp := range responses {
+			serverID := serverIDs[i]
+			catalogServer := g.config.CatalogServers[serverID]
+			if resp.Failed() {
+				g.record(serverID, catalogServer, "error: initialize")
+				continue
+			}
+			status, _ := responseFromCalloutHeaders(resp.Headers)
+			if status != http.StatusOK {
+				g.record(serverID, catalogServer, fmt.Sprintf("error: status %d", status))
+				continue
+			}
+			if err := decodeInitializeResult(calloutBodyBytes(resp.Body)); err != nil {
+				g.record(serverID, catalogServer, "error: "+err.Error())
+				continue
+			}
+			g.record(serverID, catalogServer, "initialized")
+			backends[serverID] = calloutHeaderValue(resp.Headers, mcpprofilerouter.SessionIDHeader)
+		}
+		if len(backends) == 0 {
+			writeTransitJSON(w, http.StatusBadGateway, errorResponse(id, -32002, "initialize failed"))
+			return
+		}
+		sessionID, err := encodeProfileSession(profileID, backends)
+		if err != nil {
+			writeTransitJSON(w, http.StatusInternalServerError, errorResponse(id, -32603, "profile gateway failed"))
+			return
+		}
+		writeTransitJSON(w, http.StatusOK, mcpprofilerouter.JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      cloneRaw(id),
+			Result:  syntheticInitializeResult(),
+		}, [2]string{mcpprofilerouter.SessionIDHeader, sessionID}, [2]string{mcpprofilerouter.ProtocolVersionHeader, mcpprofilerouter.ProtocolVersion})
+	})
 	if err != nil {
-		writeTransitJSON(w, http.StatusInternalServerError, errorResponse(rpcReq.ID, -32603, "profile gateway failed"))
+		writeTransitJSON(w, http.StatusBadGateway, errorResponse(id, -32002, "initialize failed"))
+	}
+}
+
+func (g *Gateway) listProfileToolsTransit(w *up.Writer, r transitRequest, id json.RawMessage, profileID string, profile Profile) {
+	var session profileSession
+	sessionID := headerValue(r.headers, mcpprofilerouter.SessionIDHeader)
+	if sessionID != "" {
+		var ok bool
+		session, ok = decodeProfileSession(profileID, sessionID)
+		if !ok {
+			writeTransitJSON(w, http.StatusBadRequest, errorResponse(id, -32010, "invalid MCP session ID"))
+			return
+		}
+	}
+	reqs, serverIDs, err := g.profileToolsListCalloutRequests(r, id, profile, session)
+	if err != nil {
+		writeTransitJSON(w, http.StatusInternalServerError, errorResponse(id, -32603, "profile gateway failed"))
 		return
 	}
 	err = w.HTTPCalloutAllSettled(reqs, func(responses []up.HTTPCalloutAllSettledResponse) {
@@ -150,12 +214,12 @@ func (g *Gateway) calloutProfileTransit(w *up.Writer, r transitRequest, body []b
 		sortTools(merged)
 		writeTransitJSON(w, http.StatusOK, mcpprofilerouter.JSONRPCResponse{
 			JSONRPC: "2.0",
-			ID:      cloneRaw(rpcReq.ID),
+			ID:      cloneRaw(id),
 			Result:  mcpprofilerouter.ListToolsResult{Tools: merged},
 		})
 	})
 	if err != nil {
-		writeTransitJSON(w, http.StatusBadGateway, errorResponse(rpcReq.ID, -32002, "tools/list failed"))
+		writeTransitJSON(w, http.StatusBadGateway, errorResponse(id, -32002, "tools/list failed"))
 	}
 }
 
@@ -188,16 +252,31 @@ func (g *Gateway) catalogCalloutRequest(r transitRequest, body []byte, serverID 
 	}, nil
 }
 
-func (g *Gateway) profileToolsListCalloutRequests(r transitRequest, id json.RawMessage, profile Profile) ([]up.HTTPCalloutRequest, []string, error) {
+func (g *Gateway) profileInitializeCalloutRequests(r transitRequest, body []byte, profile Profile) ([]up.HTTPCalloutRequest, []string, error) {
+	return g.profileCalloutRequests(r, body, profile, profileSession{})
+}
+
+func (g *Gateway) profileToolsListCalloutRequests(r transitRequest, id json.RawMessage, profile Profile, session profileSession) ([]up.HTTPCalloutRequest, []string, error) {
 	body, err := toolsListRequestBody(id)
 	if err != nil {
 		return nil, nil, err
 	}
+	return g.profileCalloutRequests(r, body, profile, session)
+}
+
+func (g *Gateway) profileCalloutRequests(r transitRequest, body []byte, profile Profile, session profileSession) ([]up.HTTPCalloutRequest, []string, error) {
 	serverIDs := sortedProfileServerIDs(profile.Servers)
+	sessionActive := len(session.Backends) > 0
+	if sessionActive {
+		serverIDs = sortedStringKeys(session.Backends)
+	}
 	reqs := make([]up.HTTPCalloutRequest, 0, len(serverIDs))
 	outIDs := make([]string, 0, len(serverIDs))
 	for _, serverID := range serverIDs {
-		profileServer := profile.Servers[serverID]
+		profileServer, ok := profile.Servers[serverID]
+		if !ok {
+			continue
+		}
 		catalogServer := g.config.CatalogServers[serverID]
 		u, err := url.Parse(catalogURL(profileServer.URL, serverID))
 		if err != nil {
@@ -211,8 +290,10 @@ func (g *Gateway) profileToolsListCalloutRequests(r transitRequest, id json.RawM
 			{"content-type", "application/json"},
 			{"accept", "application/json"},
 		}
-		if sessionID := headerValue(r.headers, mcpprofilerouter.SessionIDHeader); sessionID != "" {
-			headers = append(headers, [2]string{mcpprofilerouter.SessionIDHeader, sessionID})
+		if sessionActive {
+			if backendSessionID := session.Backends[serverID]; backendSessionID != "" {
+				headers = append(headers, [2]string{mcpprofilerouter.SessionIDHeader, backendSessionID})
+			}
 		}
 		if protocol := headerValue(r.headers, mcpprofilerouter.ProtocolVersionHeader); protocol != "" {
 			headers = append(headers, [2]string{mcpprofilerouter.ProtocolVersionHeader, protocol})
@@ -345,11 +426,23 @@ func headerOrDefault(headers [][2]string, name, fallback string) string {
 	return fallback
 }
 
-func writeTransitJSON(w *up.Writer, status int, v any) {
+func calloutHeaderValue(headers [][2]shared.UnsafeEnvoyBuffer, name string) string {
+	for _, h := range headers {
+		if strings.EqualFold(h[0].ToString(), name) {
+			return h[1].ToString()
+		}
+	}
+	return ""
+}
+
+func writeTransitJSON(w *up.Writer, status int, v any, headers ...[2]string) {
 	body, err := json.Marshal(v)
 	if err != nil {
 		w.SendLocalResponse(http.StatusInternalServerError, []byte(`{"jsonrpc":"2.0","error":{"code":-32603,"message":"internal error"}}`), [2]string{"content-type", "application/json"})
 		return
 	}
-	w.SendLocalResponse(status, body, [2]string{"content-type", "application/json"})
+	out := make([][2]string, 0, len(headers)+1)
+	out = append(out, [2]string{"content-type", "application/json"})
+	out = append(out, headers...)
+	w.SendLocalResponse(status, body, out...)
 }

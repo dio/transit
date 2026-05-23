@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 
 	mcpprofilerouter "github.com/dio/transit/examples/mcp-profile-router"
@@ -48,15 +49,76 @@ func (g *Gateway) handleProfileNetHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorResponse(nil, -32700, "invalid JSON-RPC request"))
 		return
 	}
-	if req.Method != mcpprofilerouter.MethodToolsList {
+	switch req.Method {
+	case mcpprofilerouter.MethodInitialize:
+		g.initializeProfileNetHTTP(w, r, req.ID, body, profileID, profile)
+	case mcpprofilerouter.MethodToolsList:
+		sessionID := r.Header.Get(mcpprofilerouter.SessionIDHeader)
+		var session profileSession
+		if sessionID != "" {
+			var ok bool
+			session, ok = decodeProfileSession(profileID, sessionID)
+			if !ok {
+				writeJSON(w, http.StatusBadRequest, errorResponse(req.ID, -32010, "invalid MCP session ID"))
+				return
+			}
+		}
+		result := g.listProfileToolsNetHTTP(r, req.ID, profile, session)
+		writeJSON(w, http.StatusOK, mcpprofilerouter.JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      cloneRaw(req.ID),
+			Result:  result,
+		})
+	default:
 		writeJSON(w, http.StatusBadRequest, errorResponse(req.ID, -32601, "unsupported profile method: %s", req.Method))
+	}
+}
+
+func (g *Gateway) initializeProfileNetHTTP(w http.ResponseWriter, r *http.Request, id json.RawMessage, body []byte, profileID string, profile Profile) {
+	backends := make(map[string]string, len(profile.Servers))
+	for _, serverID := range sortedProfileServerIDs(profile.Servers) {
+		server := profile.Servers[serverID]
+		resp, err := g.forwardProfileServerNetHTTP(r, body, serverID, server, "", false)
+		if err != nil {
+			if catalog, ok := g.config.CatalogServers[serverID]; ok {
+				g.record(serverID, catalog, "error: "+err.Error())
+			}
+			continue
+		}
+		respBody, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil || resp.StatusCode != http.StatusOK {
+			if catalog, ok := g.config.CatalogServers[serverID]; ok {
+				g.record(serverID, catalog, "error: initialize")
+			}
+			continue
+		}
+		if err := decodeInitializeResult(respBody); err != nil {
+			if catalog, ok := g.config.CatalogServers[serverID]; ok {
+				g.record(serverID, catalog, "error: "+err.Error())
+			}
+			continue
+		}
+		if catalog, ok := g.config.CatalogServers[serverID]; ok {
+			g.record(serverID, catalog, "initialized")
+		}
+		backends[serverID] = resp.Header.Get(mcpprofilerouter.SessionIDHeader)
+	}
+	if len(backends) == 0 {
+		writeJSON(w, http.StatusBadGateway, errorResponse(id, -32002, "initialize failed"))
 		return
 	}
-	result := g.listProfileToolsNetHTTP(r, req.ID, profile)
+	sessionID, err := encodeProfileSession(profileID, backends)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse(id, -32603, "profile gateway failed"))
+		return
+	}
+	w.Header().Set(mcpprofilerouter.SessionIDHeader, sessionID)
+	w.Header().Set(mcpprofilerouter.ProtocolVersionHeader, mcpprofilerouter.ProtocolVersion)
 	writeJSON(w, http.StatusOK, mcpprofilerouter.JSONRPCResponse{
 		JSONRPC: "2.0",
-		ID:      cloneRaw(req.ID),
-		Result:  result,
+		ID:      cloneRaw(id),
+		Result:  syntheticInitializeResult(),
 	})
 }
 
@@ -113,15 +175,23 @@ func (g *Gateway) forwardCatalogNetHTTP(r *http.Request, serverID string, server
 	return g.client.Do(req)
 }
 
-func (g *Gateway) listProfileToolsNetHTTP(r *http.Request, id json.RawMessage, profile Profile) mcpprofilerouter.ListToolsResult {
+func (g *Gateway) listProfileToolsNetHTTP(r *http.Request, id json.RawMessage, profile Profile, session profileSession) mcpprofilerouter.ListToolsResult {
 	body, err := toolsListRequestBody(id)
 	if err != nil {
 		return mcpprofilerouter.ListToolsResult{}
 	}
 	merged := make([]mcpprofilerouter.Tool, 0)
-	for _, serverID := range sortedProfileServerIDs(profile.Servers) {
-		server := profile.Servers[serverID]
-		resp, err := g.forwardProfileServerNetHTTP(r, body, serverID, server)
+	serverIDs := sortedProfileServerIDs(profile.Servers)
+	sessionActive := len(session.Backends) > 0
+	if sessionActive {
+		serverIDs = sortedStringKeys(session.Backends)
+	}
+	for _, serverID := range serverIDs {
+		server, ok := profile.Servers[serverID]
+		if !ok {
+			continue
+		}
+		resp, err := g.forwardProfileServerNetHTTP(r, body, serverID, server, session.Backends[serverID], sessionActive)
 		if err != nil {
 			if catalog, ok := g.config.CatalogServers[serverID]; ok {
 				g.record(serverID, catalog, "error: "+err.Error())
@@ -152,15 +222,15 @@ func (g *Gateway) listProfileToolsNetHTTP(r *http.Request, id json.RawMessage, p
 	return mcpprofilerouter.ListToolsResult{Tools: merged}
 }
 
-func (g *Gateway) forwardProfileServerNetHTTP(r *http.Request, body []byte, serverID string, server ProfileServer) (*http.Response, error) {
+func (g *Gateway) forwardProfileServerNetHTTP(r *http.Request, body []byte, serverID string, server ProfileServer, backendSessionID string, useBackendSession bool) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, catalogURL(server.URL, serverID), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("accept", "application/json")
-	if sessionID := r.Header.Get(mcpprofilerouter.SessionIDHeader); sessionID != "" {
-		req.Header.Set(mcpprofilerouter.SessionIDHeader, sessionID)
+	if useBackendSession && backendSessionID != "" {
+		req.Header.Set(mcpprofilerouter.SessionIDHeader, backendSessionID)
 	}
 	if protocol := r.Header.Get(mcpprofilerouter.ProtocolVersionHeader); protocol != "" {
 		req.Header.Set(mcpprofilerouter.ProtocolVersionHeader, protocol)
@@ -172,6 +242,15 @@ func (g *Gateway) forwardProfileServerNetHTTP(r *http.Request, body []byte, serv
 		req.Header.Set("x-mcp-credential-envelope", server.CredentialEnvelope)
 	}
 	return g.client.Do(req)
+}
+
+func sortedStringKeys(values map[string]string) []string {
+	out := make([]string, 0, len(values))
+	for k := range values {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func copyNetHTTPResponseHeaders(dst, src http.Header) {

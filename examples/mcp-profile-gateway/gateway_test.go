@@ -159,6 +159,237 @@ func TestGateway_profileToolsListFansOutAndNamespaces(t *testing.T) {
 	require.Equal(t, []string{"aws.read", "github.search"}, []string{list.Tools[0].Name, list.Tools[1].Name})
 }
 
+func TestGateway_profileInitializePartialFailureCreatesSessionForHealthyBackends(t *testing.T) {
+	var goodToolsListSession string
+	var badToolsListReached bool
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/mcp/s/good", r.URL.Path)
+		var req mcpprofilerouter.JSONRPCRequest
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		switch req.Method {
+		case mcpprofilerouter.MethodInitialize:
+			w.Header().Set(mcpprofilerouter.SessionIDHeader, "good-backend-session")
+			writeJSON(w, http.StatusOK, mcpprofilerouter.JSONRPCResponse{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Result:  syntheticInitializeResult(),
+			})
+		case mcpprofilerouter.MethodToolsList:
+			goodToolsListSession = r.Header.Get(mcpprofilerouter.SessionIDHeader)
+			writeJSON(w, http.StatusOK, mcpprofilerouter.JSONRPCResponse{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Result: mcpprofilerouter.ListToolsResult{Tools: []mcpprofilerouter.Tool{
+					{Name: "search", InputSchema: map[string]any{"type": "object"}},
+				}},
+			})
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer good.Close()
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req mcpprofilerouter.JSONRPCRequest
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		if req.Method == mcpprofilerouter.MethodToolsList {
+			badToolsListReached = true
+		}
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer bad.Close()
+	gateway := New(Config{
+		CatalogServers: map[string]CatalogServer{
+			"bad":  {URL: bad.URL},
+			"good": {URL: good.URL},
+		},
+		Profiles: map[string]Profile{
+			"profile": {
+				Name: "profile",
+				Servers: map[string]ProfileServer{
+					"bad":  {URL: bad.URL},
+					"good": {URL: good.URL, Prefix: "good"},
+				},
+			},
+		},
+	})
+	server := httptest.NewServer(gateway.Handler())
+	defer server.Close()
+
+	initResp := postRPCRaw(t, server.URL+"/mcp/profile", "", mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  mcpprofilerouter.MethodInitialize,
+		Params: mustRaw(t, mcpprofilerouter.InitializeParams{
+			ProtocolVersion: mcpprofilerouter.ProtocolVersion,
+			ClientInfo:      mcpprofilerouter.Implementation{Name: "gateway-test"},
+		}),
+	}, nil)
+	defer func() { _ = initResp.Body.Close() }()
+	initBody, err := io.ReadAll(initResp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, initResp.StatusCode, string(initBody))
+	profileSessionID := initResp.Header.Get(mcpprofilerouter.SessionIDHeader)
+	require.NotEmpty(t, profileSessionID)
+	require.NotEqual(t, "good-backend-session", profileSessionID)
+
+	listResp := postRPCRaw(t, server.URL+"/mcp/profile", profileSessionID, mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`2`),
+		Method:  mcpprofilerouter.MethodToolsList,
+	}, nil)
+	defer func() { _ = listResp.Body.Close() }()
+	listBody, err := io.ReadAll(listResp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, listResp.StatusCode, string(listBody))
+	require.Equal(t, "good-backend-session", goodToolsListSession)
+	require.False(t, badToolsListReached)
+
+	var rpc mcpprofilerouter.JSONRPCResponse
+	require.NoError(t, json.Unmarshal(listBody, &rpc))
+	raw, err := json.Marshal(rpc.Result)
+	require.NoError(t, err)
+	var list mcpprofilerouter.ListToolsResult
+	require.NoError(t, json.Unmarshal(raw, &list))
+	require.Equal(t, []string{"good.search"}, []string{list.Tools[0].Name})
+}
+
+func TestGateway_profileSessionDoesNotForwardL1EnvelopeToStatelessBackend(t *testing.T) {
+	var toolsListSession string
+	l2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req mcpprofilerouter.JSONRPCRequest
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		switch req.Method {
+		case mcpprofilerouter.MethodInitialize:
+			writeJSON(w, http.StatusOK, mcpprofilerouter.JSONRPCResponse{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Result:  syntheticInitializeResult(),
+			})
+		case mcpprofilerouter.MethodToolsList:
+			toolsListSession = r.Header.Get(mcpprofilerouter.SessionIDHeader)
+			writeJSON(w, http.StatusOK, mcpprofilerouter.JSONRPCResponse{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Result:  mcpprofilerouter.ListToolsResult{},
+			})
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer l2.Close()
+	gateway := New(Config{
+		CatalogServers: map[string]CatalogServer{"stateless": {URL: l2.URL}},
+		Profiles: map[string]Profile{
+			"profile": {
+				Name:    "profile",
+				Servers: map[string]ProfileServer{"stateless": {URL: l2.URL}},
+			},
+		},
+	})
+	server := httptest.NewServer(gateway.Handler())
+	defer server.Close()
+
+	initResp := postRPCRaw(t, server.URL+"/mcp/profile", "", mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  mcpprofilerouter.MethodInitialize,
+	}, nil)
+	defer func() { _ = initResp.Body.Close() }()
+	require.Equal(t, http.StatusOK, initResp.StatusCode)
+	profileSessionID := initResp.Header.Get(mcpprofilerouter.SessionIDHeader)
+	require.NotEmpty(t, profileSessionID)
+
+	listResp := postRPCRaw(t, server.URL+"/mcp/profile", profileSessionID, mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`2`),
+		Method:  mcpprofilerouter.MethodToolsList,
+	}, nil)
+	defer func() { _ = listResp.Body.Close() }()
+
+	require.Equal(t, http.StatusOK, listResp.StatusCode)
+	require.Empty(t, toolsListSession)
+}
+
+func TestGateway_profileInitializeAllFailuresReturnsError(t *testing.T) {
+	var calls int
+	l2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer l2.Close()
+	gateway := New(Config{
+		CatalogServers: map[string]CatalogServer{"bad": {URL: l2.URL}},
+		Profiles: map[string]Profile{
+			"profile": {
+				Name:    "profile",
+				Servers: map[string]ProfileServer{"bad": {URL: l2.URL}},
+			},
+		},
+	})
+	server := httptest.NewServer(gateway.Handler())
+	defer server.Close()
+
+	resp := postRPCRaw(t, server.URL+"/mcp/profile", "", mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  mcpprofilerouter.MethodInitialize,
+	}, nil)
+	defer func() { _ = resp.Body.Close() }()
+
+	require.Equal(t, http.StatusBadGateway, resp.StatusCode)
+	require.Empty(t, resp.Header.Get(mcpprofilerouter.SessionIDHeader))
+	require.Equal(t, 1, calls)
+}
+
+func TestGateway_profileToolsListInvalidSessionReachesNoL2(t *testing.T) {
+	var reached bool
+	l2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer l2.Close()
+	gateway := New(Config{
+		CatalogServers: map[string]CatalogServer{"github": {URL: l2.URL}},
+		Profiles: map[string]Profile{
+			"profile": {
+				Name:    "profile",
+				Servers: map[string]ProfileServer{"github": {URL: l2.URL}},
+			},
+		},
+	})
+	server := httptest.NewServer(gateway.Handler())
+	defer server.Close()
+
+	resp := postRPCRaw(t, server.URL+"/mcp/profile", "not-a-profile-session", mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  mcpprofilerouter.MethodToolsList,
+	}, nil)
+	defer func() { _ = resp.Body.Close() }()
+
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	require.False(t, reached)
+}
+
+func TestProfileSessionEnvelopeRoundTrip(t *testing.T) {
+	sessionID, err := encodeProfileSession("profile", map[string]string{
+		"stateless": "",
+		"stateful":  "backend-session",
+	})
+	require.NoError(t, err)
+	require.NotContains(t, sessionID, "backend-session")
+
+	session, ok := decodeProfileSession("profile", sessionID)
+	require.True(t, ok)
+	require.Equal(t, map[string]string{
+		"stateless": "",
+		"stateful":  "backend-session",
+	}, session.Backends)
+
+	_, ok = decodeProfileSession("other-profile", sessionID)
+	require.False(t, ok)
+}
+
 func TestGateway_profileToolsListAuthFailureReachesNoL2(t *testing.T) {
 	var reached bool
 	l2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

@@ -1,6 +1,7 @@
 package mcpprofilegateway
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 const ConfigEnv = "MCP_PROFILE_GATEWAY_CONFIG"
 
 const DefaultCatalogCalloutCluster = "mcp-profile-gateway-l2"
+const profileSessionPrefix = "mcp-profile-gateway."
 
 type Config struct {
 	TimeoutMillis  int                      `json:"timeout_millis,omitempty"`
@@ -55,6 +57,11 @@ type Gateway struct {
 type CatalogDump struct {
 	Target      string `json:"target"`
 	LastRequest string `json:"last_request,omitempty"`
+}
+
+type profileSession struct {
+	ProfileID string            `json:"profile_id"`
+	Backends  map[string]string `json:"backends"`
 }
 
 func LoadConfigFromEnv() (Config, error) {
@@ -149,6 +156,45 @@ func (g *Gateway) record(id string, server CatalogServer, state string) {
 	}
 }
 
+func encodeProfileSession(profileID string, backends map[string]string) (string, error) {
+	raw, err := json.Marshal(profileSession{
+		ProfileID: profileID,
+		Backends:  copyStringMap(backends),
+	})
+	if err != nil {
+		return "", err
+	}
+	return profileSessionPrefix + base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+func decodeProfileSession(profileID, sessionID string) (profileSession, bool) {
+	raw, ok := strings.CutPrefix(sessionID, profileSessionPrefix)
+	if !ok || raw == "" {
+		return profileSession{}, false
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return profileSession{}, false
+	}
+	var session profileSession
+	if err := json.Unmarshal(decoded, &session); err != nil {
+		return profileSession{}, false
+	}
+	if session.ProfileID != profileID || len(session.Backends) == 0 {
+		return profileSession{}, false
+	}
+	session.Backends = copyStringMap(session.Backends)
+	return session, true
+}
+
+func copyStringMap(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
 func SortedCatalogServerIDs(servers map[string]CatalogServer) []string {
 	out := make([]string, 0, len(servers))
 	for id := range servers {
@@ -229,6 +275,35 @@ func toolsListRequestBody(id json.RawMessage) ([]byte, error) {
 		ID:      cloneRaw(id),
 		Method:  mcpprofilerouter.MethodToolsList,
 	})
+}
+
+func syntheticInitializeResult() mcpprofilerouter.InitializeResult {
+	return mcpprofilerouter.InitializeResult{
+		ProtocolVersion: mcpprofilerouter.ProtocolVersion,
+		Capabilities: map[string]any{
+			"tools": map[string]any{},
+		},
+		ServerInfo: mcpprofilerouter.Implementation{Name: "mcp-profile-gateway", Version: "dev"},
+	}
+}
+
+func decodeInitializeResult(body []byte) error {
+	var rpc mcpprofilerouter.JSONRPCResponse
+	if err := json.Unmarshal(body, &rpc); err != nil {
+		return err
+	}
+	if rpc.Error != nil {
+		return errors.New(rpc.Error.Message)
+	}
+	raw, err := json.Marshal(rpc.Result)
+	if err != nil {
+		return err
+	}
+	var out mcpprofilerouter.InitializeResult
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return err
+	}
+	return nil
 }
 
 func mergeToolsResult(serverID string, server ProfileServer, body []byte) ([]mcpprofilerouter.Tool, error) {

@@ -2,8 +2,8 @@
 
 `mcp-profile-gateway` is the L1 public gateway for MCP profile routing.
 
-This implementation supports public catalog forwarding and profile
-`tools/list` fan-out:
+This implementation supports public catalog forwarding, profile `initialize`
+fan-out, and profile `tools/list` fan-out:
 
 ```text
 POST /mcp/s/{server-slug}
@@ -14,9 +14,14 @@ POST /mcp/{profile-id} method=tools/list
   -> merge enabled tools as {prefix}.{tool}
 ```
 
-Profile `initialize` session fan-out and `tools/call` routing are planned next.
-This example is separate from `examples/mcp-catalog-router`, which is the L2
-execution front end.
+Profile `initialize` returns one L1 `mcp-session-id` that encodes the successful
+per-L2 backend sessions. Later profile requests decode that envelope and forward
+only the corresponding backend session ID to each L2. The example uses a plain
+base64 JSON envelope for readability; production should authenticate and
+encrypt this value.
+
+Profile `tools/call` routing is planned next. This example is separate from
+`examples/mcp-catalog-router`, which is the L2 execution front end.
 
 ## Config
 

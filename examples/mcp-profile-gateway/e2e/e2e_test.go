@@ -41,12 +41,14 @@ func TestProfileGatewayEnvoyCatalogForwarding(t *testing.T) {
 	var mu sync.Mutex
 	gotPaths := map[string]int{}
 	gotCredRefs := map[string]string{}
+	gotSessions := map[string]string{}
 	l2Listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	l2 := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		gotPaths[r.URL.Path]++
 		gotCredRefs[r.URL.Path] = r.Header.Get("x-mcp-credential-ref")
+		gotSessions[r.URL.Path] = r.Header.Get(mcpprofilerouter.SessionIDHeader)
 		mu.Unlock()
 
 		var req mcpprofilerouter.JSONRPCRequest
@@ -57,9 +59,10 @@ func TestProfileGatewayEnvoyCatalogForwarding(t *testing.T) {
 			})
 			return
 		}
-		w.Header().Set(mcpprofilerouter.SessionIDHeader, "l2-session")
+		server := pathBase(r.URL.Path)
 		switch req.Method {
 		case mcpprofilerouter.MethodInitialize:
+			w.Header().Set(mcpprofilerouter.SessionIDHeader, "session-"+server)
 			writeJSON(w, http.StatusOK, mcpprofilerouter.JSONRPCResponse{
 				JSONRPC: "2.0",
 				ID:      req.ID,
@@ -70,7 +73,6 @@ func TestProfileGatewayEnvoyCatalogForwarding(t *testing.T) {
 				},
 			})
 		case mcpprofilerouter.MethodToolsList:
-			server := pathBase(r.URL.Path)
 			writeJSON(w, http.StatusOK, mcpprofilerouter.JSONRPCResponse{
 				JSONRPC: "2.0",
 				ID:      req.ID,
@@ -164,7 +166,7 @@ func TestProfileGatewayEnvoyCatalogForwarding(t *testing.T) {
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
-	require.Equal(t, "l2-session", resp.Header.Get(mcpprofilerouter.SessionIDHeader))
+	require.Equal(t, "session-aws-knowledge", resp.Header.Get(mcpprofilerouter.SessionIDHeader))
 	mu.Lock()
 	require.GreaterOrEqual(t, gotPaths["/mcp/s/aws-knowledge"], 1)
 	require.Empty(t, gotCredRefs["/mcp/s/aws-knowledge"])
@@ -174,8 +176,29 @@ func TestProfileGatewayEnvoyCatalogForwarding(t *testing.T) {
 	resp = postRPCRaw(t, profileURL, mcpprofilerouter.JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      json.RawMessage(`2`),
-		Method:  mcpprofilerouter.MethodToolsList,
+		Method:  mcpprofilerouter.MethodInitialize,
+		Params: mustRaw(t, mcpprofilerouter.InitializeParams{
+			ProtocolVersion: mcpprofilerouter.ProtocolVersion,
+			ClientInfo:      mcpprofilerouter.Implementation{Name: "mcp-profile-gateway-e2e"},
+		}),
 	}, map[string]string{"authorization": "Bearer profile-key"})
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
+	profileSessionID := resp.Header.Get(mcpprofilerouter.SessionIDHeader)
+	require.NotEmpty(t, profileSessionID)
+	require.NotEqual(t, "session-aws-knowledge", profileSessionID)
+
+	resp = postRPCRaw(t, profileURL, mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`3`),
+		Method:  mcpprofilerouter.MethodToolsList,
+	}, map[string]string{
+		"authorization":                  "Bearer profile-key",
+		mcpprofilerouter.SessionIDHeader: profileSessionID,
+	})
 	defer func() { _ = resp.Body.Close() }()
 
 	body, err = io.ReadAll(resp.Body)
@@ -192,6 +215,8 @@ func TestProfileGatewayEnvoyCatalogForwarding(t *testing.T) {
 	mu.Lock()
 	require.GreaterOrEqual(t, gotPaths["/mcp/s/github"], 1)
 	require.Equal(t, "profile/aws/user", gotCredRefs["/mcp/s/aws-knowledge"])
+	require.Equal(t, "session-aws-knowledge", gotSessions["/mcp/s/aws-knowledge"])
+	require.Equal(t, "session-github", gotSessions["/mcp/s/github"])
 	mu.Unlock()
 }
 
