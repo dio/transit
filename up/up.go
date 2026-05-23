@@ -6,7 +6,10 @@ import (
 )
 
 // MetricID is an opaque handle to an Envoy metric defined at config time via ConfigHandle.
-type MetricID = shared.MetricID
+type MetricID uint64
+
+// LogLevel controls Envoy log severity for Writer.Log.
+type LogLevel uint32
 
 // ConfigHandle is passed to config callbacks at filter config creation time.
 // Use it to define metrics (counters, histograms) once — before any requests arrive.
@@ -36,12 +39,12 @@ func Chain(h HandlerFunc, mw ...Middleware) HandlerFunc {
 
 // LogLevel aliases.
 const (
-	LogTrace    = shared.LogLevelTrace
-	LogDebug    = shared.LogLevelDebug
-	LogInfo     = shared.LogLevelInfo
-	LogWarn     = shared.LogLevelWarn
-	LogError    = shared.LogLevelError
-	LogCritical = shared.LogLevelCritical
+	LogTrace    LogLevel = LogLevel(shared.LogLevelTrace)
+	LogDebug    LogLevel = LogLevel(shared.LogLevelDebug)
+	LogInfo     LogLevel = LogLevel(shared.LogLevelInfo)
+	LogWarn     LogLevel = LogLevel(shared.LogLevelWarn)
+	LogError    LogLevel = LogLevel(shared.LogLevelError)
+	LogCritical LogLevel = LogLevel(shared.LogLevelCritical)
 )
 
 var registry = map[string]HandlerFunc{}
@@ -132,6 +135,6 @@ func RegisterWithConfig(name string, cfg ConfigFunc, h HandlerFunc, r ResponseHa
 
 // RegisterAccessLogger registers a named access logger factory. Must be called
 // from an init() function. Panics on duplicate names.
-func RegisterAccessLogger(name string, f down.AccessLoggerConfigFactory) {
-	down.RegisterAccessLoggerConfigFactory(name, f)
+func RegisterAccessLogger(name string, f AccessLoggerConfigFactory) {
+	registerAccessLogger(name, f)
 }

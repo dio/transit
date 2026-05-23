@@ -104,19 +104,26 @@ func TestWriter_Log_delegatesToHandle(t *testing.T) {
 	handle.EXPECT().Log(shared.LogLevelError, "msg: %s", "arg")
 
 	w := &Writer{handle: handle}
-	w.Log(shared.LogLevelError, "msg: %s", "arg")
+	w.Log(LogError, "msg: %s", "arg")
 }
 
 func TestWriter_Log_allLevels(t *testing.T) {
-	levels := []shared.LogLevel{
-		shared.LogLevelTrace, shared.LogLevelDebug, shared.LogLevelInfo,
-		shared.LogLevelWarn, shared.LogLevelError, shared.LogLevelCritical,
+	levels := []struct {
+		up  LogLevel
+		raw shared.LogLevel
+	}{
+		{up: LogTrace, raw: shared.LogLevelTrace},
+		{up: LogDebug, raw: shared.LogLevelDebug},
+		{up: LogInfo, raw: shared.LogLevelInfo},
+		{up: LogWarn, raw: shared.LogLevelWarn},
+		{up: LogError, raw: shared.LogLevelError},
+		{up: LogCritical, raw: shared.LogLevelCritical},
 	}
 	for _, level := range levels {
 		ctrl := gomock.NewController(t)
 		handle := newMockHandle(ctrl)
-		handle.EXPECT().Log(level, "test", gomock.Any())
-		NewWriter(handle).Log(level, "test")
+		handle.EXPECT().Log(level.raw, "test", gomock.Any())
+		NewWriter(handle).Log(level.up, "test")
 	}
 }
 
@@ -127,7 +134,7 @@ func TestNewWriter_returnsWriterBackedByHandle(t *testing.T) {
 
 	w := NewWriter(handle)
 	require.NotNil(t, w)
-	w.Log(shared.LogLevelInfo, "hi")
+	w.Log(LogInfo, "hi")
 }
 
 func TestWriter_SetFilterState_delegatesToHandle(t *testing.T) {
@@ -199,7 +206,7 @@ func TestFilterFactory_Create_wiredToHandle(t *testing.T) {
 	handle.EXPECT().Log(shared.LogLevelWarn, "check")
 
 	ff := &filterFactory{handler: func(w *Writer, r *Request) {
-		w.Log(shared.LogLevelWarn, "check")
+		w.Log(LogWarn, "check")
 	}}
 	f := ff.Create(handle).(*filter)
 	f.handler(f.writer(), nil)
@@ -242,7 +249,7 @@ func TestFilter_OnRequestHeaders_writerDelegatesToHandle(t *testing.T) {
 
 	f := &filter{
 		handle:  handle,
-		handler: func(w *Writer, r *Request) { w.Log(shared.LogLevelInfo, "test: %d", 42) },
+		handler: func(w *Writer, r *Request) { w.Log(LogInfo, "test: %d", 42) },
 	}
 	f.OnRequestHeaders(fake.NewFakeHeaderMap(nil), false)
 }

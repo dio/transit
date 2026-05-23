@@ -3,14 +3,14 @@ package up
 import "github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
 
 // MetadataSourceType identifies which metadata store to read from.
-type MetadataSourceType = shared.MetadataSourceType
+type MetadataSourceType uint32
 
 const (
-	MetadataSourceTypeDynamic      MetadataSourceType = shared.MetadataSourceTypeDynamic
-	MetadataSourceTypeRoute        MetadataSourceType = shared.MetadataSourceTypeRoute
-	MetadataSourceTypeCluster      MetadataSourceType = shared.MetadataSourceTypeCluster
-	MetadataSourceTypeHost         MetadataSourceType = shared.MetadataSourceTypeHost
-	MetadataSourceTypeHostLocality MetadataSourceType = shared.MetadataSourceTypeHostLocality
+	MetadataSourceTypeDynamic      MetadataSourceType = MetadataSourceType(shared.MetadataSourceTypeDynamic)
+	MetadataSourceTypeRoute        MetadataSourceType = MetadataSourceType(shared.MetadataSourceTypeRoute)
+	MetadataSourceTypeCluster      MetadataSourceType = MetadataSourceType(shared.MetadataSourceTypeCluster)
+	MetadataSourceTypeHost         MetadataSourceType = MetadataSourceType(shared.MetadataSourceTypeHost)
+	MetadataSourceTypeHostLocality MetadataSourceType = MetadataSourceType(shared.MetadataSourceTypeHostLocality)
 )
 
 // SetMetadata writes a dynamic metadata value for the current stream.
@@ -20,16 +20,20 @@ func (w *Writer) SetMetadata(namespace, key string, value any) {
 }
 
 // GetMetadataString reads a string metadata value from the given source.
-func (w *Writer) GetMetadataString(source MetadataSourceType, namespace, key string) (shared.UnsafeEnvoyBuffer, bool) {
-	return w.handle.GetMetadataString(source, namespace, key)
+func (w *Writer) GetMetadataString(source MetadataSourceType, namespace, key string) (Buffer, bool) {
+	v, ok := w.handle.GetMetadataString(shared.MetadataSourceType(source), namespace, key)
+	if !ok {
+		return Buffer{}, false
+	}
+	return newBuffer(v), true
 }
 
 // GetMetadataNumber reads a numeric metadata value from the given source.
 func (w *Writer) GetMetadataNumber(source MetadataSourceType, namespace, key string) (float64, bool) {
-	return w.handle.GetMetadataNumber(source, namespace, key)
+	return w.handle.GetMetadataNumber(shared.MetadataSourceType(source), namespace, key)
 }
 
 // GetMetadataBool reads a boolean metadata value from the given source.
 func (w *Writer) GetMetadataBool(source MetadataSourceType, namespace, key string) (bool, bool) {
-	return w.handle.GetMetadataBool(source, namespace, key)
+	return w.handle.GetMetadataBool(shared.MetadataSourceType(source), namespace, key)
 }

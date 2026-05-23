@@ -15,7 +15,6 @@ import (
 
 	"github.com/dio/transit/e2e/internal/e2etest"
 	"github.com/dio/transit/up"
-	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
 )
 
 func init() {
@@ -62,7 +61,7 @@ func (l *e2eLogger) OnLog(h up.AccessLoggerHandle, logType up.AccessLogType) {
 	}
 
 	codeDetails := ""
-	if buf, ok := h.GetAttributeString(shared.AttributeIDResponseCodeDetails); ok {
+	if buf, ok := h.GetAttributeString(up.AttributeIDResponseCodeDetails); ok {
 		codeDetails = buf.ToString()
 	}
 
