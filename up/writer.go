@@ -3,6 +3,7 @@ package up
 import (
 	"context"
 	"errors"
+	"sync"
 
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
 )
@@ -315,6 +316,7 @@ func (w *Writer) HTTPCallout(req HTTPCalloutRequest, fn HTTPCalloutFunc) (HTTPCa
 	// fields after, the synchronous callback would fire with calloutFn == nil.
 	w.f.calloutFn = fn
 	w.calloutStarted = true
+	w.f.calloutState.Store(calloutStateActive)
 	init, _ := w.f.handle.HttpCallout(
 		req.Cluster,
 		req.Headers,
@@ -330,6 +332,101 @@ func (w *Writer) HTTPCallout(req HTTPCalloutRequest, fn HTTPCalloutFunc) (HTTPCa
 		return calloutInit, errCalloutInitResult(calloutInit)
 	}
 	return HTTPCalloutInitSuccess, nil
+}
+
+// HTTPCalloutAllSettled initiates multiple outbound Envoy HTTP callouts from a
+// request callback and pauses the request until all accepted callouts complete.
+// fn is invoked exactly once with one response slot per request; init failures
+// are recorded in their corresponding response slot.
+//
+// Response headers and body buffers are Go-owned copies safe to read after
+// individual callout callbacks return. fn may queue mutations or call
+// SendLocalResponse.
+//
+// Panics if called after Go or after another HTTPCallout/HTTPCalloutAllSettled.
+func (w *Writer) HTTPCalloutAllSettled(reqs []HTTPCalloutRequest, fn HTTPCalloutAllSettledFunc) error {
+	if w.calloutStarted || w.goStarted {
+		panic("up: HTTPCalloutAllSettled cannot be started after Go or another HTTPCallout")
+	}
+	if fn == nil {
+		panic("up: HTTPCalloutAllSettled called with nil callback")
+	}
+	if len(reqs) == 0 {
+		fn(nil)
+		return nil
+	}
+
+	w.calloutStarted = true
+	w.f.calloutState.Store(calloutStateActive)
+
+	b := &calloutBatch{
+		f:         w.f,
+		fn:        fn,
+		responses: make([]HTTPCalloutAllSettledResponse, len(reqs)),
+		remaining: len(reqs),
+	}
+	for i, req := range reqs {
+		init, _ := w.f.handle.HttpCallout(
+			req.Cluster,
+			req.Headers,
+			req.Body,
+			req.TimeoutMillis,
+			doCallbackFunc(func(_ uint64, r HTTPCalloutResult, headers [][2]shared.UnsafeEnvoyBuffer, body []shared.UnsafeEnvoyBuffer) {
+				b.finish(i, HTTPCalloutAllSettledResponse{
+					Init:    HTTPCalloutInitSuccess,
+					Result:  r,
+					Err:     errCalloutResult(r),
+					Headers: copyUnsafeEnvoyHeaderBuffers(headers),
+					Body:    copyUnsafeEnvoyBuffers(body),
+				})
+			}),
+		)
+		if calloutInit := HTTPCalloutInitResult(init); calloutInit != HTTPCalloutInitSuccess {
+			b.finish(i, HTTPCalloutAllSettledResponse{
+				Init: calloutInit,
+				Err:  errCalloutInitResult(calloutInit),
+			})
+		}
+	}
+	return nil
+}
+
+type calloutBatch struct {
+	f *filter
+
+	mu        sync.Mutex
+	fn        HTTPCalloutAllSettledFunc
+	responses []HTTPCalloutAllSettledResponse
+	remaining int
+	flushed   bool
+}
+
+func (b *calloutBatch) finish(i int, resp HTTPCalloutAllSettledResponse) {
+	b.mu.Lock()
+	if b.flushed {
+		b.mu.Unlock()
+		return
+	}
+	b.responses[i] = resp
+	b.remaining--
+	if b.remaining > 0 {
+		b.mu.Unlock()
+		return
+	}
+	b.flushed = true
+	responses := append([]HTTPCalloutAllSettledResponse(nil), b.responses...)
+	fn := b.fn
+	b.mu.Unlock()
+
+	if b.f.streamDone.Load() {
+		return
+	}
+	fn(responses)
+	if b.f.calloutState.CompareAndSwap(calloutStatePaused, calloutStateFlushed) {
+		b.f.flush(true)
+		return
+	}
+	b.f.calloutState.CompareAndSwap(calloutStateActive, calloutStateDone)
 }
 
 // Do performs an Envoy HTTP callout from inside a Go goroutine and blocks

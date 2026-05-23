@@ -229,6 +229,95 @@ func asyncCalloutBodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 		if err != nil {
 			w.SendLocalResponse(503, []byte(err.Error()), [2]string{"content-type", "text/plain"})
 		}
+	case "/body-callout-batch":
+		if !chunk.EndStream {
+			return
+		}
+		reqs := []up.HTTPCalloutRequest{
+			{
+				Cluster: "async-callout-upstream",
+				Headers: [][2]string{
+					{":method", "GET"},
+					{":path", "/batch-a"},
+					{":scheme", "http"},
+					{"host", "async-callout.local"},
+				},
+				TimeoutMillis: 1000,
+			},
+			{
+				Cluster: "async-callout-upstream",
+				Headers: [][2]string{
+					{":method", "GET"},
+					{":path", "/batch-b"},
+					{":scheme", "http"},
+					{"host", "async-callout.local"},
+				},
+				TimeoutMillis: 1000,
+			},
+		}
+		err := w.HTTPCalloutAllSettled(reqs, func(responses []up.HTTPCalloutAllSettledResponse) {
+			if len(responses) != 2 ||
+				responses[0].Result != up.HTTPCalloutSuccess ||
+				responses[1].Result != up.HTTPCalloutSuccess ||
+				len(responses[0].Body) == 0 ||
+				len(responses[1].Body) == 0 {
+				w.SendLocalResponse(503, []byte("batch callout failed"), [2]string{"content-type", "text/plain"})
+				return
+			}
+			w.SendLocalResponse(
+				200,
+				[]byte(responses[0].Body[0].ToString()+","+responses[1].Body[0].ToString()),
+				[2]string{"content-type", "text/plain"},
+				[2]string{"x-async-body-callout-batch", "ok"},
+			)
+		})
+		if err != nil {
+			w.SendLocalResponse(503, []byte(err.Error()), [2]string{"content-type", "text/plain"})
+		}
+	case "/body-callout-batch-partial-error":
+		if !chunk.EndStream {
+			return
+		}
+		reqs := []up.HTTPCalloutRequest{
+			{
+				Cluster: "missing-batch-cluster",
+				Headers: [][2]string{
+					{":method", "GET"},
+					{":path", "/missing"},
+					{":scheme", "http"},
+					{"host", "async-callout.local"},
+				},
+				TimeoutMillis: 1000,
+			},
+			{
+				Cluster: "async-callout-upstream",
+				Headers: [][2]string{
+					{":method", "GET"},
+					{":path", "/batch-ok"},
+					{":scheme", "http"},
+					{"host", "async-callout.local"},
+				},
+				TimeoutMillis: 1000,
+			},
+		}
+		err := w.HTTPCalloutAllSettled(reqs, func(responses []up.HTTPCalloutAllSettledResponse) {
+			if len(responses) != 2 ||
+				responses[0].Err == nil ||
+				responses[1].Result != up.HTTPCalloutSuccess ||
+				len(responses[1].Body) == 0 {
+				w.SendLocalResponse(503, []byte("batch partial error failed"), [2]string{"content-type", "text/plain"})
+				return
+			}
+			w.SendLocalResponse(
+				207,
+				[]byte("partial:"+responses[1].Body[0].ToString()),
+				[2]string{"content-type", "text/plain"},
+				[2]string{"x-async-body-callout-batch", "partial"},
+			)
+		})
+		if err != nil {
+			w.SendLocalResponse(503, []byte(err.Error()), [2]string{"content-type", "text/plain"})
+		}
 	default:
 		if chunk.EndStream {
 			w.SetRequestHeader("x-body-len", fmt.Sprintf("%d", len(chunk.Data)))

@@ -105,6 +105,36 @@ func (s *AsyncCalloutSuite) TestPost_bodyHTTPCalloutMutatesAndForwards() {
 	s.Require().Equal("body-callout-forward", body)
 }
 
+func (s *AsyncCalloutSuite) TestPost_bodyHTTPCalloutAllSettledLocalResponse() {
+	// The request body callback initiates multiple HTTPCallout requests, then
+	// sends one merged local response from the final callback.
+	req, err := http.NewRequest(http.MethodPost, asyncCalloutBodyAddr+"/body-callout-batch", strings.NewReader("hello"))
+	s.Require().NoError(err)
+	req.Header.Set("content-type", "text/plain")
+
+	resp := mustDo(s.T(), req)
+	body := readBody(s.T(), resp)
+
+	s.Require().Equal(http.StatusOK, resp.StatusCode)
+	s.Require().Equal("ok", resp.Header.Get("x-async-body-callout-batch"))
+	s.Require().Equal("batch-a,batch-b", body)
+}
+
+func (s *AsyncCalloutSuite) TestPost_bodyHTTPCalloutAllSettledPartialInitError() {
+	// AllSettled responses preserve per-callout init errors so the caller can
+	// choose a partial-success policy.
+	req, err := http.NewRequest(http.MethodPost, asyncCalloutBodyAddr+"/body-callout-batch-partial-error", strings.NewReader("hello"))
+	s.Require().NoError(err)
+	req.Header.Set("content-type", "text/plain")
+
+	resp := mustDo(s.T(), req)
+	body := readBody(s.T(), resp)
+
+	s.Require().Equal(http.StatusMultiStatus, resp.StatusCode)
+	s.Require().Equal("partial", resp.Header.Get("x-async-body-callout-batch"))
+	s.Require().Equal("partial:batch-ok", body)
+}
+
 func (s *AsyncCalloutSuite) TestGet_calloutLocalResponseUpstreamNotReached() {
 	// The /checked path calls SendLocalResponse inside the callout callback.
 	// The listener for this test routes to the recorder upstream instead of the

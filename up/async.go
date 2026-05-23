@@ -2,14 +2,15 @@
 // This file defines all types related to asynchronous HTTP callouts and the
 // two async modes a handler can use:
 //
-//  1. HTTPCallout — callback form. The filter stops the request, Envoy sends
-//     an outbound HTTP request to a named cluster, and the user-supplied
-//     HTTPCalloutFunc runs when the response arrives. The func may queue
-//     mutations (SetRequestHeader, etc.) or send a local response. Transit
-//     then applies those mutations and resumes (or terminates) the stream.
-//     This is the only path that supports SendLocalResponse reliably, because
-//     the callback runs from a filter callback (OnHttpCalloutDone), not from
-//     a scheduler, and Envoy only honours SendLocalResponse from filter callbacks.
+//  1. HTTPCallout / HTTPCalloutAllSettled — callback form. The filter stops the
+//     request, Envoy sends one or more outbound HTTP requests to named clusters,
+//     and the user-supplied callback runs when the response or response group
+//     arrives. The callback may queue mutations (SetRequestHeader, etc.) or send
+//     a local response. Transit then applies those mutations and resumes (or
+//     terminates) the stream. This is the only path that supports
+//     SendLocalResponse reliably, because the callback runs from a filter
+//     callback, not from a scheduler, and Envoy only honours SendLocalResponse
+//     from filter callbacks.
 //
 //  2. Go + Do — goroutine form. The handler calls w.Go(fn); fn runs in a
 //     goroutine and may call w.Do(...) to issue callouts from that goroutine.
@@ -88,6 +89,34 @@ type HTTPCalloutResponse struct {
 	Body    []shared.UnsafeEnvoyBuffer
 }
 
+// HTTPCalloutAllSettledResponse is one response delivered to HTTPCalloutAllSettledFunc.
+//
+// Headers and Body are Go-owned copies, because earlier callout callbacks may
+// return before every callout has settled. Response slots preserve request
+// order: responses[i] corresponds to the request at reqs[i].
+//
+// Err is non-nil when Envoy rejected the callout at init time or when an
+// accepted callout completed with a non-success result. Callers still receive
+// Init and Result so they can distinguish init failures, resets, and buffer
+// limit errors when choosing aggregate policy.
+type HTTPCalloutAllSettledResponse struct {
+	Result  HTTPCalloutResult
+	Init    HTTPCalloutInitResult
+	Err     error
+	Headers [][2]shared.UnsafeEnvoyBuffer
+	Body    []shared.UnsafeEnvoyBuffer
+}
+
+// OK reports whether the callout was accepted and completed successfully.
+func (r HTTPCalloutAllSettledResponse) OK() bool {
+	return r.Err == nil && r.Init == HTTPCalloutInitSuccess && r.Result == HTTPCalloutSuccess
+}
+
+// Failed reports whether the response slot represents an init or callout error.
+func (r HTTPCalloutAllSettledResponse) Failed() bool {
+	return !r.OK()
+}
+
 // HTTPCalloutFunc is the callback invoked when an Envoy HTTP callout completes.
 //
 // LIFETIME: headers and body point into Envoy-owned memory that is only valid
@@ -100,6 +129,14 @@ type HTTPCalloutResponse struct {
 // HttpCallout synchronously). It may call any Writer mutation method; those
 // mutations are queued and applied by flush() after the callback returns.
 type HTTPCalloutFunc func(result HTTPCalloutResult, headers [][2]shared.UnsafeEnvoyBuffer, body []shared.UnsafeEnvoyBuffer)
+
+// HTTPCalloutAllSettledFunc is invoked once after all accepted callouts in a group
+// have completed and all init failures have been recorded.
+//
+// The function runs from the final callout callback or synchronously when all
+// callouts fail initialization. It may call Writer mutation methods, including
+// SendLocalResponse.
+type HTTPCalloutAllSettledFunc func(responses []HTTPCalloutAllSettledResponse)
 
 // requestHeaderMutation is a deferred request header operation.
 // del takes priority; add uses HeaderMap.Add (multi-value); default uses Set.
@@ -158,6 +195,21 @@ func errCalloutInitResult(r HTTPCalloutInitResult) error {
 		return errors.New("up: HTTP callout: cannot create request")
 	default:
 		return fmt.Errorf("up: HTTP callout: unknown init result %d", r)
+	}
+}
+
+// errCalloutResult converts a non-success HTTPCalloutResult to an error.
+// Returns nil for HTTPCalloutSuccess.
+func errCalloutResult(r HTTPCalloutResult) error {
+	switch r {
+	case HTTPCalloutSuccess:
+		return nil
+	case HTTPCalloutReset:
+		return errors.New("up: HTTP callout: reset")
+	case HTTPCalloutExceedResponseBufferLimit:
+		return errors.New("up: HTTP callout: response buffer limit exceeded")
+	default:
+		return fmt.Errorf("up: HTTP callout: unknown result %d", r)
 	}
 }
 
