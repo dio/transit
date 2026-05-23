@@ -1,8 +1,8 @@
 GO_TOOL := GOWORK=off go tool -modfile=$(CURDIR)/tools/go.mod
 GOLANGCI_CONFIG := $(CURDIR)/.golangci.yml
 
-ZIG_VERSION   ?= 0.16.0
-ZIG_BIN       ?= $(CURDIR)/.bin/zig-dist/zig
+ZIG_VERSION ?= 0.16.0
+ZIG_BIN ?= $(CURDIR)/.bin/zig-dist/zig
 
 ENVOY_BIN ?= $(CURDIR)/.bin/envoy
 
@@ -125,12 +125,12 @@ lint:
 
 .PHONY: tidy
 tidy:
-	go work sync
 	go mod tidy
 	cd e2e && go mod tidy
 	cd examples && go mod tidy
 	cd integrations && go mod tidy
 	cd tools && GOWORK=off go mod tidy
+	go work sync
 
 # update-sdk upgrades the Envoy dynamic modules SDK to the given Envoy commit and
 # syncs down/abi_impl/abi.h + down/abi_impl/VERSION in one step.

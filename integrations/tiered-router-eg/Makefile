@@ -1,4 +1,4 @@
-ROOT := $(shell git rev-parse --show-toplevel)
+ROOT := $(abspath $(CURDIR)/../..)
 
 ENVOY_TAG ?= envoy-0d6e3c60
 ENVOY_GATEWAY_VERSION ?= v1.8.0

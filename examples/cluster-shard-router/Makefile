@@ -6,7 +6,7 @@
 EXAMPLE := cluster-shard-router
 OUTPUT  := libcluster-shard-router.so
 
-ROOT      := $(shell git rev-parse --show-toplevel)
+ROOT := $(abspath $(CURDIR)/../..)
 ENVOY_BIN ?= $(ROOT)/.bin/envoy
 
 .PHONY: build test e2e run clean download-envoy

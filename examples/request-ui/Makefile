@@ -6,7 +6,7 @@
 EXAMPLE := request-ui
 OUTPUT  := librequest-ui.so
 
-ROOT      := $(shell git rev-parse --show-toplevel)
+ROOT := $(abspath $(CURDIR)/../..)
 ENVOY_BIN ?= $(ROOT)/.bin/envoy
 GOARCH    ?= $(shell go env GOARCH)
 
