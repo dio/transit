@@ -11,6 +11,8 @@ PUBLISH_CONTROL_PLANE_IMAGE ?= ttl.sh/transit-cluster-router-eg-control-$(IMAGE_
 K3D_IMAGE_IMPORT_MODE ?= direct
 K3D_SKIP_IMAGE_IMPORT ?= 0
 K3D_AGENTS ?= 0
+KEEP_CLUSTER ?= 0
+RESET_CLUSTER ?= 1
 
 ARCH := $(shell go env GOARCH)
 PLATFORM := linux/$(ARCH)
@@ -65,6 +67,8 @@ eg-install:
 	ENVOY_GATEWAY_VERSION=$(ENVOY_GATEWAY_VERSION) \
 	K3S_TAG=$(K3S_TAG) \
 	K3D_AGENTS=$(K3D_AGENTS) \
+	KEEP_CLUSTER=$(KEEP_CLUSTER) \
+	RESET_CLUSTER=$(RESET_CLUSTER) \
 	GOWORK=off go test ./e2e/... -run TestEnvoyGatewayInstallOnly -v -timeout=10m -count=1
 
 ifeq ($(SKIP_IMAGE_BUILD),1)
@@ -80,6 +84,8 @@ endif
 	K3D_AGENTS=$(K3D_AGENTS) \
 	K3D_IMAGE_IMPORT_MODE=$(K3D_IMAGE_IMPORT_MODE) \
 	K3D_SKIP_IMAGE_IMPORT=$(K3D_SKIP_IMAGE_IMPORT) \
+	KEEP_CLUSTER=$(KEEP_CLUSTER) \
+	RESET_CLUSTER=$(RESET_CLUSTER) \
 	GOWORK=off go test ./e2e/... -v -timeout=15m -count=1
 
 clean:

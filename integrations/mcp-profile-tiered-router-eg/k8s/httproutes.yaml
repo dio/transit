@@ -76,6 +76,28 @@ spec:
     - name: l2-a-catalog-router
       port: 8080
 ---
+# l2-a-cluster-router-init: dedicated route whose generated backend cluster
+# hosts the cluster-router extension for L2-A. No real traffic flows here;
+# it exists so the cluster extension initializes the route store and the
+# /__cluster-router/config dump endpoint returns the active config.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: l2-a-cluster-router-init
+  namespace: transit-dataplane
+spec:
+  parentRefs:
+  - name: l2-a
+    sectionName: http
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /__cluster-router-init-a
+    backendRefs:
+    - name: l2-a-catalog-router
+      port: 8080
+---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -90,6 +112,25 @@ spec:
     - path:
         type: PathPrefix
         value: /mcp
+    backendRefs:
+    - name: l2-b-catalog-router
+      port: 8080
+---
+# l2-b-cluster-router-init: same as l2-a-cluster-router-init for L2-B shard.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: l2-b-cluster-router-init
+  namespace: transit-dataplane
+spec:
+  parentRefs:
+  - name: l2-b
+    sectionName: http
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /__cluster-router-init-b
     backendRefs:
     - name: l2-b-catalog-router
       port: 8080

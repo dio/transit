@@ -9,6 +9,12 @@ Use this skill when adding or debugging an integration under `integrations/`
 that needs a real k3d cluster, Envoy Gateway, Gateway API resources, an
 EnvoyPatchPolicy, or a custom Envoy image carrying a Transit `.so`.
 
+All tests and checks for these suites must run outside the Codex sandbox. This
+includes `make -C integrations/<name> test`, gated k3d e2e targets, direct
+`go test` commands for integration packages, `kubectl`, `helm`, `k3d`, Docker
+image builds/imports, and any command that touches the local kube context or
+container runtime.
+
 ## Shape of the suite
 
 Prefer a Go `testify/suite` harness as the canonical e2e entry point. Avoid a
@@ -98,6 +104,12 @@ For Envoy Gateway v1.8 with `XDSNameSchemeV2`, expect generated names like:
 - listener: `tcp-80`
 - route configuration: `http-80`
 
+If an integration discovers generated backend cluster names from Envoy
+`/config_dump` and feeds those names into a dynamic-module config, allow the
+slash-containing `httproute/.../rule/...` value through. Do not reuse validation
+intended for logical cluster aliases that reject `/`, or the Envoy pod can load
+an invalid module config even though discovery succeeded.
+
 Poll `EnvoyPatchPolicy` programmed status through
 `status.ancestors[*].conditions`; generic `kubectl wait
 envoypatchpolicy/... --for=condition=Programmed` can miss the nested condition.
@@ -157,6 +169,20 @@ the alias Services with shard identity and select the shared L2 pod label. Only
 use per-shard pod labels such as `transit.dio/proxy: l2-a` when the integration
 creates separate physical L2 EnvoyProxy deployments.
 
+After mutating a generated Envoy deployment, prefer deployment-level rollout
+checks over broad pod-label waits. Stable labels such as `transit.dio/proxy=l1`
+can match old ReplicaSet pods during or after a restart; `kubectl wait pods -l
+...` can then fail even when the new deployment replica is ready. Use
+`kubectl rollout status deployment/<name>` plus `kubectl wait deployment/<name>
+--for=condition=Available` for the rollout, and use pod-label waits only for
+initial readiness or labels that cannot include stale pods.
+
+Do not patch generated Envoy Gateway deployments as the durable configuration
+source. Envoy Gateway owns those deployments and can reconcile manual
+`kubectl set env deployment/<generated>` changes away. When dynamic-module env
+or image config must change, update and apply the owning `EnvoyProxy` resource,
+then wait for the generated deployment rollout.
+
 ## Images and modules
 
 For Transit dynamic-module scenarios, keep the `.so` inside the custom Envoy
@@ -181,6 +207,29 @@ control-plane or upstream demo services, build the Linux binary locally with
 multi-stage Docker builds for these services unless the suite specifically
 needs a containerized build environment.
 
+Each runnable integration should follow the same packaging contract as
+`integrations/tiered-router-eg` and `integrations/cluster-router-eg` unless
+there is a clear reason not to:
+
+- `Dockerfile.envoy` copies all Linux `.so` files needed by the scenario into
+  `/etc/envoy/dynamic-modules`.
+- `Dockerfile.demo` or an equivalent image contains the fake upstream/control
+  binaries used by the suite.
+- The integration `Makefile` exposes `build-modules`, `image`, a demo/control
+  binary target, a demo/control image target, `publish`, `eg-install`, `e2e`,
+  and `clean`.
+- `make -C integrations/<name> e2e` builds the local images by default, imports
+  them into k3d, and passes `IMAGE` plus the demo/control image env vars to the
+  Go suite.
+- `SKIP_IMAGE_BUILD=1 IMAGE=... <DEMO_OR_CONTROL_IMAGE>=... make -C
+  integrations/<name> e2e` reuses prebuilt images.
+- `publish` retags images to short-lived ttl.sh names and pushes them; CI can
+  then set `K3D_SKIP_IMAGE_IMPORT=1` so the cluster pulls images instead of
+  importing from the Docker daemon.
+
+If a new integration only documents required `IMAGE` values but has no local
+build path, treat it as a skeleton rather than a working example.
+
 Set `ENVOY_DYNAMIC_MODULES_SEARCH_PATH=/etc/envoy/dynamic-modules` on the
 generated Envoy pod when the module file lives there. The `dynamicModules.local`
 path can make Envoy mount the file, but patched dynamic-module clusters may
@@ -196,6 +245,12 @@ a guarded second entry point.
 Prefer black-box assertions through the Gateway listener. Use admin
 `/config_dump` only to discover or debug Envoy-generated names such as backend
 cluster names for EnvoyPatchPolicy.
+
+Keep skipped parity/future assertions from short-circuiting active topology
+checks. In `testify/suite`, `s.T().Skip` skips the current test method, so do
+not call a pending stub before implemented assertions in the same test. Put
+pending cases in separate `t.Run` subtests, move them after active assertions,
+or keep them as TODO comments until they are runnable.
 
 For request-aware routing demos, assert both the externally visible upstream
 selection and the active configuration surface. For example:

@@ -1079,7 +1079,7 @@ func TestGateway_dumpRedactsCredentialsAndShowsBooleans(t *testing.T) {
 func TestValidateConfig(t *testing.T) {
 	require.NoError(t, ValidateConfig(Config{
 		CatalogServers: map[string]CatalogServer{
-			"aws-knowledge": {URL: "http://127.0.0.1:8080"},
+			"aws-knowledge": {URL: "http://127.0.0.1:8080", Cluster: "httproute/transit-dataplane/l1-l2a-catalog/rule/0"},
 			"github":        {URL: "http://127.0.0.1:8081"},
 		},
 		Profiles: map[string]Profile{

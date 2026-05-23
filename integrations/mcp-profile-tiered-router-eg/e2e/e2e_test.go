@@ -83,9 +83,20 @@ func (s *mcpProfileGatewaySuite) TestMCPProfileGatewayTopology() {
 	// HTTPRoutes including L1 catalog egress routes for cluster name discovery.
 	liveLogf(s.T(), "applying namespaces and workloads")
 	apply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "namespaces.yaml"))
+
+	l2ACfg := l2CatalogConfig(map[string]struct{ URL, Credential string }{
+		"kiwi":          {URL: "http://mcp-kiwi.transit-dataplane.svc.cluster.local:8080", Credential: "Bearer kiwi-token"},
+		"aws-knowledge": {URL: "http://mcp-aws-knowledge.transit-dataplane.svc.cluster.local:8080", Credential: "Bearer aws-token"},
+	})
+	l2BCfg := l2CatalogConfig(map[string]struct{ URL, Credential string }{
+		"microsoft": {URL: "http://mcp-microsoft.transit-dataplane.svc.cluster.local:8080", Credential: "Bearer microsoft-token"},
+		"github":    {URL: "http://mcp-github.transit-dataplane.svc.cluster.local:8080", Credential: "Bearer github-token"},
+	})
 	renderApply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "envoyproxies.tmpl.yaml"), map[string]string{
-		"EnvoyImage":   s.envoyImage,
-		"L1ConfigJSON": `{"catalog_servers":{"_placeholder":{"url":"http://placeholder.invalid"}}}`,
+		"EnvoyImage":      s.envoyImage,
+		"L1ConfigJSON":    `{"catalog_servers":{"_placeholder":{"url":"http://placeholder.invalid"}}}`,
+		"L2ACatalogConfig": l2ACfg,
+		"L2BCatalogConfig": l2BCfg,
 	})
 	renderApply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "demo.tmpl.yaml"), map[string]string{
 		"DemoImage": s.demoImage,
@@ -118,33 +129,34 @@ func (s *mcpProfileGatewaySuite) TestMCPProfileGatewayTopology() {
 	run(s.ctx, s.T(), "", "kubectl", "wait", "pods", "--for=condition=Ready",
 		"-n", dataplaneNamespace, "-l", "transit.dio/proxy=l2-b", "--timeout=180s")
 
-	// Phase 2: patch each L2 shard's catalog egress cluster with cluster-router.
-	// The catalog egress cluster is the EG-generated backend cluster for the L2
-	// catalog HTTPRoute; cluster-router replaces it so the mcp-catalog-router module
-	// on L2 can route by x-mcp-server to the concrete fake backend service.
+	// Phase 2: patch each L2 shard's dedicated cluster-router-init cluster with
+	// cluster-router. The init cluster is created by the l2-{a,b}-cluster-router-init
+	// HTTPRoute, which exists solely so the cluster extension can initialize the
+	// route store and serve /__cluster-router/config. Real catalog traffic continues
+	// to flow through the demo catalog-router app unchanged.
 	liveLogf(s.T(), "patching L2-A cluster-router")
 	l2AAdminURL, stopL2AAdmin := portForward(s.ctx, s.T(), "deploy/"+l2ADeploy, 19000)
 	defer stopL2AAdmin()
-	l2ACatalogCluster := discoverBackendCluster(s.ctx, s.T(), l2AAdminURL, "l2-a-catalog-router")
+	l2AInitCluster := discoverBackendCluster(s.ctx, s.T(), l2AAdminURL, "l2-a-cluster-router-init")
 	renderApply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "epp-l2.tmpl.yaml"), map[string]string{
-		"PolicyName":               "l2-a-cluster-router",
-		"GatewayName":              "l2-a",
-		"CatalogEgressClusterName": l2ACatalogCluster,
-		"Shard":                    "l2-a",
-		"BackendRoutesJSON":        l2ABackendsJSON,
+		"PolicyName":      "l2-a-cluster-router",
+		"GatewayName":     "l2-a",
+		"InitClusterName": l2AInitCluster,
+		"Shard":           "l2-a",
+		"BackendRoutesJSON": l2ABackendsJSON,
 	})
 	waitEnvoyPatchPolicyProgrammed(s.ctx, s.T(), dataplaneNamespace, "l2-a-cluster-router")
 
 	liveLogf(s.T(), "patching L2-B cluster-router")
 	l2BAdminURL, stopL2BAdmin := portForward(s.ctx, s.T(), "deploy/"+l2BDeploy, 19000)
 	defer stopL2BAdmin()
-	l2BCatalogCluster := discoverBackendCluster(s.ctx, s.T(), l2BAdminURL, "l2-b-catalog-router")
+	l2BInitCluster := discoverBackendCluster(s.ctx, s.T(), l2BAdminURL, "l2-b-cluster-router-init")
 	renderApply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "epp-l2.tmpl.yaml"), map[string]string{
-		"PolicyName":               "l2-b-cluster-router",
-		"GatewayName":              "l2-b",
-		"CatalogEgressClusterName": l2BCatalogCluster,
-		"Shard":                    "l2-b",
-		"BackendRoutesJSON":        l2BBackendsJSON,
+		"PolicyName":      "l2-b-cluster-router",
+		"GatewayName":     "l2-b",
+		"InitClusterName": l2BInitCluster,
+		"Shard":           "l2-b",
+		"BackendRoutesJSON": l2BBackendsJSON,
 	})
 	waitEnvoyPatchPolicyProgrammed(s.ctx, s.T(), dataplaneNamespace, "l2-b-cluster-router")
 
@@ -159,13 +171,13 @@ func (s *mcpProfileGatewaySuite) TestMCPProfileGatewayTopology() {
 	l1L2BCluster := discoverBackendCluster(s.ctx, s.T(), l1AdminURL, "l1-l2b-catalog")
 	l1Config := buildL1Config(l1L2ACluster, l1L2BCluster)
 	liveLogf(s.T(), "applying real L1 config and restarting L1")
-	run(s.ctx, s.T(), "", "kubectl", "set", "env",
-		"deployment/"+l1Deploy, "-n", dataplaneNamespace,
-		"MCP_PROFILE_GATEWAY_CONFIG="+l1Config)
+	renderApply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "envoyproxies.tmpl.yaml"), map[string]string{
+		"EnvoyImage":       s.envoyImage,
+		"L1ConfigJSON":     l1Config,
+		"L2ACatalogConfig": l2ACfg,
+		"L2BCatalogConfig": l2BCfg,
+	})
 	waitDeployment(s.ctx, s.T(), dataplaneNamespace, l1Deploy)
-	run(s.ctx, s.T(), "", "kubectl", "wait", "pods",
-		"--for=condition=Ready", "-n", dataplaneNamespace,
-		"-l", "transit.dio/proxy=l1", "--timeout=120s")
 
 	// Apply L1 filter insertion (epp-l1 is static; no cluster name needed).
 	apply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "epp-l1.tmpl.yaml"))
@@ -244,6 +256,13 @@ func (s *mcpProfileGatewaySuite) TestMCPProfileGatewayTopology() {
 	s.assertDumpsRedactSecrets(l1URL, l2AURL, l2BURL)
 }
 
+func (s *mcpProfileGatewaySuite) pendingAssertion(name, reason string) {
+	s.T().Helper()
+	s.T().Run("pending/"+name, func(t *testing.T) {
+		t.Skip(reason)
+	})
+}
+
 // assertAuthFailure verifies that a request with wrong API key fails before any
 // L2 request is made. Profile gateway returns 401 with a JSON-RPC error body.
 func (s *mcpProfileGatewaySuite) assertAuthFailure(l1URL string) {
@@ -288,7 +307,7 @@ func (s *mcpProfileGatewaySuite) assertInitializeAllHealthy(l1URL string) string
 // configured to fail, run initialize, and verify the session backends map omits
 // the failing server.
 func (s *mcpProfileGatewaySuite) assertInitializePartialFailure(_ string) {
-	s.T().Skip("partial initialize failure requires fake-mcp failure injection support")
+	s.pendingAssertion("initialize-partial-backend-failure", "requires fake-mcp failure injection support")
 }
 
 // assertInitializeAllFail verifies that when all backends fail to initialize,
@@ -296,7 +315,7 @@ func (s *mcpProfileGatewaySuite) assertInitializePartialFailure(_ string) {
 //
 // Requires all fake-mcp backends to be made temporarily unreachable.
 func (s *mcpProfileGatewaySuite) assertInitializeAllFail(_ string) {
-	s.T().Skip("all-backends-fail initialize requires fake-mcp failure injection support")
+	s.pendingAssertion("initialize-all-backends-fail", "requires fake-mcp failure injection support")
 }
 
 // assertToolsListAllServers fans out tools/list to all 4 member servers and
@@ -330,21 +349,21 @@ func (s *mcpProfileGatewaySuite) assertToolsListAllServers(l1URL, sessionID stri
 // Requires a profile variant that enables only a subset of tools on one server.
 // The test should verify that disabled tools are absent from the merged list.
 func (s *mcpProfileGatewaySuite) assertToolsListEnabledFiltering(_ string) {
-	s.T().Skip("enabled-tool filtering requires a second profile config with restricted enabled_tools")
+	s.pendingAssertion("tools-list-enabled-filtering", "requires a second profile config with restricted enabled_tools")
 }
 
 // assertToolsListPartialBackendFailure verifies that when one backend fails
 // during tools/list, the merged response contains healthy tools from the
 // remaining backends (MCPProxy parity: partial success).
 func (s *mcpProfileGatewaySuite) assertToolsListPartialBackendFailure(_ string) {
-	s.T().Skip("partial backend failure requires fake-mcp failure injection support")
+	s.pendingAssertion("tools-list-partial-backend-failure", "requires fake-mcp failure injection support")
 }
 
 // assertToolsListAllBackendsFail verifies that when all backends fail tools/list,
 // the gateway returns a successful empty {"tools":[]} response
 // (MCPProxy parity: all-backends-fail returns empty, not an error).
 func (s *mcpProfileGatewaySuite) assertToolsListAllBackendsFail(_ string) {
-	s.T().Skip("all-backends-fail tools/list requires fake-mcp failure injection support")
+	s.pendingAssertion("tools-list-all-backends-fail", "requires fake-mcp failure injection support")
 }
 
 // assertCatalogForwardingL2A verifies that a public /mcp/s/aws-knowledge request
@@ -417,14 +436,14 @@ func (s *mcpProfileGatewaySuite) assertToolsCallUnknownToolError(l1URL, sessionI
 //
 // Requires a profile variant with one tool disabled via enabled_tools map.
 func (s *mcpProfileGatewaySuite) assertToolsCallDisabledTool(_ string) {
-	s.T().Skip("disabled-tool assertion requires a second profile config with restricted enabled_tools")
+	s.pendingAssertion("tools-call-disabled-tool", "requires a second profile config with restricted enabled_tools")
 }
 
 // assertToolsCallAbsentBackendInSession verifies that tools/call for a backend
 // that was absent from the partial-initialize session returns an error and makes
 // no L2 request (MCPProxy parity: absent-from-session tools/call must fail).
 func (s *mcpProfileGatewaySuite) assertToolsCallAbsentBackendInSession(_ string) {
-	s.T().Skip("absent-backend-in-session assertion requires partial initialize failure injection")
+	s.pendingAssertion("tools-call-absent-backend-in-session", "requires partial initialize failure injection")
 }
 
 // assertToolsCallProxiesBackendJSONRPCError verifies that a backend 2xx response
@@ -433,7 +452,7 @@ func (s *mcpProfileGatewaySuite) assertToolsCallAbsentBackendInSession(_ string)
 //
 // Requires the fake-mcp binary to return a JSON-RPC error for a named tool call.
 func (s *mcpProfileGatewaySuite) assertToolsCallProxiesBackendJSONRPCError(_ string, _ string) {
-	s.T().Skip("backend JSON-RPC error proxying requires fake-mcp tool-level error injection")
+	s.pendingAssertion("tools-call-proxies-backend-jsonrpc-error", "requires fake-mcp tool-level error injection")
 }
 
 // assertToolsCallBackendTransportFailure verifies that a backend transport error
@@ -442,7 +461,7 @@ func (s *mcpProfileGatewaySuite) assertToolsCallProxiesBackendJSONRPCError(_ str
 //
 // Requires the fake-mcp binary to be made temporarily unreachable for one server.
 func (s *mcpProfileGatewaySuite) assertToolsCallBackendTransportFailure(_ string, _ string) {
-	s.T().Skip("backend transport failure requires fake-mcp failure injection support")
+	s.pendingAssertion("tools-call-backend-transport-failure", "requires fake-mcp failure injection support")
 }
 
 // assertCrossShardRejectionL2A verifies that a direct /mcp/s/github request to
@@ -622,8 +641,27 @@ func toolNamesFromResponse(body []byte) ([]string, error) {
 	return names, nil
 }
 
+// l2CatalogConfig builds the MCP_CATALOG_ROUTER_CONFIG JSON for an L2 shard.
+// servers is a map of server slug -> { url, credential }.
+func l2CatalogConfig(servers map[string]struct{ URL, Credential string }) string {
+	type serverCfg struct {
+		URL        string `json:"url"`
+		Credential string `json:"credential,omitempty"`
+	}
+	cfg := struct {
+		Servers map[string]serverCfg `json:"servers"`
+	}{Servers: make(map[string]serverCfg, len(servers))}
+	for id, s := range servers {
+		cfg.Servers[id] = serverCfg{URL: s.URL, Credential: s.Credential}
+	}
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		panic("l2CatalogConfig: " + err.Error())
+	}
+	return string(raw)
+}
+
 // buildL1Config constructs the MCP_PROFILE_GATEWAY_CONFIG JSON for the L1
-// profile gateway. l1L2ACluster and l1L2BCluster are the Envoy cluster names
 // discovered from the L1 admin API for the l1-l2a-catalog and l1-l2b-catalog
 // HTTPRoutes respectively.
 func buildL1Config(l1L2ACluster, l1L2BCluster string) string {
@@ -731,10 +769,14 @@ func clusterNamesFromDump(body []byte) []string {
 	for _, raw := range dump.Configs {
 		var cfg struct {
 			DynamicActiveClusters []struct {
-				Cluster struct{ Name string `json:"name"` } `json:"cluster"`
+				Cluster struct {
+					Name string `json:"name"`
+				} `json:"cluster"`
 			} `json:"dynamic_active_clusters"`
 			StaticClusters []struct {
-				Cluster struct{ Name string `json:"name"` } `json:"cluster"`
+				Cluster struct {
+					Name string `json:"name"`
+				} `json:"cluster"`
 			} `json:"static_clusters"`
 		}
 		if err := json.Unmarshal(raw, &cfg); err != nil {

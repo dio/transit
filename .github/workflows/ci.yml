@@ -127,6 +127,9 @@ jobs:
           - integration: tiered-router-eg
             image-prefix: transit-tiered-router-eg
             control-image-prefix: transit-tiered-router-eg-control
+          - integration: mcp-profile-tiered-router-eg
+            image-prefix: transit-mcp-profile-tiered-router-eg
+            control-image-prefix: transit-mcp-profile-tiered-router-eg-demo
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 

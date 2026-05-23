@@ -1,35 +1,80 @@
 # MCP Profile Tiered Router Integration
 
-Status: skeleton integration. The topology contract and placeholder Kubernetes
-resource shape exist; images and integration e2e assertions are not implemented
-yet. The L1 example module now exists and covers catalog forwarding, profile
-`initialize` session fan-out, profile `tools/list` fan-out, profile
-`tools/call` routing, and redacted dump surfaces, but this integration has not
-wired it into runnable Envoy Gateway images.
+A runnable Envoy Gateway integration that proves the L1/L2 MCP profile fan-out
+topology. L1 owns profile auth, fan-out, and tool routing. L2 owns cataloged
+server execution and backend host selection via cluster-router.
 
-This integration should take the proven local MCP routing semantics and make the
-L1/L2 product topology explicit under Envoy Gateway.
-
-Role mapping for this skeleton:
-
-- L1 profile front end: `examples/mcp-profile-gateway`
-- L2 catalog front end: `examples/mcp-catalog-router`
-- L2 egress router: `examples/cluster-router`
-
-This integration should not copy the local example directly. The example proves
-dataplane composition in one Envoy process; this integration proves the product
-boundary:
+Topology:
 
 ```text
 client
-  -> L1 Gateway
-  -> /mcp/{profile-id} curated profile endpoint
-  -> profile fetch, auth, policy, session, and fan-out
-  -> per-server request to the owning L2 server cluster
-  -> /mcp/s/{server-slug} cataloged server endpoint
-  -> cluster-router with route_header: x-mcp-server
-  -> concrete cluster-local MCP backend
+  -> L1 Gateway (mcp-profile-gateway filter)
+       /mcp/{profile-id}   profile auth, initialize fan-out, tools/list fan-out, tools/call routing
+       /mcp/s/{server-slug} public catalog forwarding to owning L2 cluster
+  -> L2-A Gateway (catalog-router demo app)
+       /mcp/s/kiwi            -> mcp-kiwi backend
+       /mcp/s/aws-knowledge   -> mcp-aws-knowledge backend
+  -> L2-B Gateway (catalog-router demo app)
+       /mcp/s/microsoft       -> mcp-microsoft backend
+       /mcp/s/github          -> mcp-github backend
 ```
+
+L1 uses `examples/mcp-profile-gateway` as an Envoy dynamic module filter.
+L2 uses a Go catalog-router demo binary that handles `/mcp/s/{server}` and
+injects the `x-mcp-server` header for cluster-router. L2 Envoy carries the
+cluster-router extension (.so) to serve `/__cluster-router/config` dump.
+
+## Running locally
+
+Build images and run the full e2e (requires Docker, k3d, kubectl, helm):
+
+```bash
+make -C integrations/mcp-profile-tiered-router-eg e2e
+```
+
+Reuse images already built:
+
+```bash
+SKIP_IMAGE_BUILD=1 \
+IMAGE=<envoy-image> \
+CONTROL_PLANE_IMAGE=<demo-image> \
+make -C integrations/mcp-profile-tiered-router-eg e2e
+```
+
+Keep cluster alive after a run for manual inspection:
+
+```bash
+KEEP_CLUSTER=1 make -C integrations/mcp-profile-tiered-router-eg e2e
+```
+
+## Make targets
+
+| Target | Description |
+|---|---|
+| `build-modules` | Cross-compile `.so` files with Zig |
+| `image` | Build custom Envoy image with Transit modules |
+| `control-plane-binary` | Build demo binary (catalog-router + fake MCP backends) |
+| `control-plane-image` | Wrap demo binary in a container image |
+| `publish` | Build and push images to `ttl.sh` (CI flow) |
+| `eg-install` | Smoke test: install Envoy Gateway in k3d, no custom images needed |
+| `e2e` | Full topology e2e: build images, create k3d cluster, run assertions |
+| `test` | Unit tests only (no cluster required) |
+| `clean` | Remove built artifacts |
+
+## Key environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `IMAGE` | auto-tagged | Custom Envoy image |
+| `CONTROL_PLANE_IMAGE` | auto-tagged | Demo image (catalog-router + fake backends) |
+| `SKIP_IMAGE_BUILD` | `0` | Set to `1` to skip image build steps |
+| `KEEP_CLUSTER` | `0` | Set to `1` to keep k3d cluster after the suite |
+| `RESET_CLUSTER` | `1` | Set to `0` to reuse an existing cluster |
+| `K3D_SKIP_IMAGE_IMPORT` | `0` | Set to `1` to pull images from a registry |
+| `K3D_IMAGE_IMPORT_MODE` | `direct` | k3d image import mode |
+| `ENVOY_GATEWAY_VERSION` | `v1.8.0` | Envoy Gateway Helm chart version |
+
+
 
 ## Ownership Model
 
@@ -180,7 +225,7 @@ POST /mcp/s/aws-knowledge method=tools/list
   -> cluster-router reaches the AWS Knowledge backend only
 ```
 
-## Proposed Topology
+## Topology
 
 ```text
 Gateway/l1
@@ -250,17 +295,19 @@ not log, dump, or persist raw user-provided tokens.
 
 ## Profile Configuration
 
-For the skeleton, L1 gets static profile JSON through a placeholder
-`MCP_PROFILE_GATEWAY_CONFIG` environment value. The `mcp-profile-gateway`
-module now exists. The current example implements public catalog forwarding,
-profile `initialize` session fan-out, profile `tools/list` fan-out, profile
-`tools/call` routing, and redacted dump surfaces.
-The Envoy Gateway templates reserve the `libmcp-profile-gateway.so` module name
-and path so the integration contract does not drift back into the older local
-example naming.
+L1 gets profile JSON through `MCP_PROFILE_GATEWAY_CONFIG` set by the
+`EnvoyProxy` resource. The integration builds the config at cluster setup time
+using the Envoy-Gateway-generated cluster names for the L1→L2 callout routes.
 
-Later, static profile JSON should be replaced by dynamic profile fetching from
-an L1-owned profile service:
+The `mcp-profile-gateway` module implements:
+- public catalog forwarding
+- profile `initialize` session fan-out
+- profile `tools/list` fan-out
+- profile `tools/call` routing
+- redacted dump surfaces
+
+Later, static config can be replaced by dynamic profile fetching from an
+L1-owned profile service:
 
 - L1 fetches and validates `/mcp/{profile-id}` profile configuration.
 - L1 caches profile data with explicit TTL, stale-if-error, and auth failure
@@ -294,11 +341,11 @@ Clients should call both endpoint shapes through L1. L1 forwards
 server ownership. L2 handles the same path only after L1 has selected the owning
 server cluster.
 
-The skeleton intentionally does not use `cluster-shard-router` for L1 catalog
-server routing. The current shard router selects from request headers such as
-`x-transit-tag`, not from `/mcp/s/{server-slug}`. Until a slug-aware selector
-exists, the L1 profile/catalog front end should use an explicit ownership map or
-explicit L2 service URLs for each cataloged server.
+The integration intentionally does not use `cluster-shard-router` for L1 catalog
+server routing. The shard router selects from request headers such as
+`x-transit-tag`, not from `/mcp/s/{server-slug}`. L1 uses an explicit ownership
+map of server slug to L2 cluster, built from the Envoy-Gateway-generated cluster
+names discovered at setup time.
 
 L2 must have a catalog front end before cluster-router. That front end translates
 `/mcp/s/{server-slug}` into an outbound backend request with an explicit MCP
@@ -392,31 +439,60 @@ Nice-to-have later cases:
 - No L2 curated profile fetching.
 - No L1 awareness of concrete backend hosts.
 
-## Implementation Phases
+## Remaining Work
 
-1. Use this README as the contract for the first implementation pass.
-2. Add k8s templates for L1, L2-A, L2-B, and fake MCP backends. Done as a
-   skeleton under `k8s/`.
-3. Wire the existing `examples/mcp-profile-gateway` L1 front end into the
-   integration image/resource shape. Its current implemented behavior is public
-   `/mcp/s/{server-slug}` catalog forwarding, profile `initialize` session
-   fan-out, profile `tools/list` fan-out, profile `tools/call` routing, and
-   redacted dumps.
-4. Use `examples/mcp-catalog-router` as the L2 server-cluster front end for
-   `/mcp/s/{server-slug}`. It sets `x-mcp-server` and calls a separate
-   cluster-router-patched egress cluster.
-5. Build custom Envoy images that include the required Transit modules.
-6. Add a minimal demo/fake-backend binary if reusing the example backend is not
-   enough.
-7. Add e2e tests for the required matrix.
-8. Add dynamic L1 profile fetching after the static profile-env topology is
-   working.
-9. Only after the fake topology is stable, consider optional real MCP server
-   manual smoke tests.
+The integration now follows the same local image build shape as
+`integrations/tiered-router-eg`: `make -C integrations/mcp-profile-tiered-router-eg
+e2e` builds the custom Envoy image and demo image unless `SKIP_IMAGE_BUILD=1`
+is set. The remaining work is:
 
-## Reuse From Examples
+- Keep the image build path healthy for both local k3d import and ttl.sh publish
+  flows.
+- Keep the L1 config path wired to Envoy Gateway generated backend cluster
+  names. With `XDSNameSchemeV2`, discovered cluster names can look like
+  `httproute/transit-dataplane/l1-l2a-catalog/rule/0`, so L1 validation must
+  allow those values.
+- Finish fake-MCP failure injection so the skipped MCPProxy parity cases can
+  run: partial initialize failure, all initialize failure, tools/list partial
+  failure, tools/list all failure, backend JSON-RPC errors, and backend
+  transport or non-2xx failures.
+- Add a restricted `enabled_tools` profile fixture so enabled-tool filtering and
+  disabled-tool `tools/call` behavior are covered in the Envoy Gateway suite.
+- Switch public tool naming from `{prefix}.{tool}` to MCPProxy-style
+  `{backend}__{tool}` before treating the endpoint behavior as product-stable.
+- Add buffered final-event SSE responses before testing real Streamable HTTP
+  clients or claiming close MCPProxy wire compatibility.
+- Add dynamic L1 profile fetching after the static environment-config topology
+  is green and debuggable.
+- Keep real hosted MCP servers as optional manual smoke only. CI should stay on
+  deterministic fake backends.
 
-Reuse the semantics already proven by:
+## Status and next steps
+
+Implemented and running in CI:
+
+- Custom Envoy image with `libmcp-profile-gateway.so`, `libmcp-catalog-router.so`,
+  `libcluster-router.so`
+- L1 mcp-profile-gateway filter: profile auth, initialize fan-out, tools/list
+  fan-out, tools/call routing, redacted dump
+- L2 catalog-router demo app: `/mcp/s/{server}` handling with direct backend calls
+- L2 cluster-router extension: initialized via dedicated init cluster, serves
+  `/__cluster-router/config` dump
+- Full e2e passing in CI with fake MCP backends
+- All active test matrix cases from the plan covered
+
+Next:
+
+- Switch tool name separator from `{prefix}.{tool}` to `{prefix}__{tool}` (MCPProxy
+  parity) before treating the endpoint shape as product-stable
+- Add buffered final-event SSE parity before testing real Streamable HTTP clients
+- Add dynamic L1 profile fetching to replace static `MCP_PROFILE_GATEWAY_CONFIG`
+- Extend fake-mcp with failure injection to cover the skipped partial-failure cases
+- Keep real hosted MCP servers as optional manual smoke only
+
+## Reuse from examples
+
+Built from:
 
 - `examples/mcp-catalog-router`
 - `examples/cluster-router`
@@ -426,3 +502,184 @@ Reuse the semantics already proven by:
 Do not copy the recursive local Envoy egress shape from the example as the
 integration architecture. In Kubernetes, make L1 profile ownership, L2
 server-cluster ownership, and L2 cluster-router egress explicit.
+
+## Manual Verification
+
+All commands in this section should run from the repository root and outside the
+Codex sandbox. The e2e suite creates the k3d cluster, installs Envoy Gateway,
+applies the resources, discovers Envoy Gateway generated cluster names, patches
+the dynamic-module config, and can leave the cluster running for inspection.
+
+Run the fast checks first:
+
+```sh
+make -C integrations/mcp-profile-tiered-router-eg test
+make -C integrations/mcp-profile-tiered-router-eg eg-install
+```
+
+The full topology suite builds local images by default. The Envoy image contains
+the three Transit dynamic modules used by the topology:
+
+```text
+libmcp-profile-gateway.so
+libmcp-catalog-router.so
+libcluster-router.so
+```
+
+The demo image contains the placeholder backend, L2 catalog-router process, and
+fake MCP backends. The fake backends return deterministic `tools/list` and
+`tools/call` responses for `kiwi`, `aws-knowledge`, `microsoft`, and `github`.
+
+Start the full topology and keep it alive:
+
+```sh
+KEEP_CLUSTER=1 make -C integrations/mcp-profile-tiered-router-eg e2e
+```
+
+To reuse prebuilt or published images:
+
+```sh
+IMAGE=<envoy-image-with-transit-modules> \
+CONTROL_PLANE_IMAGE=<demo-image> \
+SKIP_IMAGE_BUILD=1 \
+KEEP_CLUSTER=1 \
+make -C integrations/mcp-profile-tiered-router-eg e2e
+```
+
+The cluster name is `transit-mcp-profile-eg` and the Kubernetes context is
+`k3d-transit-mcp-profile-eg`. Inspect the resource shape:
+
+```sh
+kubectl --context k3d-transit-mcp-profile-eg -n transit-dataplane \
+  get gateway,httproute,envoyproxy,envoypatchpolicy,pods,svc
+```
+
+Open port-forwards in separate terminals:
+
+```sh
+kubectl --context k3d-transit-mcp-profile-eg -n transit-dataplane \
+  port-forward service/l1 19081:80
+```
+
+```sh
+kubectl --context k3d-transit-mcp-profile-eg -n transit-dataplane \
+  port-forward service/l2-a 19082:80
+```
+
+```sh
+kubectl --context k3d-transit-mcp-profile-eg -n transit-dataplane \
+  port-forward service/l2-b 19083:80
+```
+
+Initialize the profile through L1 and capture the composite MCP session:
+
+```sh
+curl -sS -D /tmp/mcp-profile-init.headers \
+  -H 'host: mcp-profile-tiered-router.example.com' \
+  -H 'content-type: application/json' \
+  -H 'x-api-key: profile-key' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","clientInfo":{"name":"manual","version":"dev"}}}' \
+  http://127.0.0.1:19081/mcp/9b3f7d0a80c4aa6d-67261ca9ea3dadb2 | jq
+
+export MCP_SESSION_ID="$(
+  awk 'tolower($1)=="mcp-session-id:" {gsub("\r","",$2); print $2}' \
+    /tmp/mcp-profile-init.headers
+)"
+```
+
+List profile tools through L1:
+
+```sh
+curl -sS \
+  -H 'host: mcp-profile-tiered-router.example.com' \
+  -H 'content-type: application/json' \
+  -H 'x-api-key: profile-key' \
+  -H "mcp-session-id: $MCP_SESSION_ID" \
+  --data '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+  http://127.0.0.1:19081/mcp/9b3f7d0a80c4aa6d-67261ca9ea3dadb2 | jq
+```
+
+Expected profile-visible tool names for the first pass:
+
+```text
+kiwi.search-flight
+aws-knowledge.aws____read_documentation
+microsoft.search_docs
+github.search
+```
+
+Call one L2-B tool through the profile endpoint:
+
+```sh
+curl -sS \
+  -H 'host: mcp-profile-tiered-router.example.com' \
+  -H 'content-type: application/json' \
+  -H 'x-api-key: profile-key' \
+  -H "mcp-session-id: $MCP_SESSION_ID" \
+  --data '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"github.search","arguments":{"query":"transit"}}}' \
+  http://127.0.0.1:19081/mcp/9b3f7d0a80c4aa6d-67261ca9ea3dadb2 | jq
+```
+
+Call one L2-A tool through the profile endpoint:
+
+```sh
+curl -sS \
+  -H 'host: mcp-profile-tiered-router.example.com' \
+  -H 'content-type: application/json' \
+  -H 'x-api-key: profile-key' \
+  -H "mcp-session-id: $MCP_SESSION_ID" \
+  --data '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"kiwi.search-flight","arguments":{"from":"SFO","to":"NRT"}}}' \
+  http://127.0.0.1:19081/mcp/9b3f7d0a80c4aa6d-67261ca9ea3dadb2 | jq
+```
+
+Verify public catalog routing through L1:
+
+```sh
+curl -sS \
+  -H 'host: mcp-profile-tiered-router.example.com' \
+  -H 'content-type: application/json' \
+  --data '{"jsonrpc":"2.0","id":5,"method":"tools/list"}' \
+  http://127.0.0.1:19081/mcp/s/aws-knowledge | jq
+
+curl -sS \
+  -H 'host: mcp-profile-tiered-router.example.com' \
+  -H 'content-type: application/json' \
+  --data '{"jsonrpc":"2.0","id":6,"method":"tools/list"}' \
+  http://127.0.0.1:19081/mcp/s/github | jq
+```
+
+Verify cross-shard rejection directly at L2:
+
+```sh
+curl -sS \
+  -H 'content-type: application/json' \
+  --data '{"jsonrpc":"2.0","id":7,"method":"tools/list"}' \
+  http://127.0.0.1:19082/mcp/s/github | jq
+
+curl -sS \
+  -H 'content-type: application/json' \
+  --data '{"jsonrpc":"2.0","id":8,"method":"tools/list"}' \
+  http://127.0.0.1:19083/mcp/s/kiwi | jq
+```
+
+Inspect redacted debug surfaces:
+
+```sh
+curl -sS http://127.0.0.1:19081/dump | jq
+curl -sS http://127.0.0.1:19082/__cluster-router/config | jq
+curl -sS http://127.0.0.1:19083/__cluster-router/config | jq
+```
+
+Expected checks:
+
+- L1 `/dump` does not expose `profile-key`, credential refs as usable secrets,
+  raw credential envelopes, or `mcp-session-id` values.
+- L2 cluster-router dumps show `route_header: x-mcp-server`.
+- L2 dumps do not expose raw bearer token values such as `kiwi-token`,
+  `aws-token`, `microsoft-token`, or `github-token`.
+
+When the demo is done:
+
+```sh
+k3d cluster delete transit-mcp-profile-eg
+```

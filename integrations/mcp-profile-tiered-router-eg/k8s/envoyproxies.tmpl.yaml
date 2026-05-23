@@ -61,6 +61,8 @@ spec:
             value: "cgocheck=0"
           - name: ENVOY_DYNAMIC_MODULES_SEARCH_PATH
             value: "/etc/envoy/dynamic-modules"
+          - name: MCP_CATALOG_ROUTER_CONFIG
+            value: '{{.L2ACatalogConfig}}'
   dynamicModules:
   - name: mcp-catalog-router
     source:
@@ -104,6 +106,8 @@ spec:
             value: "cgocheck=0"
           - name: ENVOY_DYNAMIC_MODULES_SEARCH_PATH
             value: "/etc/envoy/dynamic-modules"
+          - name: MCP_CATALOG_ROUTER_CONFIG
+            value: '{{.L2BCatalogConfig}}'
   dynamicModules:
   - name: mcp-catalog-router
     source:

@@ -23,12 +23,12 @@ spec:
             name: cluster-router
           filter_name: cluster-router-debug
   - type: "type.googleapis.com/envoy.config.cluster.v3.Cluster"
-    name: "{{.CatalogEgressClusterName}}"
+    name: "{{.InitClusterName}}"
     operation:
       op: replace
       path: ""
       value:
-        name: "{{.CatalogEgressClusterName}}"
+        name: "{{.InitClusterName}}"
         connect_timeout: 5s
         lb_policy: CLUSTER_PROVIDED
         typed_extension_protocol_options:

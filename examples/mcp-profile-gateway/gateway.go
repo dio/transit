@@ -57,8 +57,8 @@ type Gateway struct {
 // GatewayDump is the redacted view returned by GET /dump. It never includes
 // raw credential values, session IDs, or API keys.
 type GatewayDump struct {
-	CatalogServers map[string]CatalogDump  `json:"catalog_servers"`
-	Profiles       map[string]ProfileDump  `json:"profiles,omitempty"`
+	CatalogServers map[string]CatalogDump `json:"catalog_servers"`
+	Profiles       map[string]ProfileDump `json:"profiles,omitempty"`
 }
 
 type CatalogDump struct {
@@ -67,16 +67,16 @@ type CatalogDump struct {
 }
 
 type ProfileDump struct {
-	Name           string                      `json:"name"`
-	AuthConfigured bool                        `json:"auth_configured"`
+	Name           string                       `json:"name"`
+	AuthConfigured bool                         `json:"auth_configured"`
 	Servers        map[string]ProfileServerDump `json:"servers"`
 }
 
 type ProfileServerDump struct {
-	Prefix                      string `json:"prefix"`
-	EnabledToolsCount           *int   `json:"enabled_tools_count,omitempty"`
-	CredentialRefConfigured     bool   `json:"credential_ref_configured,omitempty"`
-	CredentialEnvelopeConfigured bool  `json:"credential_envelope_configured,omitempty"`
+	Prefix                       string `json:"prefix"`
+	EnabledToolsCount            *int   `json:"enabled_tools_count,omitempty"`
+	CredentialRefConfigured      bool   `json:"credential_ref_configured,omitempty"`
+	CredentialEnvelopeConfigured bool   `json:"credential_envelope_configured,omitempty"`
 }
 
 type profileSession struct {
@@ -109,9 +109,6 @@ func ValidateConfig(config Config) error {
 		}
 		if err := validateURL("catalog server", id, server.URL); err != nil {
 			return err
-		}
-		if strings.Contains(server.Cluster, "/") {
-			return fmt.Errorf("catalog server %q cluster must not contain /", id)
 		}
 	}
 	for profileID, profile := range config.Profiles {
@@ -194,7 +191,7 @@ func (g *Gateway) Dump() GatewayDump {
 					enabledCount = &n
 				}
 				servers[serverID] = ProfileServerDump{
-					Prefix:                      serverPrefix(serverID, server),
+					Prefix:                       serverPrefix(serverID, server),
 					EnabledToolsCount:            enabledCount,
 					CredentialRefConfigured:      server.CredentialRef != "",
 					CredentialEnvelopeConfigured: server.CredentialEnvelope != "",
