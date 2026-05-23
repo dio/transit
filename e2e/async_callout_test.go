@@ -74,6 +74,28 @@ func (s *AsyncCalloutSuite) TestPost_goDoBodyCallbackProceedsAfterResume() {
 	s.Require().Equal("5", resp.Header.Get("x-received-x-body-len"))
 }
 
+func (s *AsyncCalloutSuite) TestGet_calloutLocalResponseUpstreamNotReached() {
+	// The /checked path calls SendLocalResponse inside the callout callback.
+	// The listener for this test routes to the recorder upstream instead of the
+	// echo upstream. After the client receives the local response, the recorder
+	// must have zero requests — proving SendLocalResponse stops forwarding.
+	s.T().Cleanup(mutableBodyRecorder.Reset)
+
+	req, err := http.NewRequest(http.MethodGet, asyncCalloutLocalResponseAddr+"/checked", nil)
+	s.Require().NoError(err)
+
+	resp := mustDo(s.T(), req)
+	body := readBody(s.T(), resp)
+
+	s.Require().Equal(http.StatusOK, resp.StatusCode)
+	s.Require().Equal("ok", resp.Header.Get("x-async-callout"))
+	s.Require().Equal("checked", body)
+
+	// Local response is terminal: the stream is complete when mustDo returns.
+	// The recorder cluster was never reached.
+	s.Equal(0, mutableBodyRecorder.Len())
+}
+
 func (s *AsyncCalloutSuite) TestGet_goDoSetsHeaderAndForwards() {
 	// The filter calls w.Go; inside the goroutine w.Do issues an outbound callout
 	// and sets x-go-result from the callout response body. The request forwards to

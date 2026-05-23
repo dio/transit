@@ -70,10 +70,11 @@ var (
 	clusterExtensionTLSAddr  string
 	clusterExtensionMTLSAddr string
 	clusterSchedulerAddr     string
-	asyncCalloutAddr         string
-	asyncCalloutBodyAddr     string
-	mutableBodyUpstreamAddr  string
-	adminAddr                string
+	asyncCalloutAddr                  string
+	asyncCalloutBodyAddr              string
+	asyncCalloutLocalResponseAddr     string
+	mutableBodyUpstreamAddr           string
+	adminAddr                         string
 )
 
 var mutableBodyRecorder *recorderUpstream
@@ -128,6 +129,7 @@ func TestMain(m *testing.M) {
 	asyncCalloutForwardUpstreamPort := startForwardEchoUpstream()
 	mutableBodyUpstreamPort := freePort()
 	mutableBodyRecorder = startRecorderUpstream()
+	asyncCalloutLocalResponsePort := freePort()
 	adminPort := freePort()
 
 	echoAddr = fmt.Sprintf("http://localhost:%d", echoPort)
@@ -151,6 +153,7 @@ func TestMain(m *testing.M) {
 	asyncCalloutAddr = fmt.Sprintf("http://localhost:%d", asyncCalloutPort)
 	asyncCalloutBodyAddr = fmt.Sprintf("http://localhost:%d", asyncCalloutBodyPort)
 	mutableBodyUpstreamAddr = fmt.Sprintf("http://localhost:%d", mutableBodyUpstreamPort)
+	asyncCalloutLocalResponseAddr = fmt.Sprintf("http://localhost:%d", asyncCalloutLocalResponsePort)
 	adminAddr = fmt.Sprintf("http://localhost:%d", adminPort)
 
 	otelSink = otelsink.New()
@@ -226,6 +229,7 @@ func TestMain(m *testing.M) {
 		AsyncCalloutForwardUpstreamPort:    asyncCalloutForwardUpstreamPort,
 		MutableBodyUpstreamPort:            mutableBodyUpstreamPort,
 		MutableBodyRecorderPort:            mutableBodyRecorder.port,
+		AsyncCalloutLocalResponsePort:      asyncCalloutLocalResponsePort,
 		AdminPort:                          adminPort,
 	})
 
@@ -690,6 +694,7 @@ type envoyPorts struct {
 	AsyncCalloutForwardUpstreamPort    int
 	MutableBodyUpstreamPort            int
 	MutableBodyRecorderPort            int
+	AsyncCalloutLocalResponsePort      int
 	AdminPort                          int
 }
 
