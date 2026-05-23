@@ -4,14 +4,16 @@ package abi_impl
 #include "abi.h"
 */
 import "C"
+
 import (
 	"fmt"
 	"os"
 	"runtime"
 	"unsafe"
 
-	"github.com/dio/transit/down"
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
+
+	"github.com/dio/transit/down"
 )
 
 // accessLoggerConfigWrapper holds the per-config factory and the Envoy pointer.

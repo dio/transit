@@ -10,9 +10,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
+
 	mcpprofilerouter "github.com/dio/transit/examples/mcp-profile-router"
 	"github.com/dio/transit/up"
-	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
 )
 
 type transitRequest struct {

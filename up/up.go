@@ -1,8 +1,9 @@
 package up
 
 import (
-	"github.com/dio/transit/down"
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
+
+	"github.com/dio/transit/down"
 )
 
 // MetricID is an opaque handle to an Envoy metric defined at config time via ConfigHandle.

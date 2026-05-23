@@ -5,9 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	ssetap "github.com/dio/transit/examples/sse-tap"
 	"github.com/dio/transit/up/buffer"
-	"github.com/stretchr/testify/assert"
 )
 
 // feedStream feeds chunks into a HeadTail ring and returns extracted usage.

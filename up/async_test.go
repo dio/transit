@@ -8,10 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dio/transit/up/testutil"
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared/fake"
 	"github.com/stretchr/testify/require"
+
+	"github.com/dio/transit/up/testutil"
 )
 
 func TestWriterGoDo_parallelCallouts_resumeOnce(t *testing.T) {

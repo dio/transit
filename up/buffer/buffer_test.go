@@ -3,8 +3,9 @@ package buffer_test
 import (
 	"testing"
 
-	"github.com/dio/transit/up/buffer"
 	"github.com/stretchr/testify/require"
+
+	"github.com/dio/transit/up/buffer"
 )
 
 // ── Ring ─────────────────────────────────────────────────────────────────────

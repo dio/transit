@@ -6,8 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dio/transit/e2e/sinks/accessloggersink"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/dio/transit/e2e/sinks/accessloggersink"
 )
 
 // AccessLoggerSuite tests the e2e-logger access logger on port 10002.

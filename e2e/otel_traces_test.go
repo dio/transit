@@ -6,9 +6,8 @@ import (
 	"testing"
 	"time"
 
-	otlptrace "go.opentelemetry.io/proto/otlp/trace/v1"
-
 	"github.com/stretchr/testify/suite"
+	otlptrace "go.opentelemetry.io/proto/otlp/trace/v1"
 )
 
 // OtelTracesSuite tests the e2e-tracer filter together with Envoy's built-in

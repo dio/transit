@@ -3,8 +3,9 @@ package up
 import (
 	"fmt"
 
-	"github.com/dio/transit/down"
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
+
+	"github.com/dio/transit/down"
 )
 
 type (

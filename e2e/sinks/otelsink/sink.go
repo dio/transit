@@ -13,7 +13,6 @@ import (
 	"net"
 	"sync"
 
-	"github.com/dio/transit/e2e/internal/e2etest"
 	otlpcollectorlogs "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	otlpcollectormetrics "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	otlpcollectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
@@ -21,6 +20,8 @@ import (
 	otlpmetrics "go.opentelemetry.io/proto/otlp/metrics/v1"
 	otlptrace "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/grpc"
+
+	"github.com/dio/transit/e2e/internal/e2etest"
 )
 
 // Sink is the shared in-memory store for OTLP logs, metrics, and traces.

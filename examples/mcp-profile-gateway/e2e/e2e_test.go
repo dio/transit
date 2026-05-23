@@ -20,10 +20,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/dio/transit/examples/internal/e2etest"
 	mcpprofilegateway "github.com/dio/transit/examples/mcp-profile-gateway"
 	mcpprofilerouter "github.com/dio/transit/examples/mcp-profile-router"
-	"github.com/stretchr/testify/require"
 )
 
 //go:embed testdata/envoy.tmpl.yaml

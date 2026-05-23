@@ -8,8 +8,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	mcpprofilerouter "github.com/dio/transit/examples/mcp-profile-router"
 	"github.com/stretchr/testify/require"
+
+	mcpprofilerouter "github.com/dio/transit/examples/mcp-profile-router"
 )
 
 func TestGateway_forwardsPublicCatalogServerToOwningL2(t *testing.T) {

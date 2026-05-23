@@ -6,9 +6,8 @@ import (
 	"testing"
 	"time"
 
-	otlplogs "go.opentelemetry.io/proto/otlp/logs/v1"
-
 	"github.com/stretchr/testify/suite"
+	otlplogs "go.opentelemetry.io/proto/otlp/logs/v1"
 )
 
 // OtelMetadataSuite tests the e2e-metadata filter together with Envoy's built-in

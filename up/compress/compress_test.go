@@ -4,8 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dio/transit/up/compress"
 	"github.com/stretchr/testify/require"
+
+	"github.com/dio/transit/up/compress"
 )
 
 var plaintext = []byte("the quick brown fox jumps over the lazy dog")

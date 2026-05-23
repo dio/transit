@@ -25,8 +25,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dio/transit/examples/internal/e2etest"
 	"github.com/stretchr/testify/require"
+
+	"github.com/dio/transit/examples/internal/e2etest"
 )
 
 //go:embed testdata/envoy.tmpl.yaml

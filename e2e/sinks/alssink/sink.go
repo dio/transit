@@ -13,10 +13,11 @@ import (
 	"net"
 	"sync"
 
-	"github.com/dio/transit/e2e/internal/e2etest"
 	accesslogdatav3 "github.com/envoyproxy/go-control-plane/envoy/data/accesslog/v3"
 	accesslogv3 "github.com/envoyproxy/go-control-plane/envoy/service/accesslog/v3"
 	"google.golang.org/grpc"
+
+	"github.com/dio/transit/e2e/internal/e2etest"
 )
 
 // Sink is the in-memory ALS receiver.

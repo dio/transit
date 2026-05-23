@@ -7,9 +7,8 @@ import (
 	"testing"
 	"time"
 
-	otlpmetrics "go.opentelemetry.io/proto/otlp/metrics/v1"
-
 	"github.com/stretchr/testify/suite"
+	otlpmetrics "go.opentelemetry.io/proto/otlp/metrics/v1"
 )
 
 // OtelMetricsSuite tests Envoy's envoy.stat_sinks.open_telemetry stats sink.

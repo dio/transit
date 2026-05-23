@@ -6,8 +6,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/dio/transit/up/testutil"
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
+
+	"github.com/dio/transit/up/testutil"
 )
 
 // BenchmarkFilter measures per-stream allocations for the three request-handling

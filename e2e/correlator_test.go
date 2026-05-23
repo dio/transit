@@ -5,8 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dio/transit/e2e/sinks/accessloggersink"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/dio/transit/e2e/sinks/accessloggersink"
 )
 
 // CorrelatorSuite tests the HTTP filter ↔ access logger correlation pattern on

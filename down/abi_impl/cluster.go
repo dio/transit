@@ -8,6 +8,7 @@ static inline void transit_call_event_cb(envoy_dynamic_module_type_event_cb cb, 
 }
 */
 import "C"
+
 import (
 	"fmt"
 	"os"

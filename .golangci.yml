@@ -2,7 +2,13 @@ version: "2"
 
 formatters:
   enable:
-    - gofmt
+    - gci
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/dio/transit)
 
 linters:
   default: none
@@ -23,7 +29,13 @@ linters:
       - path: "up/testutil/"
         linters:
           - unparam
+      - path: "_bench_test\\.go"
+        linters:
+          - govet
       - path: "examples/"
+        linters:
+          - unparam
+      - path: "e2e/"
         linters:
           - unparam
   settings:

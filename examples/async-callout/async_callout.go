@@ -1,8 +1,9 @@
 package async_callout
 
 import (
-	"github.com/dio/transit/up"
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
+
+	"github.com/dio/transit/up"
 )
 
 func init() {
