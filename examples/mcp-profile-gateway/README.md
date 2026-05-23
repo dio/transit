@@ -35,11 +35,13 @@ mcp-profile-gateway.<base64url({"profile_id":"...","backends":{"server-id":"back
 This encoding is intentionally readable for the example.
 
 **Production requirements:** a production envelope must be authenticated and
-encrypted (for example AEAD or a signed JWT) and must bind the profile ID,
-each backend server ID, audience, subject, and expiry. It must never expose
-raw backend session IDs as client-visible plaintext. A forged or replayed
-envelope allows a client to impersonate any backend session. Short expiry and
-key rotation are required.
+encrypted (for example AEAD or JWE) and must bind the profile ID, each backend
+server ID, audience, subject, and expiry. It must never expose raw backend
+session IDs as client-visible plaintext. A signed-only construction (JWS/JWT)
+is insufficient: it authenticates the envelope but leaves the payload readable,
+which violates the plaintext requirement. A forged or replayed envelope allows
+a client to impersonate any backend session. Short expiry and key rotation are
+required.
 
 `tools/call` requires the L1 session and rejects calls for backends that were
 absent from the `initialize` fan-out result (i.e. backends that failed

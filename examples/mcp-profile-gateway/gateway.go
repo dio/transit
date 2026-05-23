@@ -170,7 +170,7 @@ func (g *Gateway) Dump() GatewayDump {
 
 	catalogServers := make(map[string]CatalogDump, len(g.config.CatalogServers))
 	for serverID, server := range g.config.CatalogServers {
-		d := CatalogDump{Target: server.URL}
+		d := CatalogDump{Target: redactURL(server.URL)}
 		if state, ok := runtimeState[serverID]; ok {
 			d.LastRequest = state.LastRequest
 		}
@@ -225,8 +225,10 @@ func (g *Gateway) record(id string, server CatalogServer, state string) {
 // encodeProfileSession encodes the L1 profile session as a prefixed base64url
 // JSON value. This format is intentionally readable for the example. Production
 // must replace it with an authenticated and encrypted envelope (e.g. AEAD or
-// signed JWT) that binds profile ID, server IDs, audience, subject, and expiry,
-// and never exposes backend session IDs as client-visible plaintext. A forged
+// JWE) that binds profile ID, server IDs, audience, subject, and expiry, and
+// never exposes backend session IDs as client-visible plaintext. A signed-only
+// construction (JWS/JWT) is insufficient: it authenticates the envelope but
+// leaves the payload readable, violating the plaintext requirement. A forged
 // or replayed envelope allows impersonation of any backend session.
 func encodeProfileSession(profileID string, backends map[string]string) (string, error) {
 	raw, err := json.Marshal(profileSession{
@@ -310,7 +312,23 @@ func validateURL(kind, id, raw string) error {
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return fmt.Errorf("%s %q url must be absolute", kind, id)
 	}
+	if u.User != nil {
+		return fmt.Errorf("%s %q url must not contain userinfo", kind, id)
+	}
 	return nil
+}
+
+// redactURL strips userinfo and query string before the URL appears in any
+// debug output. It is defense-in-depth: validateURL already rejects userinfo
+// at config load time, but this guards against future validation gaps.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "[invalid]"
+	}
+	u.User = nil
+	u.RawQuery = ""
+	return u.String()
 }
 
 func serverPrefix(serverID string, server ProfileServer) string {

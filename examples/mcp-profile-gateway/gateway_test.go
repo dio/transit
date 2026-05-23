@@ -1005,6 +1005,20 @@ func TestGateway_unknownCatalogServer(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
+func TestGateway_dumpRedactsURLCredentials(t *testing.T) {
+	gateway := New(Config{
+		CatalogServers: map[string]CatalogServer{
+			"github": {URL: "http://l2.local?token=secret"},
+		},
+	})
+	dump := gateway.Dump()
+	require.Equal(t, "http://l2.local", dump.CatalogServers["github"].Target)
+
+	raw, err := json.Marshal(dump)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "secret")
+}
+
 func TestGateway_dumpRedactsCredentialsAndShowsBooleans(t *testing.T) {
 	gateway := New(Config{
 		CatalogServers: map[string]CatalogServer{
@@ -1082,6 +1096,7 @@ func TestValidateConfig(t *testing.T) {
 	require.Error(t, ValidateConfig(Config{CatalogServers: map[string]CatalogServer{"bad/id": {URL: "http://127.0.0.1:8080"}}}))
 	require.Error(t, ValidateConfig(Config{CatalogServers: map[string]CatalogServer{"bad.id": {URL: "http://127.0.0.1:8080"}}}))
 	require.Error(t, ValidateConfig(Config{CatalogServers: map[string]CatalogServer{"github": {URL: "127.0.0.1:8080"}}}))
+	require.Error(t, ValidateConfig(Config{CatalogServers: map[string]CatalogServer{"github": {URL: "http://user:pass@127.0.0.1:8080"}}}))
 	require.Error(t, ValidateConfig(Config{
 		CatalogServers: map[string]CatalogServer{"aws-knowledge": {URL: "http://127.0.0.1:8080"}},
 		Profiles: map[string]Profile{
