@@ -78,139 +78,193 @@ func (f *filterFactory) OnDestroy() {
 	}
 }
 
-// filter is the per-stream HTTP filter instance. Envoy creates one filter per
-// HTTP stream via filterFactory.Create and calls the lifecycle methods below.
-// There is one filter per stream; it is never shared between streams.
+// filter is the per-stream HTTP filter instance. Envoy creates one per HTTP
+// stream and calls the lifecycle methods below. It is never shared across streams.
 //
-// Concurrency model:
+// Phase 2 ownership model:
 //
-// Normally all Envoy callbacks (OnRequestHeaders, OnRequestBody, etc.) run on
-// the same worker thread, and filter fields can be accessed without any lock.
-// There are two exceptions that require atomic operations:
+// All mutable stream state now lives here instead of on the ephemeral Writer.
+// Writer is a thin per-invocation view (see writer.go). The critical rule:
+// flush resets all queues immediately after applying them to prevent stale
+// mutations from replaying on a later callback (e.g. a header mutation queued
+// in OnRequestHeaders must not appear when OnRequestBody runs).
 //
-//  1. OnHttpCalloutDone may fire from a different goroutine when the callout
-//     response arrives before OnRequestHeaders returns (the "synchronous early
-//     callback" case). calloutWriter is an atomic.Pointer so both the headers
-//     callback and the callout callback can safely read/nil it without a race.
+// Goroutine safety (Go+Do path):
 //
-//  2. asyncState.completed is an atomic.Bool; see asyncState for details.
+// Once Writer.Go launches a goroutine, that goroutine is the sole writer to the
+// mutation queues until it returns. OnStreamComplete must not reset those queues
+// while the goroutine may still be writing — it only touches async.cancel and
+// async.completed. The queue reset happens inside flush, which runs on the
+// worker thread after the goroutine has called scheduler.Schedule and exited.
 //
-// All other fields are only touched from the worker thread and need no locking.
+// HTTPCallout concurrency:
+//
+// calloutFn and calloutState replace the former calloutWriter atomic.Pointer.
+// calloutFn is set before handle.HttpCallout is called; the go statement (or CGO
+// call) inside the fake/real HttpCallout establishes the happens-before that makes
+// OnHttpCalloutDone's access to calloutFn safe without an additional mutex.
+// streamDone.Store(true) in OnStreamComplete prevents a late OnHttpCalloutDone
+// from calling flush on a dead stream.
 type filter struct {
 	shared.EmptyHttpFilter
 
-	// name is the filter's registered name, used for per-route context lookup.
-	name string
-
-	// handle is the Envoy stream handle. All CGO calls (SetRequestHeader,
-	// ContinueRequest, etc.) go through this handle. Never call CGO methods on
-	// handle from a goroutine — always use scheduler.Schedule to hop back to the
-	// worker thread first (see Writer.Go and asyncState.finish).
-	handle shared.HttpFilterHandle
-
+	name               string
+	handle             shared.HttpFilterHandle
 	handler            HandlerFunc
 	responseHandler    ResponseHandlerFunc
 	requestBodyHandler RequestBodyHandlerFunc
 	bufferBody         bool
+	context            any
 
-	// context is the per-stream opaque value passed to handlers via Request and
-	// ResponseChunk. Handlers may store cross-callback state here (e.g. a
-	// request ID parsed in OnRequestHeaders and emitted in OnResponseHeaders).
-	context any
-
-	// requestContentType and requestContentEncoding are captured from request
-	// headers so the body handler receives them without re-reading the header map
-	// (which may no longer be valid when OnRequestBody fires).
+	// captured from headers callbacks for body callbacks
 	requestContentType      string
 	requestContentEncoding  string
 	responseContentType     string
 	responseContentEncoding string
 
-	// async is set when Writer.Go is called and a goroutine is running.
-	// It is nil for the HTTPCallout path. See asyncState for the goroutine
-	// lifecycle and the one race it protects (finish vs OnStreamComplete).
+	// async holds the goroutine lifecycle for the Go+Do path. nil on HTTPCallout path.
+	// Only touched by OnStreamComplete (cancel/complete) and Writer.Go (set).
+	// Never reset or read for queue operations while a goroutine may be writing.
 	async *asyncState
 
-	// calloutWriter holds the Writer for the in-flight HTTPCallout request.
+	// --- Mutation queues (request phase) ---
 	//
-	// Why atomic.Pointer: OnHttpCalloutDone may fire from a different goroutine
-	// (the synchronous early-callback race) while OnRequestHeaders is still
-	// executing on the worker thread. Both sides read and nil this pointer.
-	// A plain *Writer would be a data race; atomic.Pointer[Writer] is the
-	// minimal safe primitive.
+	// Written by Writer mutation methods (unconditionally). Applied and reset
+	// by flush(). Response mutation methods bypass these queues and apply inline.
 	//
-	// The pointer is set in OnRequestHeaders before initiating the callout and
-	// nilled in one of three places:
-	//   – OnHttpCalloutDone (async path): after CAS Paused→Flushed.
-	//   – flushCompletedCallout (sync path): after CAS Done→Flushed.
-	//   – OnStreamComplete: if the stream ends while a callout is in-flight.
-	calloutWriter atomic.Pointer[Writer]
+	// Stale-prevention invariant: flush resets every queue to zero length before
+	// returning. A callback that runs after flush sees an empty queue.
+	stopped     bool // set by SendLocalResponse; cleared by flush on non-local-reply path
+	reqHeaders  []requestHeaderMutation
+	filterState []filterStateMutation
+	counters    []counterMutation
+	override    *upstreamOverrideMutation
+	localReply  *localResponse // set by SendLocalResponse; cleared by flush after sending
+
+	// Body replacements are set by SetRequestBody/SetResponseBody and applied
+	// inline in the body callbacks (not via flush). The flags are cleared
+	// immediately after application to prevent replay on the next body frame.
+	requestBodyReplacement     []byte
+	hasRequestBodyReplacement  bool
+	responseBodyReplacement    []byte
+	hasResponseBodyReplacement bool
+
+	// --- HTTPCallout path state ---
+	//
+	// calloutFn is the user callback set by Writer.HTTPCallout. Read and cleared
+	// exactly once by OnHttpCalloutDone. Protected by the happens-before of the
+	// go statement (or CGO call) inside handle.HttpCallout.
+	calloutFn HTTPCalloutFunc
+
+	// calloutState is the atomic handoff between OnRequestHeaders and
+	// OnHttpCalloutDone. See the const block in writer.go for the full state
+	// machine. Zero value = calloutStateActive.
+	calloutState atomic.Int32
+
+	// streamDone is set by OnStreamComplete to prevent a late OnHttpCalloutDone
+	// from calling flush on a terminated stream.
+	streamDone atomic.Bool
 }
 
-// OnRequestHeaders is the first callback Envoy invokes for each HTTP request.
-// It runs the user handler and then drives the callout and async state machines.
+// flush applies all queued request-phase mutations and optionally resumes the stream.
 //
-// Return values and their meaning:
+// Must be called on the Envoy worker thread. All CGO calls made here
+// (RequestHeaders().Set, SetFilterState, ContinueRequest, etc.) require it.
+// On the HTTPCallout path this is guaranteed by OnHttpCalloutDone. On the
+// Go+Do path, asyncState.finish uses scheduler.Schedule to hop back first.
 //
-//	HeadersStatusStop     A callout or goroutine is running; Envoy pauses the
-//	                      stream. Either OnHttpCalloutDone or scheduler.Schedule
-//	                      will call ContinueRequest to resume it.
+// continueReq=true:  async path — stream was paused; call ContinueRequest to resume.
+// continueReq=false: sync-done path — OnRequestHeaders returns Continue itself;
+//                    do NOT call ContinueRequest (would double-resume).
 //
-//	HeadersStatusContinue The handler finished synchronously (or the callout
-//	                      callback fired before OnRequestHeaders returned, so no
-//	                      explicit resume is needed). Envoy proceeds immediately.
+// Stale-mutation reset: every queue is drained to zero before flush returns so
+// that a later callback on the same stream starts with empty queues.
 //
-// There are four distinct outcomes after f.handler(w, req) returns:
+// Local-reply path: if a local response was queued, it is sent and flush returns
+// immediately without applying other mutations or resetting stopped. The stream
+// is terminal; stopped stays true so the caller can return Stop.
+func (f *filter) flush(continueReq bool) {
+	if f.localReply != nil {
+		f.handle.SendLocalResponse(f.localReply.status, f.localReply.headers, f.localReply.body, "")
+		f.localReply = nil
+		// stopped stays true; caller checks it to return HeadersStatusStop.
+		return
+	}
+	if len(f.reqHeaders) > 0 {
+		hdrs := f.handle.RequestHeaders()
+		for _, m := range f.reqHeaders {
+			switch {
+			case m.del:
+				hdrs.Remove(m.name)
+			case m.add:
+				hdrs.Add(m.name, m.value)
+			default:
+				hdrs.Set(m.name, m.value)
+			}
+		}
+		f.reqHeaders = f.reqHeaders[:0]
+	}
+	for _, m := range f.filterState {
+		f.handle.SetFilterState(m.key, m.value)
+	}
+	f.filterState = f.filterState[:0]
+	for _, m := range f.counters {
+		f.handle.IncrementCounterValue(shared.MetricID(m.id), m.delta)
+	}
+	f.counters = f.counters[:0]
+	if f.override != nil {
+		f.handle.SetUpstreamOverrideHost(f.override.host, f.override.strict)
+		f.override = nil
+	}
+	// Body replacement on the async path: a goroutine may have called
+	// SetRequestBody, setting hasRequestBodyReplacement before scheduler.Schedule.
+	// The sync body path clears these flags in OnRequestBody before calling flush,
+	// so this branch only fires on the async body path.
+	if f.hasRequestBodyReplacement {
+		buf := f.handle.BufferedRequestBody()
+		if buf != nil {
+			buf.Drain(buf.GetSize())
+			buf.Append(f.requestBodyReplacement)
+			// content-length was pre-cleared in OnRequestHeaders; set correct value.
+			f.handle.RequestHeaders().Set("content-length", fmt.Sprintf("%d", len(f.requestBodyReplacement)))
+		}
+		f.hasRequestBodyReplacement = false
+		f.requestBodyReplacement = nil
+	}
+	f.stopped = false
+	if continueReq {
+		f.handle.ContinueRequest()
+	}
+}
+
+// OnRequestHeaders is the first per-request callback. It runs the handler then
+// drives the callout/async state machines.
 //
-//  1. HTTPCallout initiated, callback NOT yet fired (calloutStarted && Active):
-//     pausePendingCallout CAS Active→Paused succeeds → return Stop.
+// Synchronous exits (no callout, no goroutine) call flush(false) before returning
+// so that mutations queued during the handler are applied. This is necessary
+// because mutations are now always queued — without flush they would never fire.
 //
-//  2. HTTPCallout initiated, callback fired BEFORE handler returned (calloutStarted && Done):
-//     pausePendingCallout fails; flushCompletedCallout CAS Done→Flushed → flush inline,
-//     continue normally (return Continue or Stop based on w.stopped).
-//
-//  3. w.Go called: f.async is set → return Stop (scheduler will resume).
-//
-//  4. Synchronous (no callout, no goroutine): flush inline, return based on w.stopped.
+// See filter type comment for the HTTPCallout state machine and goroutine rules.
 func (f *filter) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool) shared.HeadersStatus {
 	if f.requestBodyHandler != nil {
 		f.requestContentType = headers.GetOne("content-type").ToString()
 		f.requestContentEncoding = headers.GetOne("content-encoding").ToString()
 	}
 
-	// Pre-set calloutWriter and calloutCB before the handler runs. This allows
-	// Writer.HTTPCallout to store the callback directly on the Writer without
-	// allocating a closure, and filter.OnHttpCalloutDone can load the Writer
-	// atomically in the callback. The pointer is cleared after the handler
-	// returns (or after the callout completes in async path).
-	w := &Writer{handle: f.handle, calloutCB: f}
-	f.calloutWriter.Store(w)
+	w := &Writer{f: f, calloutCB: f}
 	f.handler(w, newRequestWithContext(headers, f.name, &f.context))
 
-	if f.pausePendingCallout(w) {
-		// HTTPCallout was initiated and the callback has not fired yet (Active→Paused
-		// CAS succeeded). Return Stop; OnHttpCalloutDone will call ContinueRequest.
+	if f.pausePendingCallout(w.calloutStarted) {
+		// Callback has not fired yet; OnHttpCalloutDone will call flush(true).
 		return shared.HeadersStatusStop
 	}
-	if w.async != nil {
-		// w.Go was called; a goroutine is running. Park the asyncState on the
-		// filter so OnStreamComplete can cancel it, then return Stop. The goroutine
-		// will call scheduler.Schedule → flush(true) → ContinueRequest when done.
-		f.async = w.async
-		f.calloutWriter.Store(nil)
-		return shared.HeadersStatusStop
-	}
-	if w.stopped {
-		// The handler called SendLocalResponse. Flush mutations (which will send
-		// the local response) without calling ContinueRequest.
-		f.flushCompletedCallout(w)
-		f.calloutWriter.Store(nil)
+	if f.async != nil {
+		// Goroutine started; scheduler.Schedule will call flush(true) after fn returns.
 		return shared.HeadersStatusStop
 	}
 
 	if endOfStream {
-		// No body is coming (GET, DELETE, HEAD, etc.). Synthesize a body call
-		// so requestBodyHandler sees EndStream=true and can finalize its work.
+		// No body coming — synthesize a body call so requestBodyHandler sees EndStream.
 		if f.requestBodyHandler != nil {
 			f.requestBodyHandler(w, &BodyChunk{
 				EndStream:       true,
@@ -219,36 +273,32 @@ func (f *filter) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool) sh
 				Context:         &f.context,
 			})
 		}
-		if f.pausePendingCallout(w) {
+		if f.pausePendingCallout(w.calloutStarted) {
 			return shared.HeadersStatusStop
 		}
-		if w.async != nil {
-			f.async = w.async
-			f.calloutWriter.Store(nil)
+		if f.async != nil {
 			return shared.HeadersStatusStop
 		}
-		f.flushCompletedCallout(w)
-		f.calloutWriter.Store(nil)
-		if w.stopped {
+		f.flushCompletedCallout(w.calloutStarted)
+		f.flush(false)
+		if f.stopped {
 			return shared.HeadersStatusStop
 		}
 		return shared.HeadersStatusContinue
 	}
 
-	f.flushCompletedCallout(w)
-	f.calloutWriter.Store(nil)
-	if w.stopped {
+	f.flushCompletedCallout(w.calloutStarted)
+	f.flush(false)
+	if f.stopped {
 		return shared.HeadersStatusStop
 	}
 
-	// A request body is coming. Strip content-length and transfer-encoding now
-	// so upstream never sees a stale value after SetRequestBody replaces the body.
-	// The correct content-length is written in OnRequestBody after any replacement.
+	// Body is coming. Strip content-length and transfer-encoding now so upstream
+	// never sees a stale value after SetRequestBody replaces the body. The correct
+	// content-length is written in OnRequestBody after any replacement.
 	//
-	// Why NOT return HeadersStatusStopAllAndBuffer here: returning that status from
-	// OnRequestHeaders freezes the filter chain permanently. Envoy buffers body
-	// data but never calls OnRequestBody because the SDK has no asynchronous resume
-	// path for that status. Use BodyStatusStopAndBuffer from OnRequestBody instead.
+	// Do NOT return HeadersStatusStopAllAndBuffer: that freezes the filter chain
+	// permanently because the SDK has no async resume path for that status.
 	if f.bufferBody && f.requestBodyHandler != nil {
 		headers.Remove("content-length")
 		headers.Remove("transfer-encoding")
@@ -256,33 +306,31 @@ func (f *filter) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool) sh
 	return shared.HeadersStatusContinue
 }
 
-// OnRequestBody is called for each body data frame. If bufferBody is true,
-// Transit returns BodyStatusStopAndBuffer until endOfStream, accumulating all
-// chunks in Envoy's buffer before delivering the full body to the handler.
+// OnRequestBody is called for each body data frame. Mutations queued during the
+// body handler are applied by flush(false) before returning Continue, so they
+// are visible to upstream before the request is forwarded.
 //
-// This is the only callback that may call SetRequestBody with a replacement.
-// If a replacement was set, Transit drains the Envoy buffer and appends the new
-// body, then sets the correct content-length on the request headers.
+// Body replacement flags are cleared after application so they cannot replay
+// if another body frame arrives (buffered mode delivers all frames at endOfStream,
+// but defensive clearing prevents confusion).
 func (f *filter) OnRequestBody(body shared.BodyBuffer, endOfStream bool) shared.BodyStatus {
 	if f.requestBodyHandler == nil {
 		return shared.BodyStatusContinue
 	}
 	if f.bufferBody && !endOfStream {
-		// More data coming; accumulate in Envoy's buffer.
 		return shared.BodyStatusStopAndBuffer
 	}
 
 	var data []byte
 	src := body
 	if f.bufferBody {
-		// Use the accumulated buffer instead of the current chunk.
 		src = f.handle.BufferedRequestBody()
 	}
 	for _, chunk := range src.GetChunks() {
 		data = append(data, chunk.ToBytes()...)
 	}
 
-	w := &Writer{handle: f.handle}
+	w := &Writer{f: f}
 	f.requestBodyHandler(w, &BodyChunk{
 		Data:            data,
 		EndStream:       endOfStream,
@@ -290,132 +338,100 @@ func (f *filter) OnRequestBody(body shared.BodyBuffer, endOfStream bool) shared.
 		ContentEncoding: f.requestContentEncoding,
 		Context:         &f.context,
 	})
-	if w.async != nil {
-		f.async = w.async
+	if f.async != nil {
+		// Goroutine started; flush(true) will run after it exits via scheduler.
+		// Do not reset body replacement here — the goroutine may call SetRequestBody.
 		return shared.BodyStatusStopAndBuffer
 	}
 
-	if f.bufferBody && w.hasRequestBodyReplacement {
+	// Sync path: apply body replacement inline before flush.
+	// Clear flags first so flush's async-body-replacement branch does not double-apply.
+	if f.bufferBody && f.hasRequestBodyReplacement {
 		buf := f.handle.BufferedRequestBody()
 		buf.Drain(buf.GetSize())
-		buf.Append(w.requestBodyReplacement)
-		// content-length was cleared in OnRequestHeaders; set the correct value now.
-		f.handle.RequestHeaders().Set("content-length", strconv.Itoa(len(w.requestBodyReplacement)))
+		buf.Append(f.requestBodyReplacement)
+		f.handle.RequestHeaders().Set("content-length", strconv.Itoa(len(f.requestBodyReplacement)))
+		f.hasRequestBodyReplacement = false
+		f.requestBodyReplacement = nil
 	}
+	f.flush(false) // apply header mutations and other queued state
 	return shared.BodyStatusContinue
 }
 
-// OnHttpCalloutDone implements shared.HttpCalloutCallback. Envoy invokes this
-// when an outbound HTTP callout response (or error) arrives.
+// OnHttpCalloutDone implements shared.HttpCalloutCallback. Envoy invokes it
+// when an outbound callout response arrives. It may fire from a different
+// goroutine (early synchronous callback) before OnRequestHeaders returns.
 //
-// This method may be called from a different goroutine than the worker thread
-// when the callback fires synchronously before OnRequestHeaders returns —
-// Envoy does not guarantee deferred delivery. The calloutState CAS determines
-// which of the two orderings occurred and takes the correct action:
+// streamDone guards against late callbacks after OnStreamComplete. The calloutFn
+// nil-check guards against spurious duplicate deliveries.
 //
-//	Paused→Flushed  (normal async path)
-//	  OnRequestHeaders already returned HeadersStatusStop. This callback owns the
-//	  resume. Call flush(true) which applies mutations and calls ContinueRequest.
+// State machine:
 //
-//	Active→Done     (early synchronous callback)
-//	  OnRequestHeaders has not yet reached pausePendingCallout. Mark Done so
-//	  that flushCompletedCallout (called by OnRequestHeaders) will pick it up,
-//	  flush mutations inline, and let OnRequestHeaders return Continue itself.
-//	  We must NOT call ContinueRequest here — OnRequestHeaders hasn't returned Stop.
+//	Paused→Flushed  Normal path: stream was paused. flush(true) resumes it.
+//	Active→Done     Early path: stream not yet paused. OnRequestHeaders detects
+//	                Done and calls flush(false) before returning Continue.
 func (f *filter) OnHttpCalloutDone(
 	_ uint64,
 	result shared.HttpCalloutResult,
 	headers [][2]shared.UnsafeEnvoyBuffer,
 	body []shared.UnsafeEnvoyBuffer,
 ) {
-	w := f.calloutWriter.Load()
-	if w == nil || w.calloutFn == nil {
-		// No callout in flight (stream may have been cancelled), or the callback
-		// was already consumed. Nothing to do.
+	if f.streamDone.Load() || f.calloutFn == nil {
 		return
 	}
-	// Consume the callback exactly once: nil it before invoking so re-entrant
-	// or duplicate callbacks are safe no-ops.
-	fn := w.calloutFn
-	w.calloutFn = nil
+	fn := f.calloutFn
+	f.calloutFn = nil
 	fn(HTTPCalloutResult(result), headers, body)
-
-	// Now drive the state machine. Only one of these two CAS calls succeeds:
-	if w.calloutState.CompareAndSwap(calloutStatePaused, calloutStateFlushed) {
+	if f.calloutState.CompareAndSwap(calloutStatePaused, calloutStateFlushed) {
 		// Normal path: OnRequestHeaders already returned Stop. We own the resume.
-		f.calloutWriter.Store(nil)
-		w.flush(true)
+		f.flush(true)
 		return
 	}
-	// Early path: callback fired before OnRequestHeaders called pausePendingCallout.
-	// Transition Active→Done so that flushCompletedCallout (in OnRequestHeaders)
-	// can detect the completed state and flush without calling ContinueRequest.
-	w.calloutState.CompareAndSwap(calloutStateActive, calloutStateDone)
+	// Early path: callback fired before OnRequestHeaders reached pausePendingCallout.
+	// Mark Done; OnRequestHeaders will CAS Done→Flushed and call flush(false).
+	f.calloutState.CompareAndSwap(calloutStateActive, calloutStateDone)
 }
 
-// pausePendingCallout returns true if a callout was started and the CAS
-// Active→Paused succeeded, meaning OnRequestHeaders should return Stop and wait
-// for OnHttpCalloutDone to resume the stream.
-//
-// Returns false if:
-//   - No callout was started (calloutStarted == false).
-//   - The callout callback already fired (state is Done, not Active): the
-//     sync-done path applies; OnRequestHeaders should flush inline and continue.
-func (f *filter) pausePendingCallout(w *Writer) bool {
-	if !w.calloutStarted {
+// pausePendingCallout returns true if a callout is in flight and the CAS
+// Active→Paused succeeded. OnRequestHeaders should return Stop and wait for
+// OnHttpCalloutDone. Returns false if no callout started or the callback
+// already fired (state is Done — use flushCompletedCallout instead).
+func (f *filter) pausePendingCallout(calloutStarted bool) bool {
+	if !calloutStarted {
 		return false
 	}
-	// CAS Active→Paused. If state is already Done (early callback), this fails.
-	return w.calloutState.CompareAndSwap(calloutStateActive, calloutStatePaused)
+	return f.calloutState.CompareAndSwap(calloutStateActive, calloutStatePaused)
 }
 
-// flushCompletedCallout handles the synchronous early-callback path: the callout
-// callback fired and transitioned Active→Done before OnRequestHeaders reached
-// pausePendingCallout. We CAS Done→Flushed, apply mutations inline (flush(false)),
-// and let OnRequestHeaders return HeadersStatusContinue itself (no ContinueRequest).
-//
-// If calloutStarted is false or the CAS fails (state is not Done), this is a no-op.
-func (f *filter) flushCompletedCallout(w *Writer) {
-	if !w.calloutStarted || !w.calloutState.CompareAndSwap(calloutStateDone, calloutStateFlushed) {
+// flushCompletedCallout handles the early-callback case: CAS Done→Flushed.
+// Does NOT call flush itself — the caller calls flush(false) after this.
+// This keeps flush as the single application point, avoiding a double-flush.
+func (f *filter) flushCompletedCallout(calloutStarted bool) {
+	if !calloutStarted {
 		return
 	}
-	f.calloutWriter.Store(nil)
-	// flush(false): apply mutations but do NOT call ContinueRequest.
-	// OnRequestHeaders will return HeadersStatusContinue to resume the stream.
-	w.flush(false)
+	f.calloutState.CompareAndSwap(calloutStateDone, calloutStateFlushed)
 }
 
-// OnStreamComplete is called when Envoy terminates the stream, regardless of
-// whether the request completed normally or was reset. It runs on the worker
-// thread.
+// OnStreamComplete is called when Envoy terminates the stream. It prevents
+// any in-flight callout from resuming a dead stream and cancels a running
+// goroutine.
 //
-// Two cleanup cases:
-//
-//  1. HTTPCallout in-flight: a callout was started but the response never arrived
-//     (stream reset). Discard the calloutWriter so OnHttpCalloutDone (if it fires
-//     late) finds nil and does nothing.
-//
-//  2. Go goroutine running: cancel the goroutine's context so it exits promptly,
-//     and record completed=true so asyncState.finish does not schedule a resume
-//     on a stream that no longer exists.
+// Does NOT reset mutation queues: a goroutine may still be writing them at
+// this point (cancel() unblocks ctx.Done() but the goroutine may not have
+// returned yet). The goroutine sees done()==true and exits without calling
+// flush, so the stale mutations are never applied.
 func (f *filter) OnStreamComplete() {
-	if f.calloutWriter.Load() != nil {
-		// Stream ended while a callout was in-flight: discard the writer.
-		f.calloutWriter.Store(nil)
-	}
+	f.streamDone.Store(true)
 	if f.async != nil {
 		f.async.completeWithoutResume()
 		f.async = nil
 	}
 }
 
-// OnResponseHeaders is called when the upstream response headers arrive. It runs
-// the responseHandler (if set) and synthesizes a body call for bodyless responses.
-//
-// In buffered mode (bufferBody=true), content-length is removed here because
-// SetResponseBody may replace the body; the correct value is written in
-// OnResponseBody after any replacement. The same caveat applies as in
-// OnRequestHeaders: do NOT return HeadersStatusStopAllAndBuffer.
+// OnResponseHeaders runs the responseHandler against the upstream response.
+// In buffered mode, content-length is stripped here; the correct value is
+// written in OnResponseBody after any SetResponseBody replacement.
 func (f *filter) OnResponseHeaders(headers shared.HeaderMap, endOfStream bool) shared.HeadersStatus {
 	if f.responseHandler == nil {
 		return shared.HeadersStatusContinue
@@ -424,9 +440,6 @@ func (f *filter) OnResponseHeaders(headers shared.HeaderMap, endOfStream bool) s
 	f.responseContentType = headers.GetOne("content-type").ToString()
 	f.responseContentEncoding = headers.GetOne("content-encoding").ToString()
 
-	// Strip content-length upfront in buffered mode so downstream never sees a
-	// stale value after SetResponseBody replaces the body. The correct value is
-	// written in OnResponseBody after any replacement.
 	if f.bufferBody {
 		headers.Remove("content-length")
 	}
@@ -436,7 +449,7 @@ func (f *filter) OnResponseHeaders(headers shared.HeaderMap, endOfStream bool) s
 		statusCode, _ = strconv.Atoi(v.ToString())
 	}
 
-	w := &Writer{handle: f.handle}
+	w := &Writer{f: f}
 	f.responseHandler(w, &ResponseChunk{
 		StatusCode:      statusCode,
 		Headers:         headers,
@@ -447,8 +460,7 @@ func (f *filter) OnResponseHeaders(headers shared.HeaderMap, endOfStream bool) s
 	})
 
 	if endOfStream {
-		// Synthesize a body call for bodyless responses (204, HEAD, 304, etc.)
-		// so the handler always sees EndStream=true exactly once.
+		// Synthesize a body call for bodyless responses (204, HEAD, 304, etc.).
 		f.responseHandler(w, &ResponseChunk{
 			EndStream:       true,
 			ContentEncoding: f.responseContentEncoding,
@@ -459,10 +471,8 @@ func (f *filter) OnResponseHeaders(headers shared.HeaderMap, endOfStream bool) s
 	return shared.HeadersStatusContinue
 }
 
-// OnResponseBody is called for each response body data frame. Mirrors the
-// request body logic: accumulates in Envoy's buffer when bufferBody=true, then
-// delivers the full body to responseHandler at endOfStream. If the handler calls
-// SetResponseBody, Transit drains the buffer and writes the replacement.
+// OnResponseBody applies any SetResponseBody replacement after the handler runs.
+// Body replacement flags are cleared after application to prevent replay.
 func (f *filter) OnResponseBody(body shared.BodyBuffer, endOfStream bool) shared.BodyStatus {
 	if f.responseHandler == nil {
 		return shared.BodyStatusContinue
@@ -480,7 +490,7 @@ func (f *filter) OnResponseBody(body shared.BodyBuffer, endOfStream bool) shared
 		data = append(data, chunk.ToBytes()...)
 	}
 
-	w := &Writer{handle: f.handle}
+	w := &Writer{f: f}
 	f.responseHandler(w, &ResponseChunk{
 		Data:            data,
 		EndStream:       endOfStream,
@@ -489,12 +499,13 @@ func (f *filter) OnResponseBody(body shared.BodyBuffer, endOfStream bool) shared
 		Context:         &f.context,
 	})
 
-	if f.bufferBody && w.hasResponseBodyReplacement {
+	if f.bufferBody && f.hasResponseBodyReplacement {
 		buf := f.handle.BufferedResponseBody()
 		buf.Drain(buf.GetSize())
-		buf.Append(w.responseBodyReplacement)
-		// content-length was cleared in OnResponseHeaders; set the correct value now.
-		f.handle.ResponseHeaders().Set("content-length", strconv.Itoa(len(w.responseBodyReplacement)))
+		buf.Append(f.responseBodyReplacement)
+		f.handle.ResponseHeaders().Set("content-length", strconv.Itoa(len(f.responseBodyReplacement)))
+		f.hasResponseBodyReplacement = false
+		f.responseBodyReplacement = nil
 	}
 	return shared.BodyStatusContinue
 }

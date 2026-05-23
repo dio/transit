@@ -184,22 +184,25 @@ type asyncState struct {
 }
 
 // finish is called by the goroutine after fn(ctx) returns normally. It
-// schedules flush on the Envoy worker thread so that queued mutations are
+// schedules resume on the Envoy worker thread so that queued mutations are
 // applied and ContinueRequest is called to resume the stream.
+//
+// resume is a closure (func() { f.flush(true) }) rather than a *Writer so
+// that asyncState has no dependency on filter's concrete type.
 //
 // Why Schedule and not a direct call: flush() calls CGO functions
 // (ContinueRequest, SendLocalResponse) that Envoy requires to be invoked on
 // the stream's worker thread. The goroutine runs on an arbitrary Go OS thread,
 // which is not the worker thread. Schedule posts a task to Envoy's event loop
 // so flush runs in the correct context.
-func (s *asyncState) finish(w *Writer) {
+func (s *asyncState) finish(resume func()) {
 	s.scheduler.Schedule(func() {
 		// completed.Swap returns the old value. If it was already true,
 		// completeWithoutResume won the race: the stream is dead, do not resume.
 		if s.completed.Swap(true) {
 			return
 		}
-		w.flush(true)
+		resume()
 	})
 }
 

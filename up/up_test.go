@@ -8,6 +8,8 @@ import (
 
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared/fake"
+
+	"github.com/dio/transit/up/testutil"
 )
 
 // --- newRequest ---
@@ -103,7 +105,7 @@ func TestWriter_Log_delegatesToHandle(t *testing.T) {
 	handle := newMockHandle(ctrl)
 	handle.EXPECT().Log(shared.LogLevelError, "msg: %s", "arg")
 
-	w := &Writer{handle: handle}
+	w := NewWriter(handle)
 	w.Log(LogError, "msg: %s", "arg")
 }
 
@@ -142,7 +144,9 @@ func TestWriter_SetFilterState_delegatesToHandle(t *testing.T) {
 	handle := newMockHandle(ctrl)
 	handle.EXPECT().SetFilterState("llm.target", []byte("api.openai.com:443"))
 
-	NewWriter(handle).SetFilterState("llm.target", "api.openai.com:443")
+	w := NewWriter(handle)
+	w.SetFilterState("llm.target", "api.openai.com:443")
+	w.f.flush(false) // mutations queue unconditionally; flush applies them
 }
 
 func TestWriter_SetUpstreamOverrideHost_delegatesToHandle(t *testing.T) {
@@ -150,7 +154,9 @@ func TestWriter_SetUpstreamOverrideHost_delegatesToHandle(t *testing.T) {
 	handle := newMockHandle(ctrl)
 	handle.EXPECT().SetUpstreamOverrideHost("api.openai.com:443", true).Return(true)
 
-	ok := NewWriter(handle).SetUpstreamOverrideHost("api.openai.com:443", true)
+	w := NewWriter(handle)
+	ok := w.SetUpstreamOverrideHost("api.openai.com:443", true)
+	w.f.flush(false)
 
 	require.True(t, ok)
 }
@@ -301,9 +307,11 @@ func TestWriter_SendLocalResponse_delegatesToHandle(t *testing.T) {
 	handle := newMockHandle(ctrl)
 	handle.EXPECT().SendLocalResponse(uint32(401), gomock.Any(), []byte(`{"error":"no key"}`), "")
 
-	w := &Writer{handle: handle}
+	w := NewWriter(handle)
 	w.SendLocalResponse(401, []byte(`{"error":"no key"}`))
-	require.True(t, w.stopped)
+	require.True(t, w.f.stopped)
+	w.f.flush(false) // applies queued local response
+	require.True(t, w.f.stopped) // stays true after local-reply flush
 }
 
 func TestWriter_SendLocalResponse_setsStoppedFlag(t *testing.T) {
@@ -312,9 +320,10 @@ func TestWriter_SendLocalResponse_setsStoppedFlag(t *testing.T) {
 	handle.EXPECT().SendLocalResponse(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any())
 
 	w := NewWriter(handle)
-	require.False(t, w.stopped)
+	require.False(t, w.f.stopped)
 	w.SendLocalResponse(200, nil)
-	require.True(t, w.stopped)
+	require.True(t, w.f.stopped)
+	w.f.flush(false)
 }
 
 func TestFilter_OnRequestHeaders_stopsAfterLocalResponse(t *testing.T) {
@@ -332,6 +341,57 @@ func TestFilter_OnRequestHeaders_stopsAfterLocalResponse(t *testing.T) {
 	require.Equal(t, shared.HeadersStatusStop, status)
 }
 
+// --- Phase 2 flush / stale-queue correctness ---
+
+func TestFilter_syncSetRequestHeader_applied(t *testing.T) {
+	handle := testutil.NewFilterHandle(
+		testutil.WithHeaders(map[string]string{":method": "GET", ":path": "/"}),
+	)
+	f := &filter{
+		handle:  handle,
+		handler: func(w *Writer, _ *Request) { w.SetRequestHeader("x-added", "yes") },
+	}
+	f.OnRequestHeaders(handle.RequestHeaders(), true)
+	require.Equal(t, "yes", handle.RequestHeaders().GetOne("x-added").ToString())
+}
+
+func TestFilter_onRequestBodyMutation_applied(t *testing.T) {
+	handle := testutil.NewFilterHandle()
+	f := &filter{
+		handle:  handle,
+		handler: func(w *Writer, _ *Request) {},
+		requestBodyHandler: func(w *Writer, _ *BodyChunk) {
+			w.SetRequestHeader("x-body", "seen")
+		},
+	}
+	f.OnRequestHeaders(handle.RequestHeaders(), false)
+	f.OnRequestBody(fake.NewFakeBodyBuffer(nil), true)
+	require.Equal(t, "seen", handle.RequestHeaders().GetOne("x-body").ToString())
+}
+
+func TestFilter_staleQueueNotReplayed(t *testing.T) {
+	// Verify that mutations queued in one OnRequestHeaders call are not applied
+	// again when a second call runs (same filter instance, different invocation).
+	var call int
+	handle := testutil.NewFilterHandle()
+	f := &filter{
+		handle: handle,
+		handler: func(w *Writer, _ *Request) {
+			call++
+			if call == 1 {
+				w.SetRequestHeader("x-stale", "first")
+			}
+			// second call sets nothing
+		},
+	}
+	f.OnRequestHeaders(handle.RequestHeaders(), false)
+	require.Equal(t, "first", handle.RequestHeaders().GetOne("x-stale").ToString())
+	handle.RequestHeaders().Remove("x-stale")
+
+	f.OnRequestHeaders(handle.RequestHeaders(), false)
+	require.Empty(t, handle.RequestHeaders().GetOne("x-stale").ToString())
+}
+
 // --- Register ---
 
 func TestRegister_panicOnDuplicate(t *testing.T) {
@@ -346,5 +406,5 @@ func TestRegister_panicOnDuplicate(t *testing.T) {
 	require.Panics(t, func() { Register(name, h) })
 }
 
-// writer is a helper for tests that need a Writer backed by filter.handle.
-func (f *filter) writer() *Writer { return &Writer{handle: f.handle} }
+// writer is a helper for tests that need a Writer backed by this filter.
+func (f *filter) writer() *Writer { return &Writer{f: f} }
