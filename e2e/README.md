@@ -55,15 +55,34 @@ All three sinks live under [`sinks/`](sinks/) and expose a consistent pattern:
 |---|---|---|
 | `echo_test.go` | `EchoSuite` | pass-through filter, basic request routing |
 | `guard_test.go` | `GuardSuite` | `SendLocalResponse`, `HeadersStatusStop` |
-| `body_test.go` | `BodySuite` / `MutableBodySuite` | streaming and buffered body handling |
-| `codec_test.go` | `CodecSuite` | gzip decode via `RequestIdentity` + `SetResponseBody` |
-| `access_logger_test.go` | `AccessLoggerSuite` | dynamic module access logger, `GetTimingInfo` |
+| `body_test.go` | `BodySuite` / `MutableBodySuite` | streaming and buffered body handling; upstream-observed body and `content-length` after `SetRequestBody` |
+| `compress_test.go` | `CompressSuite` | gzip decode via `RequestIdentity` + `SetResponseBody`; `RemoveResponseHeader` |
+| `access_logger_test.go` | `AccessLoggerSuite` | `GetTimingInfo`, `GetBytesInfo`, `GetResponseCode`, `GetResponseFlags`; local-reply response code; non-empty flags on upstream error |
 | `correlator_test.go` | `CorrelatorSuite` | HTTP filter ↔ access logger correlation via `sync.Map` |
 | `otel_logs_test.go` | `OtelMetadataSuite` | `SetMetadata` → OTel access log body/attributes |
-| `otel_metrics_test.go` | `OtelMetricsSuite` | Envoy stat-sink → OTLP metrics, tag extraction |
+| `otel_metrics_test.go` | `OtelMetricsSuite` | Envoy stat-sink → OTLP metrics (Envoy plumbing, no Transit filter API) |
 | `otel_traces_test.go` | `OtelTracesSuite` | `GetActiveSpan().SetTag` → OTLP span attributes |
 | `als_test.go` | `AlsSuite` | dynamic metadata in ALS entries via `filter_metadata` |
-| `upstream_filter_test.go` | `UpstreamFilterSuite` | dynamic module filter as upstream filter; auth injection |
-| `lb_policy_test.go` | LB Policy | custom LB policy host selection |
-| `cluster_test.go` | Cluster Extension | module-owned host discovery and host selection |
-| `async_callout_test.go` | `AsyncCalloutSuite` | `HTTPCallout` callback path, `Go`+`Do` fan-out, request body after goroutine resume |
+| `upstream_filter_test.go` | `UpstreamFilterSuite` | dynamic module filter as upstream filter; auth injection; `RegisterWithGroup` |
+| `lb_policy_test.go` | LB Policy | custom LB policy; host-selection assertion with two-host cluster |
+| `cluster_test.go` | Cluster Extension | module-owned host discovery and host selection; TLS and mTLS |
+| `cluster_scheduler_test.go` | Cluster Scheduler | `ClusterHandle.Schedule` delivers callbacks on the Envoy dispatcher thread |
+| `async_callout_test.go` | `AsyncCalloutSuite` | `HTTPCallout` callback path; `Go`+`Do` fan-out; local response stops forwarding (negative assertion); request body after goroutine resume |
+
+## Harness helpers
+
+`main_test.go` provides reusable upstream helpers beyond the standard sinks:
+
+| Helper | Returns | Use case |
+|---|---|---|
+| `startPlainUpstream()` | `int` port | Plain HTTP upstream; echoes `Authorization` header |
+| `startForwardEchoUpstream()` | `int` port | Echoes every request header as `x-received-<name>` and reflects the request body |
+| `startAsyncCalloutUpstream()` | `int` port | Returns the last path segment as body; used by callout filters |
+| `startGzipUpstream()` | `int` port | Always returns `"hello codec"` gzip-compressed |
+| `startIdentifiedUpstream(body)` | `int` port | Returns a fixed body string; used for LB policy host-selection assertions |
+| `startRecorderUpstream()` | `*recorderUpstream` | Records every inbound request (method, path, headers, body, `ContentLength`); exposes `WaitFor`, `Len`, `Requests`, `Reset` |
+
+`recorderUpstream` is the right primitive for:
+
+- asserting what body and framing an upstream actually received (`WaitFor` + `Body`, `ContentLength`)
+- asserting an upstream was **not** reached (`Len() == 0` after a local-response path completes)
