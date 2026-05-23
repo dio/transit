@@ -40,7 +40,7 @@ is discarded at stream end.
 
 This is why `IncrementCounter` and `RecordHistogram` work correctly in request
 handlers but appear to do nothing in response handlers unless `directWrite` is
-set.
+set. Fixed in commit `7b96798`.
 
 ## What each phase can do
 
