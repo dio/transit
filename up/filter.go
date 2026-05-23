@@ -3,6 +3,7 @@ package up
 import (
 	"fmt"
 	"strconv"
+	"sync/atomic"
 
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
 )
@@ -25,7 +26,7 @@ func (c *configHandleImpl) DefineCounter(name string, tagKeys ...string) (Metric
 	if res != shared.MetricsSuccess {
 		return 0, fmt.Errorf("up: DefineCounter %q failed (result=%d)", name, res)
 	}
-	return id, nil
+	return MetricID(id), nil
 }
 
 func (f *configFactory) Create(h shared.HttpFilterConfigHandle, _ []byte) (shared.HttpFilterFactory, error) {
@@ -92,6 +93,11 @@ type filter struct {
 	requestContentEncoding  string
 	responseContentType     string
 	responseContentEncoding string
+	async                   *asyncState
+
+	// calloutWriter holds the Writer for the in-flight HTTPCallout so that
+	// OnHttpCalloutDone can invoke the callback and flush mutations.
+	calloutWriter atomic.Pointer[Writer]
 }
 
 func (f *filter) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool) shared.HeadersStatus {
@@ -100,9 +106,21 @@ func (f *filter) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool) sh
 		f.requestContentEncoding = headers.GetOne("content-encoding").ToString()
 	}
 
-	w := &Writer{handle: f.handle}
+	w := &Writer{handle: f.handle, calloutCB: f}
+	f.calloutWriter.Store(w)
 	f.handler(w, newRequestWithContext(headers, f.name, &f.context))
+	if f.pausePendingCallout(w) {
+		// HTTPCallout was initiated: Envoy will call OnHttpCalloutDone.
+		return shared.HeadersStatusStop
+	}
+	if w.async != nil {
+		f.async = w.async
+		f.calloutWriter.Store(nil)
+		return shared.HeadersStatusStop
+	}
 	if w.stopped {
+		f.flushCompletedCallout(w)
+		f.calloutWriter.Store(nil)
 		return shared.HeadersStatusStop
 	}
 
@@ -116,10 +134,26 @@ func (f *filter) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool) sh
 				Context:         &f.context,
 			})
 		}
+		if f.pausePendingCallout(w) {
+			return shared.HeadersStatusStop
+		}
+		if w.async != nil {
+			f.async = w.async
+			f.calloutWriter.Store(nil)
+			return shared.HeadersStatusStop
+		}
+		f.flushCompletedCallout(w)
+		f.calloutWriter.Store(nil)
 		if w.stopped {
 			return shared.HeadersStatusStop
 		}
 		return shared.HeadersStatusContinue
+	}
+
+	f.flushCompletedCallout(w)
+	f.calloutWriter.Store(nil)
+	if w.stopped {
+		return shared.HeadersStatusStop
 	}
 
 	// Body is coming in buffered mode. Strip content-length and transfer-encoding
@@ -163,6 +197,10 @@ func (f *filter) OnRequestBody(body shared.BodyBuffer, endOfStream bool) shared.
 		ContentEncoding: f.requestContentEncoding,
 		Context:         &f.context,
 	})
+	if w.async != nil {
+		f.async = w.async
+		return shared.BodyStatusStopAndBuffer
+	}
 
 	if f.bufferBody && w.hasRequestBodyReplacement {
 		buf := f.handle.BufferedRequestBody()
@@ -172,6 +210,58 @@ func (f *filter) OnRequestBody(body shared.BodyBuffer, endOfStream bool) shared.
 		f.handle.RequestHeaders().Set("content-length", strconv.Itoa(len(w.requestBodyReplacement)))
 	}
 	return shared.BodyStatusContinue
+}
+
+// OnHttpCalloutDone implements shared.HttpCalloutCallback.
+// It runs on the Envoy worker thread when the callout response arrives.
+func (f *filter) OnHttpCalloutDone(
+	_ uint64,
+	result shared.HttpCalloutResult,
+	headers [][2]shared.UnsafeEnvoyBuffer,
+	body []shared.UnsafeEnvoyBuffer,
+) {
+	w := f.calloutWriter.Load()
+	if w == nil || w.calloutFn == nil {
+		return
+	}
+	fn := w.calloutFn
+	w.calloutFn = nil
+	fn(HTTPCalloutResult(result), newHeaderBuffers(headers), newBuffers(body))
+	if w.calloutState.CompareAndSwap(calloutStatePaused, calloutStateFlushed) {
+		f.calloutWriter.Store(nil)
+		w.flush(true)
+		return
+	}
+	w.calloutState.CompareAndSwap(calloutStateActive, calloutStateDone)
+}
+
+func (f *filter) pausePendingCallout(w *Writer) bool {
+	if !w.calloutStarted {
+		return false
+	}
+	if w.calloutState.CompareAndSwap(calloutStateActive, calloutStatePaused) {
+		return true
+	}
+	return false
+}
+
+func (f *filter) flushCompletedCallout(w *Writer) {
+	if !w.calloutStarted || !w.calloutState.CompareAndSwap(calloutStateDone, calloutStateFlushed) {
+		return
+	}
+	f.calloutWriter.Store(nil)
+	w.flush(false)
+}
+
+func (f *filter) OnStreamComplete() {
+	if f.calloutWriter.Load() != nil {
+		// Stream ended while a callout was in-flight: discard the writer.
+		f.calloutWriter.Store(nil)
+	}
+	if f.async != nil {
+		f.async.completeWithoutResume()
+		f.async = nil
+	}
 }
 
 func (f *filter) OnResponseHeaders(headers shared.HeaderMap, endOfStream bool) shared.HeadersStatus {

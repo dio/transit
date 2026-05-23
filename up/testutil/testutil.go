@@ -3,6 +3,8 @@
 package testutil
 
 import (
+	"sync"
+
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared/fake"
 )
@@ -17,6 +19,9 @@ type LocalResponse struct {
 
 // FilterHandleOption configures a FakeFilterHandle.
 type FilterHandleOption func(*FakeFilterHandle)
+
+// HTTPCalloutFunc simulates Envoy HTTP callout initialization.
+type HTTPCalloutFunc func(cluster string, headers [][2]string, body []byte, timeoutMs uint64, cb shared.HttpCalloutCallback) (shared.HttpCalloutInitResult, uint64)
 
 // WithHeaders sets the request headers on the fake handle.
 func WithHeaders(headers map[string]string) FilterHandleOption {
@@ -40,14 +45,23 @@ func WithResponseHeaders(headers map[string]string) FilterHandleOption {
 	}
 }
 
+// WithHTTPCalloutFunc configures fake HTTP callout behavior.
+func WithHTTPCalloutFunc(fn HTTPCalloutFunc) FilterHandleOption {
+	return func(h *FakeFilterHandle) {
+		h.httpCallout = fn
+	}
+}
+
 // NewFilterHandle constructs a FakeFilterHandle with the given options applied.
 func NewFilterHandle(opts ...FilterHandleOption) *FakeFilterHandle {
 	h := &FakeFilterHandle{
-		reqHeaders:  fake.NewFakeHeaderMap(nil),
-		respHeaders: fake.NewFakeHeaderMap(nil),
-		reqBody:     fake.NewFakeBodyBuffer(nil),
-		respBody:    fake.NewFakeBodyBuffer(nil),
-		metadata:    make(map[string]map[string]any),
+		reqHeaders:       fake.NewFakeHeaderMap(nil),
+		respHeaders:      fake.NewFakeHeaderMap(nil),
+		reqBody:          fake.NewFakeBodyBuffer(nil),
+		respBody:         fake.NewFakeBodyBuffer(nil),
+		metadata:         make(map[string]map[string]any),
+		ContinueRequestC: make(chan struct{}),
+		LocalResponseC:   make(chan struct{}),
 	}
 	for _, o := range opts {
 		o(h)
@@ -59,6 +73,8 @@ func NewFilterHandle(opts ...FilterHandleOption) *FakeFilterHandle {
 // SendLocalResponse records calls into LocalResponses for assertions.
 // All other methods are no-ops returning zero values.
 type FakeFilterHandle struct {
+	mu sync.Mutex
+
 	reqHeaders  *fake.FakeHeaderMap
 	respHeaders *fake.FakeHeaderMap
 	reqBody     *fake.FakeBodyBuffer
@@ -66,7 +82,13 @@ type FakeFilterHandle struct {
 	metadata    map[string]map[string]any
 
 	// LocalResponses records every SendLocalResponse call.
-	LocalResponses []LocalResponse
+	LocalResponses   []LocalResponse
+	ContinuedReq     int
+	ContinueRequestC chan struct{}
+	LocalResponseC   chan struct{}
+	continueOnce     sync.Once
+	localOnce        sync.Once
+	httpCallout      HTTPCalloutFunc
 }
 
 // -- HeaderMap accessors --
@@ -91,7 +113,12 @@ func (h *FakeFilterHandle) ReceivedBufferedResponseBody() bool      { return fal
 
 // -- Flow control --
 
-func (h *FakeFilterHandle) ContinueRequest()     {}
+func (h *FakeFilterHandle) ContinueRequest() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.ContinuedReq++
+	h.continueOnce.Do(func() { close(h.ContinueRequestC) })
+}
 func (h *FakeFilterHandle) ContinueResponse()    {}
 func (h *FakeFilterHandle) ClearRouteCache()     {}
 func (h *FakeFilterHandle) RefreshRouteCluster() {}
@@ -99,12 +126,15 @@ func (h *FakeFilterHandle) RefreshRouteCluster() {}
 // -- Local response --
 
 func (h *FakeFilterHandle) SendLocalResponse(status uint32, headers [][2]string, body []byte, detail string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.LocalResponses = append(h.LocalResponses, LocalResponse{
 		Status:  status,
 		Headers: headers,
 		Body:    body,
 		Detail:  detail,
 	})
+	h.localOnce.Do(func() { close(h.LocalResponseC) })
 }
 
 func (h *FakeFilterHandle) SendResponseHeaders(_ [][2]string, _ bool) {}
@@ -212,7 +242,10 @@ func (s *fakeScheduler) Schedule(fn func()) { fn() }
 
 // -- HTTP callout / stream (no-ops) --
 
-func (h *FakeFilterHandle) HttpCallout(_ string, _ [][2]string, _ []byte, _ uint64, _ shared.HttpCalloutCallback) (shared.HttpCalloutInitResult, uint64) {
+func (h *FakeFilterHandle) HttpCallout(cluster string, headers [][2]string, body []byte, timeoutMs uint64, cb shared.HttpCalloutCallback) (shared.HttpCalloutInitResult, uint64) {
+	if h.httpCallout != nil {
+		return h.httpCallout(cluster, headers, body, timeoutMs, cb)
+	}
 	return shared.HttpCalloutInitClusterNotFound, 0
 }
 func (h *FakeFilterHandle) StartHttpStream(_ string, _ [][2]string, _ []byte, _ bool, _ uint64, _ shared.HttpStreamCallback) (shared.HttpCalloutInitResult, uint64) {
