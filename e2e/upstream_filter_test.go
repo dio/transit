@@ -62,6 +62,20 @@ func (s *UpstreamFilterSuite) TestGet_downstreamFilterNotInvolved() {
 		"x-body-len would only appear if the body filter ran downstream")
 }
 
+// TestGet_responseHeaderRemovedByUpstreamFilter verifies that RemoveResponseHeader
+// works from the upstream filter position: the plain upstream always sets
+// "x-upstream-source: plain", but the upstream filter removes it before the
+// response reaches the client.
+func (s *UpstreamFilterSuite) TestGet_responseHeaderRemovedByUpstreamFilter() {
+	req, _ := http.NewRequest(http.MethodGet, upstreamFilterAddr+"/", nil)
+	resp := mustDo(s.T(), req)
+	resp.Body.Close()
+
+	s.Require().Equal(http.StatusOK, resp.StatusCode)
+	s.Require().Empty(resp.Header.Get("x-upstream-source"),
+		"x-upstream-source should be removed by the upstream filter before reaching the client")
+}
+
 // ── auth-injection use case ──────────────────────────────────────────────────
 
 // TestGet_authHeaderInjected verifies that e2e-upstream-auth (an upstream

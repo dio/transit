@@ -1,7 +1,7 @@
 // e2e-upstream is loaded as an upstream HTTP filter on a cluster (via
 // HttpProtocolOptions.http_filters). It stamps "x-upstream-filter: ran"
-// on every response so UpstreamFilterSuite can verify the filter ran on the
-// cluster side rather than the listener side.
+// on every response and removes "x-upstream-source" so UpstreamFilterSuite
+// can verify both header mutation directions from the cluster side.
 package filters
 
 import "github.com/dio/transit/up"
@@ -15,4 +15,5 @@ func upstreamOnResponse(w *up.Writer, chunk *up.ResponseChunk) {
 		return
 	}
 	w.SetResponseHeader("x-upstream-filter", "ran")
+	w.RemoveResponseHeader("x-upstream-source")
 }

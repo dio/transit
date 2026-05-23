@@ -346,6 +346,7 @@ func startPlainUpstream() int {
 		if auth := r.Header.Get("Authorization"); auth != "" {
 			w.Header().Set("x-received-authorization", auth)
 		}
+		w.Header().Set("x-upstream-source", "plain")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("upstream ok"))
 	})
