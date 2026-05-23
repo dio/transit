@@ -16,7 +16,7 @@ func Handler(w *up.Writer, r *up.Request) {
 		Cluster:       "auth-service",
 		Headers:       [][2]string{{":method", "POST"}, {":path", "/check"}},
 		TimeoutMillis: 250,
-	}, func(result up.HTTPCalloutResult, _ [][2]up.Buffer, body []up.Buffer) {
+	}, func(result up.HTTPCalloutResult, _ [][2]shared.UnsafeEnvoyBuffer, body []shared.UnsafeEnvoyBuffer) {
 		if result != up.HTTPCalloutSuccess {
 			w.SendLocalResponse(503, []byte(`{"error":"auth unavailable"}`))
 			return
@@ -28,6 +28,9 @@ func Handler(w *up.Writer, r *up.Request) {
 	}
 }
 ```
+
+`headers` and `body` point into Envoy-owned memory. They are valid only for
+the duration of the callback; copy any value that must outlive the call.
 
 `w.HTTPCallout` returns `HTTPCalloutInitResult` immediately. If Envoy accepts
 the callout, the request remains stopped until the continuation returns; Transit
@@ -80,8 +83,16 @@ client needs a merged response.
 
 `w.HTTPCallout` is mutex-free by design. `OnRequestHeaders` initiates the
 callout; `OnHttpCalloutDone` fires the user callback and calls `w.flush(true)`.
-Everything runs on the Envoy worker thread — there is no concurrency and no
-coordination needed. `asyncState` is not allocated on this path.
+
+`OnHttpCalloutDone` may fire from a different goroutine before `OnRequestHeaders`
+returns — Envoy does not guarantee the callback is deferred. Transit handles
+this with an atomic `calloutState` handoff (`Active→Paused/Done→Flushed`): if
+the callback fires early, it transitions `Active→Done` and the headers callback
+detects `Done` and flushes inline without calling `ContinueRequest`. If the
+callback fires after the headers callback returns `Stop`, it transitions
+`Paused→Flushed` and calls `ContinueRequest` to resume the request.
+
+There is no mutex on this path. `asyncState` is not allocated.
 
 ### Go+Do path
 

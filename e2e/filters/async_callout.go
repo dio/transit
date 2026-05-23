@@ -1,6 +1,9 @@
 package filters
 
-import "github.com/dio/transit/up"
+import (
+	"github.com/dio/transit/up"
+	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
+)
 
 func init() {
 	up.Register("e2e-async-callout", asyncCallout)
@@ -16,7 +19,7 @@ func asyncCallout(w *up.Writer, r *up.Request) {
 			{":authority", "async-callout.local"},
 		},
 		TimeoutMillis: 1000,
-	}, func(result up.HTTPCalloutResult, _ [][2]up.Buffer, body []up.Buffer) {
+	}, func(result up.HTTPCalloutResult, _ [][2]shared.UnsafeEnvoyBuffer, body []shared.UnsafeEnvoyBuffer) {
 		if result != up.HTTPCalloutSuccess {
 			w.SendLocalResponse(503, []byte("callout failed"), [2]string{"content-type", "text/plain"})
 			return
@@ -27,7 +30,7 @@ func asyncCallout(w *up.Writer, r *up.Request) {
 		}
 		w.SendLocalResponse(
 			200,
-			[]byte(body[0].String()),
+			[]byte(body[0].ToString()),
 			[2]string{"content-type", "text/plain"},
 			[2]string{"x-async-callout", "ok"},
 		)

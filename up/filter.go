@@ -95,8 +95,10 @@ type filter struct {
 	responseContentEncoding string
 	async                   *asyncState
 
-	// calloutWriter holds the Writer for the in-flight HTTPCallout so that
-	// OnHttpCalloutDone can invoke the callback and flush mutations.
+	// calloutWriter holds the Writer for the in-flight HTTPCallout.
+	// atomic.Pointer because OnHttpCalloutDone (potentially a different
+	// goroutine) and OnStreamComplete (worker thread) both nil it; a plain
+	// pointer would be a data race.
 	calloutWriter atomic.Pointer[Writer]
 }
 
@@ -212,8 +214,17 @@ func (f *filter) OnRequestBody(body shared.BodyBuffer, endOfStream bool) shared.
 	return shared.BodyStatusContinue
 }
 
-// OnHttpCalloutDone implements shared.HttpCalloutCallback.
-// It runs on the Envoy worker thread when the callout response arrives.
+// OnHttpCalloutDone implements shared.HttpCalloutCallback. Envoy calls this
+// when the outbound callout response arrives. It may fire from a different
+// goroutine before OnRequestHeaders returns (synchronous early callback) or
+// after (normal async path). The calloutState CAS resolves which case we are in:
+//
+//   Paused→Flushed  Normal path: OnRequestHeaders already returned Stop.
+//                   We own the resume; call flush(true) → ContinueRequest.
+//   Active→Done     Early-callback path: OnRequestHeaders has not yet run its
+//                   pausePendingCallout check. Mark Done so that
+//                   flushCompletedCallout picks it up and flushes without
+//                   calling ContinueRequest (OnRequestHeaders returns Continue).
 func (f *filter) OnHttpCalloutDone(
 	_ uint64,
 	result shared.HttpCalloutResult,
@@ -226,7 +237,7 @@ func (f *filter) OnHttpCalloutDone(
 	}
 	fn := w.calloutFn
 	w.calloutFn = nil
-	fn(HTTPCalloutResult(result), newHeaderBuffers(headers), newBuffers(body))
+	fn(HTTPCalloutResult(result), headers, body)
 	if w.calloutState.CompareAndSwap(calloutStatePaused, calloutStateFlushed) {
 		f.calloutWriter.Store(nil)
 		w.flush(true)
@@ -235,6 +246,11 @@ func (f *filter) OnHttpCalloutDone(
 	w.calloutState.CompareAndSwap(calloutStateActive, calloutStateDone)
 }
 
+// pausePendingCallout returns true if a callout was started and successfully
+// transitioned Active→Paused, meaning OnRequestHeaders should return Stop and
+// wait for OnHttpCalloutDone to resume the request. Returns false if the
+// callback already fired (state is Done, not Active), meaning the sync-done
+// path applies instead.
 func (f *filter) pausePendingCallout(w *Writer) bool {
 	if !w.calloutStarted {
 		return false
@@ -245,6 +261,10 @@ func (f *filter) pausePendingCallout(w *Writer) bool {
 	return false
 }
 
+// flushCompletedCallout handles the sync-done path: the callout callback fired
+// before OnRequestHeaders could call pausePendingCallout, leaving calloutState
+// at Done. Transition Done→Flushed and apply mutations without calling
+// ContinueRequest — OnRequestHeaders will return HeadersStatusContinue itself.
 func (f *filter) flushCompletedCallout(w *Writer) {
 	if !w.calloutStarted || !w.calloutState.CompareAndSwap(calloutStateDone, calloutStateFlushed) {
 		return

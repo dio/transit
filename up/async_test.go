@@ -67,7 +67,7 @@ func TestWriterHTTPCallout_pausesAndResumes(t *testing.T) {
 	f := &filter{
 		handle: handle,
 		handler: func(w *Writer, _ *Request) {
-			init, err := w.HTTPCallout(HTTPCalloutRequest{Cluster: "auth"}, func(_ HTTPCalloutResult, _ [][2]Buffer, body []Buffer) {
+			init, err := w.HTTPCallout(HTTPCalloutRequest{Cluster: "auth"}, func(_ HTTPCalloutResult, _ [][2]shared.UnsafeEnvoyBuffer, body []shared.UnsafeEnvoyBuffer) {
 				require.Len(t, body, 1)
 				w.SetRequestHeader("x-auth", body[0].ToString())
 			})
@@ -92,7 +92,7 @@ func TestWriterHTTPCallout_synchronousCallbackDoesNotStop(t *testing.T) {
 	f := &filter{
 		handle: handle,
 		handler: func(w *Writer, _ *Request) {
-			init, err := w.HTTPCallout(HTTPCalloutRequest{Cluster: "auth"}, func(_ HTTPCalloutResult, _ [][2]Buffer, body []Buffer) {
+			init, err := w.HTTPCallout(HTTPCalloutRequest{Cluster: "auth"}, func(_ HTTPCalloutResult, _ [][2]shared.UnsafeEnvoyBuffer, body []shared.UnsafeEnvoyBuffer) {
 				require.Len(t, body, 1)
 				w.SetRequestHeader("x-auth", body[0].ToString())
 			})
@@ -117,7 +117,7 @@ func TestWriterHTTPCallout_localResponseDoesNotContinue(t *testing.T) {
 	f := &filter{
 		handle: handle,
 		handler: func(w *Writer, _ *Request) {
-			init, err := w.HTTPCallout(HTTPCalloutRequest{Cluster: "auth"}, func(_ HTTPCalloutResult, _ [][2]Buffer, _ []Buffer) {
+			init, err := w.HTTPCallout(HTTPCalloutRequest{Cluster: "auth"}, func(_ HTTPCalloutResult, _ [][2]shared.UnsafeEnvoyBuffer, _ []shared.UnsafeEnvoyBuffer) {
 				w.SendLocalResponse(503, []byte(`{"error":"unavailable"}`), [2]string{"content-type", "application/json"})
 			})
 			require.NoError(t, err)
@@ -142,7 +142,7 @@ func TestWriterHTTPCallout_synchronousLocalResponseStopsWithoutContinue(t *testi
 	f := &filter{
 		handle: handle,
 		handler: func(w *Writer, _ *Request) {
-			init, err := w.HTTPCallout(HTTPCalloutRequest{Cluster: "auth"}, func(_ HTTPCalloutResult, _ [][2]Buffer, _ []Buffer) {
+			init, err := w.HTTPCallout(HTTPCalloutRequest{Cluster: "auth"}, func(_ HTTPCalloutResult, _ [][2]shared.UnsafeEnvoyBuffer, _ []shared.UnsafeEnvoyBuffer) {
 				w.SendLocalResponse(503, []byte(`{"error":"unavailable"}`), [2]string{"content-type", "application/json"})
 			})
 			require.NoError(t, err)

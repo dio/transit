@@ -1,6 +1,9 @@
 package async_callout
 
-import "github.com/dio/transit/up"
+import (
+	"github.com/dio/transit/up"
+	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
+)
 
 func init() {
 	up.Register("async-callout", Handler)
@@ -18,12 +21,12 @@ func Handler(w *up.Writer, _ *up.Request) {
 		},
 		Body:          []byte(`{"scope":"read"}`),
 		TimeoutMillis: 250,
-	}, func(result up.HTTPCalloutResult, _ [][2]up.Buffer, body []up.Buffer) {
+	}, func(result up.HTTPCalloutResult, _ [][2]shared.UnsafeEnvoyBuffer, body []shared.UnsafeEnvoyBuffer) {
 		if result != up.HTTPCalloutSuccess {
 			w.SendLocalResponse(503, []byte(`{"error":"auth unavailable"}`), [2]string{"content-type", "application/json"})
 			return
 		}
-		if len(body) == 0 || body[0].String() != "ok" {
+		if len(body) == 0 || body[0].ToString() != "ok" {
 			w.SendLocalResponse(403, []byte(`{"error":"denied"}`), [2]string{"content-type", "application/json"})
 			return
 		}

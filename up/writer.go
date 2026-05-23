@@ -9,6 +9,22 @@ import (
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
 )
 
+// calloutState tracks the handoff between OnRequestHeaders and OnHttpCalloutDone.
+//
+// Envoy does not guarantee that OnHttpCalloutDone fires after OnRequestHeaders
+// returns. A callback can fire synchronously inside HttpCallout — before
+// OnRequestHeaders has had a chance to return HeadersStatusStop. The four
+// states handle both orderings without a mutex:
+//
+//   Active  → Paused   OnRequestHeaders got here first; it returns Stop and
+//                      expects OnHttpCalloutDone to call flush+ContinueRequest.
+//   Active  → Done     OnHttpCalloutDone fired first (synchronous callback);
+//                      OnRequestHeaders detects Done, flushes inline, returns
+//                      Continue — no Stop, no ContinueRequest needed.
+//   Paused  → Flushed  Normal async path: callback fires after Stop was returned;
+//                      flush(true) calls ContinueRequest to resume the stream.
+//   Done    → Flushed  Sync-done path: OnRequestHeaders flushes with flush(false)
+//                      because it will return Continue itself.
 const (
 	calloutStateActive int32 = iota
 	calloutStatePaused
@@ -26,7 +42,10 @@ type Writer struct {
 	calloutStarted bool
 	calloutState   atomic.Int32
 
-	// mutation queues: written by handler/goroutine, applied by flush() on worker thread
+	// Mutation queues accumulate changes requested by the handler. They are
+	// applied by flush() on the Envoy worker thread — never inline — so that
+	// CGO calls (RequestHeaders().Set, SendLocalResponse, etc.) are never made
+	// while a lock is held, eliminating the lock-while-CGO deadlock class.
 	reqHeaders  []requestHeaderMutation
 	filterState []filterStateMutation
 	counters    []counterMutation
@@ -247,7 +266,7 @@ func (w *Writer) Do(ctx context.Context, req HTTPCalloutRequest) (*HTTPCalloutRe
 			req.Headers,
 			req.Body,
 			req.TimeoutMillis,
-			doCallbackFunc(func(_ uint64, r HTTPCalloutResult, headers [][2]Buffer, body []Buffer) {
+			doCallbackFunc(func(_ uint64, r HTTPCalloutResult, headers [][2]shared.UnsafeEnvoyBuffer, body []shared.UnsafeEnvoyBuffer) {
 				ch <- result{resp: &HTTPCalloutResponse{Result: r, Headers: headers, Body: body}}
 			}),
 		)
@@ -270,8 +289,13 @@ func (w *Writer) Do(ctx context.Context, req HTTPCalloutRequest) (*HTTPCalloutRe
 	}
 }
 
-// flush applies all queued mutations and optionally calls ContinueRequest.
-// Must be called on the Envoy worker thread.
+// flush applies all queued mutations and optionally resumes the request.
+// Must run on the Envoy worker thread — CGO calls are only safe there.
+//
+// continueReq=true on the async paths (callout callback, scheduler hop) where
+// Envoy is waiting for an explicit ContinueRequest to resume the stream.
+// continueReq=false on the sync-done path where OnRequestHeaders returns
+// HeadersStatusContinue itself and ContinueRequest must not be called twice.
 func (w *Writer) flush(continueReq bool) {
 	if w.localReply != nil {
 		w.handle.SendLocalResponse(w.localReply.status, w.localReply.headers, w.localReply.body, "")
