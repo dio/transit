@@ -18,28 +18,6 @@ func newBuffer(raw shared.UnsafeEnvoyBuffer) Buffer {
 	return Buffer{raw: raw, Len: raw.Len}
 }
 
-func newBuffers(raw []shared.UnsafeEnvoyBuffer) []Buffer {
-	if raw == nil {
-		return nil
-	}
-	out := make([]Buffer, len(raw))
-	for i, b := range raw {
-		out[i] = newBuffer(b)
-	}
-	return out
-}
-
-func newHeaderBuffers(raw [][2]shared.UnsafeEnvoyBuffer) [][2]Buffer {
-	if raw == nil {
-		return nil
-	}
-	out := make([][2]Buffer, len(raw))
-	for i, h := range raw {
-		out[i] = [2]Buffer{newBuffer(h[0]), newBuffer(h[1])}
-	}
-	return out
-}
-
 // Bytes returns a Go-owned copy of the buffer bytes.
 func (b Buffer) Bytes() []byte {
 	return b.raw.ToBytes()
