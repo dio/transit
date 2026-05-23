@@ -85,4 +85,4 @@ All three sinks live under [`sinks/`](sinks/) and expose a consistent pattern:
 `recorderUpstream` is the right primitive for:
 
 - asserting what body and framing an upstream actually received (`WaitFor` + `Body`, `ContentLength`)
-- asserting an upstream was **not** reached (`Len() == 0` after a local-response path completes)
+- asserting an upstream was **not** reached (`WaitForNone(t, duration)` — waits the full duration and fails if any request arrives; prefer this over an immediate `Len()==0` check, which races against delayed upstream forwards)

@@ -500,6 +500,20 @@ func (r *recorderUpstream) Len() int {
 	return len(r.reqs)
 }
 
+// WaitForNone waits for duration and fails the test if any request arrives
+// during that window. Use this for negative assertions where an immediate
+// Len()==0 check would race against a delayed upstream forward.
+func (r *recorderUpstream) WaitForNone(t *testing.T, duration time.Duration) {
+	t.Helper()
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-r.arrived:
+		t.Fatalf("recorderUpstream.WaitForNone: unexpected request received within %v", duration)
+	case <-timer.C:
+	}
+}
+
 // Reset clears all captured requests.
 func (r *recorderUpstream) Reset() {
 	r.mu.Lock()

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 )
@@ -91,9 +92,9 @@ func (s *AsyncCalloutSuite) TestGet_calloutLocalResponseUpstreamNotReached() {
 	s.Require().Equal("ok", resp.Header.Get("x-async-callout"))
 	s.Require().Equal("checked", body)
 
-	// Local response is terminal: the stream is complete when mustDo returns.
-	// The recorder cluster was never reached.
-	s.Equal(0, mutableBodyRecorder.Len())
+	// Wait 200 ms after the local response to catch any delayed upstream forward.
+	// An immediate Len()==0 check would race against asynchronous resume/forward.
+	mutableBodyRecorder.WaitForNone(s.T(), 200*time.Millisecond)
 }
 
 func (s *AsyncCalloutSuite) TestGet_goDoSetsHeaderAndForwards() {
