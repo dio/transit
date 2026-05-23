@@ -105,6 +105,39 @@ In the dynamic module path, L2 forwarding uses Transit `HTTPCallout` and
 `HTTPCalloutAllSettled` so Envoy owns routing, DNS, TLS, retries, and telemetry. The
 pure Go HTTP handler remains available for unit tests and local debugging.
 
+## L2 Topology and Credential Sharding
+
+The `catalog_servers` map is intentionally flat: each entry is a logical server
+slug that maps to one L2 base URL. The same backend type (e.g. GitHub) can
+appear under multiple slugs, each pointing at a different L2 instance:
+
+```json
+"catalog_servers": {
+  "github-tenant-x": {"url": "http://l2-a.local", "cluster": "l2-a"},
+  "github-tenant-y": {"url": "http://l2-b.local", "cluster": "l2-b"}
+}
+```
+
+A profile's `servers` map then points each user at the correct pre-sharded L2:
+
+```json
+"servers": {
+  "github-tenant-x": {"url": "http://l2-a.local", "prefix": "github",
+                       "credential_ref": "github/tenant-x/user-123"}
+}
+```
+
+This bounds the credential blast radius to one L2 shard: L2-a only holds
+credentials for tenant-X users and resolves refs it owns. Revoking or
+rotating a cohort's credentials requires touching only that shard's store.
+L1 is unaware of the sharding; it is entirely a profile config and L2
+deployment concern.
+
+For production, prefer short-lived exchanged tokens over stored credentials:
+L1 decrypts a `credential_envelope` on the request path and exchanges it for
+a short-lived backend token before forwarding to L2. L2 then only ever sees
+tokens bounded by TTL, not durable secrets.
+
 ## Debug Endpoints
 
 `GET /healthz` — returns 204 when the module is alive.
