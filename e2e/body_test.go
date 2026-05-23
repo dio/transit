@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 )
@@ -106,4 +107,43 @@ func (s *MutableBodySuite) TestGet_syntheticBodyCallSetsContext() {
 	// "replaced:" = 9 bytes; actual body replacement is a no-op (no request body),
 	// but the context is written and the response handler reads it.
 	s.Equal("9", resp.Header.Get("x-replaced-len"))
+}
+
+// TestPost_bodyReplacedUpstreamObserved routes through a real upstream (recorder)
+// instead of direct_response. This proves that SetRequestBody rewrites the
+// request body and updates content-length before the request reaches upstream —
+// something direct_response cannot verify because the upstream never reads the body.
+func (s *MutableBodySuite) TestPost_bodyReplacedUpstreamObserved() {
+	s.T().Cleanup(mutableBodyRecorder.Reset)
+
+	req, _ := http.NewRequest(http.MethodPost, mutableBodyUpstreamAddr+"/", strings.NewReader("hello"))
+	req.Header.Set("content-type", "text/plain")
+	resp := mustDo(s.T(), req)
+	readBody(s.T(), resp)
+	s.Require().Equal(http.StatusOK, resp.StatusCode)
+
+	reqs := mutableBodyRecorder.WaitFor(s.T(), 1, 3*time.Second)
+	s.Require().Len(reqs, 1)
+	// Filter replaces body with "replaced:<original>" = "replaced:hello" (13 bytes).
+	s.Equal("replaced:hello", string(reqs[0].Body))
+	s.EqualValues(len("replaced:hello"), reqs[0].ContentLength)
+}
+
+// TestPost_emptyBodyUpstreamObserved verifies that an empty POST body is also
+// correctly replaced and framed at upstream.
+func (s *MutableBodySuite) TestPost_emptyBodyUpstreamObserved() {
+	s.T().Cleanup(mutableBodyRecorder.Reset)
+
+	req, _ := http.NewRequest(http.MethodPost, mutableBodyUpstreamAddr+"/", strings.NewReader(""))
+	req.Header.Set("content-type", "text/plain")
+	req.ContentLength = 0
+	resp := mustDo(s.T(), req)
+	readBody(s.T(), resp)
+	s.Require().Equal(http.StatusOK, resp.StatusCode)
+
+	reqs := mutableBodyRecorder.WaitFor(s.T(), 1, 3*time.Second)
+	s.Require().Len(reqs, 1)
+	// "replaced:" = 9 bytes.
+	s.Equal("replaced:", string(reqs[0].Body))
+	s.EqualValues(len("replaced:"), reqs[0].ContentLength)
 }

@@ -38,6 +38,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"text/template"
 	"time"
@@ -71,8 +72,11 @@ var (
 	clusterSchedulerAddr     string
 	asyncCalloutAddr         string
 	asyncCalloutBodyAddr     string
+	mutableBodyUpstreamAddr  string
 	adminAddr                string
 )
+
+var mutableBodyRecorder *recorderUpstream
 
 var otelSink *otelsink.Sink
 var alsSink *alssink.Sink
@@ -122,6 +126,8 @@ func TestMain(m *testing.M) {
 	asyncCalloutBodyPort := freePort()
 	asyncCalloutUpstreamPort := startAsyncCalloutUpstream()
 	asyncCalloutForwardUpstreamPort := startForwardEchoUpstream()
+	mutableBodyUpstreamPort := freePort()
+	mutableBodyRecorder = startRecorderUpstream()
 	adminPort := freePort()
 
 	echoAddr = fmt.Sprintf("http://localhost:%d", echoPort)
@@ -144,6 +150,7 @@ func TestMain(m *testing.M) {
 	clusterSchedulerAddr = fmt.Sprintf("http://localhost:%d", clusterSchedulerPort)
 	asyncCalloutAddr = fmt.Sprintf("http://localhost:%d", asyncCalloutPort)
 	asyncCalloutBodyAddr = fmt.Sprintf("http://localhost:%d", asyncCalloutBodyPort)
+	mutableBodyUpstreamAddr = fmt.Sprintf("http://localhost:%d", mutableBodyUpstreamPort)
 	adminAddr = fmt.Sprintf("http://localhost:%d", adminPort)
 
 	otelSink = otelsink.New()
@@ -217,6 +224,8 @@ func TestMain(m *testing.M) {
 		AsyncCalloutBodyPort:               asyncCalloutBodyPort,
 		AsyncCalloutUpstreamPort:           asyncCalloutUpstreamPort,
 		AsyncCalloutForwardUpstreamPort:    asyncCalloutForwardUpstreamPort,
+		MutableBodyUpstreamPort:            mutableBodyUpstreamPort,
+		MutableBodyRecorderPort:            mutableBodyRecorder.port,
 		AdminPort:                          adminPort,
 	})
 
@@ -356,6 +365,113 @@ func startForwardEchoUpstream() int {
 	})
 	go http.Serve(l, mux) //nolint:errcheck
 	return l.Addr().(*net.TCPAddr).Port
+}
+
+type recordedRequest struct {
+	Method        string
+	Path          string
+	Headers       http.Header
+	Body          []byte
+	ContentLength int64 // from r.ContentLength, not r.Header — Go's server parses it separately
+}
+
+type recorderUpstream struct {
+	port    int
+	mu      sync.Mutex
+	reqs    []recordedRequest
+	arrived chan struct{}
+}
+
+// startRecorderUpstream starts an HTTP server that records every inbound request.
+// Use WaitFor to block until n requests arrive, Len for an immediate count, and
+// Reset to clear state between test cases.
+func startRecorderUpstream() *recorderUpstream {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic("startRecorderUpstream: " + err.Error())
+	}
+	r := &recorderUpstream{
+		port:    l.Addr().(*net.TCPAddr).Port,
+		arrived: make(chan struct{}, 256),
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+		body, _ := io.ReadAll(req.Body)
+		r.mu.Lock()
+		r.reqs = append(r.reqs, recordedRequest{
+			Method:        req.Method,
+			Path:          req.URL.Path,
+			Headers:       req.Header.Clone(),
+			Body:          body,
+			ContentLength: req.ContentLength,
+		})
+		r.mu.Unlock()
+		select {
+		case r.arrived <- struct{}{}:
+		default:
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("recorder ok"))
+	})
+	go http.Serve(l, mux) //nolint:errcheck
+	return r
+}
+
+// WaitFor blocks until at least n requests are recorded or the test fails with a timeout.
+func (r *recorderUpstream) WaitFor(t *testing.T, n int, timeout time.Duration) []recordedRequest {
+	t.Helper()
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	for {
+		r.mu.Lock()
+		got := len(r.reqs)
+		r.mu.Unlock()
+		if got >= n {
+			return r.Requests()
+		}
+		select {
+		case <-r.arrived:
+		case <-deadline.C:
+			r.mu.Lock()
+			got = len(r.reqs)
+			r.mu.Unlock()
+			if got >= n {
+				return r.Requests()
+			}
+			t.Fatalf("recorderUpstream.WaitFor: timeout after %v: want %d requests, got %d", timeout, n, got)
+			return nil
+		}
+	}
+}
+
+// Requests returns a snapshot of all captured requests.
+func (r *recorderUpstream) Requests() []recordedRequest {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]recordedRequest, len(r.reqs))
+	copy(out, r.reqs)
+	return out
+}
+
+// Len returns the current request count without blocking.
+func (r *recorderUpstream) Len() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.reqs)
+}
+
+// Reset clears all captured requests.
+func (r *recorderUpstream) Reset() {
+	r.mu.Lock()
+	r.reqs = r.reqs[:0]
+	r.mu.Unlock()
+	for {
+		select {
+		case <-r.arrived:
+		default:
+			return
+		}
+	}
 }
 
 const (
@@ -572,6 +688,8 @@ type envoyPorts struct {
 	AsyncCalloutBodyPort               int
 	AsyncCalloutUpstreamPort           int
 	AsyncCalloutForwardUpstreamPort    int
+	MutableBodyUpstreamPort            int
+	MutableBodyRecorderPort            int
 	AdminPort                          int
 }
 
