@@ -22,7 +22,42 @@ func (g *Gateway) Handler() http.Handler {
 		writeJSON(w, http.StatusOK, g.Dump())
 	})
 	mux.HandleFunc("POST /mcp/s/{server}", g.handleCatalogServerNetHTTP)
+	mux.HandleFunc("POST /mcp/{profile}", g.handleProfileNetHTTP)
 	return mux
+}
+
+func (g *Gateway) handleProfileNetHTTP(w http.ResponseWriter, r *http.Request) {
+	profileID := r.PathValue("profile")
+	profile, ok := g.config.Profiles[profileID]
+	if !ok {
+		writeJSON(w, http.StatusNotFound, errorResponse(nil, -32004, "unknown profile: %s", profileID))
+		return
+	}
+	if !profileAuthorized(profile.APIKey, r.Header.Get) {
+		writeJSON(w, http.StatusUnauthorized, errorResponse(nil, -32001, "unauthorized profile: %s", profileID))
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse(nil, -32700, "invalid request body"))
+		return
+	}
+	defer func() { _ = r.Body.Close() }()
+	var req mcpprofilerouter.JSONRPCRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse(nil, -32700, "invalid JSON-RPC request"))
+		return
+	}
+	if req.Method != mcpprofilerouter.MethodToolsList {
+		writeJSON(w, http.StatusBadRequest, errorResponse(req.ID, -32601, "unsupported profile method: %s", req.Method))
+		return
+	}
+	result := g.listProfileToolsNetHTTP(r, req.ID, profile)
+	writeJSON(w, http.StatusOK, mcpprofilerouter.JSONRPCResponse{
+		JSONRPC: "2.0",
+		ID:      cloneRaw(req.ID),
+		Result:  result,
+	})
 }
 
 func (g *Gateway) handleCatalogServerNetHTTP(w http.ResponseWriter, r *http.Request) {
@@ -74,6 +109,67 @@ func (g *Gateway) forwardCatalogNetHTTP(r *http.Request, serverID string, server
 	}
 	if protocol := r.Header.Get(mcpprofilerouter.ProtocolVersionHeader); protocol != "" {
 		req.Header.Set(mcpprofilerouter.ProtocolVersionHeader, protocol)
+	}
+	return g.client.Do(req)
+}
+
+func (g *Gateway) listProfileToolsNetHTTP(r *http.Request, id json.RawMessage, profile Profile) mcpprofilerouter.ListToolsResult {
+	body, err := toolsListRequestBody(id)
+	if err != nil {
+		return mcpprofilerouter.ListToolsResult{}
+	}
+	merged := make([]mcpprofilerouter.Tool, 0)
+	for _, serverID := range sortedProfileServerIDs(profile.Servers) {
+		server := profile.Servers[serverID]
+		resp, err := g.forwardProfileServerNetHTTP(r, body, serverID, server)
+		if err != nil {
+			if catalog, ok := g.config.CatalogServers[serverID]; ok {
+				g.record(serverID, catalog, "error: "+err.Error())
+			}
+			continue
+		}
+		respBody, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil || resp.StatusCode != http.StatusOK {
+			if catalog, ok := g.config.CatalogServers[serverID]; ok {
+				g.record(serverID, catalog, "error: tools/list")
+			}
+			continue
+		}
+		tools, err := mergeToolsResult(serverID, server, respBody)
+		if err != nil {
+			if catalog, ok := g.config.CatalogServers[serverID]; ok {
+				g.record(serverID, catalog, "error: "+err.Error())
+			}
+			continue
+		}
+		if catalog, ok := g.config.CatalogServers[serverID]; ok {
+			g.record(serverID, catalog, "ok")
+		}
+		merged = append(merged, tools...)
+	}
+	sortTools(merged)
+	return mcpprofilerouter.ListToolsResult{Tools: merged}
+}
+
+func (g *Gateway) forwardProfileServerNetHTTP(r *http.Request, body []byte, serverID string, server ProfileServer) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, catalogURL(server.URL, serverID), bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("accept", "application/json")
+	if sessionID := r.Header.Get(mcpprofilerouter.SessionIDHeader); sessionID != "" {
+		req.Header.Set(mcpprofilerouter.SessionIDHeader, sessionID)
+	}
+	if protocol := r.Header.Get(mcpprofilerouter.ProtocolVersionHeader); protocol != "" {
+		req.Header.Set(mcpprofilerouter.ProtocolVersionHeader, protocol)
+	}
+	if server.CredentialRef != "" {
+		req.Header.Set("x-mcp-credential-ref", server.CredentialRef)
+	}
+	if server.CredentialEnvelope != "" {
+		req.Header.Set("x-mcp-credential-envelope", server.CredentialEnvelope)
 	}
 	return g.client.Do(req)
 }

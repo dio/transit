@@ -30,6 +30,7 @@ func NewTransitFilter(gateway *Gateway) (up.HandlerFunc, up.RequestBodyHandlerFu
 		switch {
 		case path == "/healthz" || path == "/dump":
 		case strings.HasPrefix(path, "/mcp/s/"):
+		case strings.HasPrefix(path, "/mcp/"):
 		default:
 			return
 		}
@@ -52,6 +53,10 @@ func NewTransitFilter(gateway *Gateway) (up.HandlerFunc, up.RequestBodyHandlerFu
 		}
 		if strings.HasPrefix(stripQuery(req.path), "/mcp/s/") {
 			gateway.calloutCatalogServerTransit(w, req, chunk.Data)
+			return
+		}
+		if strings.HasPrefix(stripQuery(req.path), "/mcp/") {
+			gateway.calloutProfileTransit(w, req, chunk.Data)
 			return
 		}
 		gateway.serveNetHTTPInTransit(w, req, chunk.Data)
@@ -95,6 +100,65 @@ func (g *Gateway) calloutCatalogServerTransit(w *up.Writer, r transitRequest, bo
 	}
 }
 
+func (g *Gateway) calloutProfileTransit(w *up.Writer, r transitRequest, body []byte) {
+	profileID, profile, ok := g.profileFromTransitPath(r.path)
+	if !ok {
+		writeTransitJSON(w, http.StatusNotFound, errorResponse(nil, -32004, "unknown profile: %s", profileID))
+		return
+	}
+	if !profileAuthorized(profile.APIKey, func(name string) string { return headerValue(r.headers, name) }) {
+		writeTransitJSON(w, http.StatusUnauthorized, errorResponse(nil, -32001, "unauthorized profile: %s", profileID))
+		return
+	}
+	var rpcReq mcpprofilerouter.JSONRPCRequest
+	if err := json.Unmarshal(body, &rpcReq); err != nil {
+		writeTransitJSON(w, http.StatusBadRequest, errorResponse(nil, -32700, "invalid JSON-RPC request"))
+		return
+	}
+	if rpcReq.Method != mcpprofilerouter.MethodToolsList {
+		writeTransitJSON(w, http.StatusBadRequest, errorResponse(rpcReq.ID, -32601, "unsupported profile method: %s", rpcReq.Method))
+		return
+	}
+	reqs, serverIDs, err := g.profileToolsListCalloutRequests(r, rpcReq.ID, profile)
+	if err != nil {
+		writeTransitJSON(w, http.StatusInternalServerError, errorResponse(rpcReq.ID, -32603, "profile gateway failed"))
+		return
+	}
+	err = w.HTTPCalloutAllSettled(reqs, func(responses []up.HTTPCalloutAllSettledResponse) {
+		merged := make([]mcpprofilerouter.Tool, 0)
+		for i, resp := range responses {
+			serverID := serverIDs[i]
+			profileServer := profile.Servers[serverID]
+			catalogServer := g.config.CatalogServers[serverID]
+			if resp.Failed() {
+				g.record(serverID, catalogServer, "error: tools/list")
+				continue
+			}
+			status, _ := responseFromCalloutHeaders(resp.Headers)
+			if status != http.StatusOK {
+				g.record(serverID, catalogServer, fmt.Sprintf("error: status %d", status))
+				continue
+			}
+			tools, err := mergeToolsResult(serverID, profileServer, calloutBodyBytes(resp.Body))
+			if err != nil {
+				g.record(serverID, catalogServer, "error: "+err.Error())
+				continue
+			}
+			g.record(serverID, catalogServer, "ok")
+			merged = append(merged, tools...)
+		}
+		sortTools(merged)
+		writeTransitJSON(w, http.StatusOK, mcpprofilerouter.JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      cloneRaw(rpcReq.ID),
+			Result:  mcpprofilerouter.ListToolsResult{Tools: merged},
+		})
+	})
+	if err != nil {
+		writeTransitJSON(w, http.StatusBadGateway, errorResponse(rpcReq.ID, -32002, "tools/list failed"))
+	}
+}
+
 func (g *Gateway) catalogCalloutRequest(r transitRequest, body []byte, serverID string, server CatalogServer) (up.HTTPCalloutRequest, error) {
 	u, err := url.Parse(catalogURL(server.URL, serverID))
 	if err != nil {
@@ -107,6 +171,8 @@ func (g *Gateway) catalogCalloutRequest(r transitRequest, body []byte, serverID 
 		{"host", u.Host},
 		{"content-type", headerOrDefault(r.headers, "content-type", "application/json")},
 		{"accept", headerOrDefault(r.headers, "accept", "application/json")},
+		{"x-mcp-credential-ref", ""},
+		{"x-mcp-credential-envelope", ""},
 	}
 	if sessionID := headerValue(r.headers, mcpprofilerouter.SessionIDHeader); sessionID != "" {
 		headers = append(headers, [2]string{mcpprofilerouter.SessionIDHeader, sessionID})
@@ -120,6 +186,52 @@ func (g *Gateway) catalogCalloutRequest(r transitRequest, body []byte, serverID 
 		Body:          body,
 		TimeoutMillis: timeoutMillis(g.config.TimeoutMillis),
 	}, nil
+}
+
+func (g *Gateway) profileToolsListCalloutRequests(r transitRequest, id json.RawMessage, profile Profile) ([]up.HTTPCalloutRequest, []string, error) {
+	body, err := toolsListRequestBody(id)
+	if err != nil {
+		return nil, nil, err
+	}
+	serverIDs := sortedProfileServerIDs(profile.Servers)
+	reqs := make([]up.HTTPCalloutRequest, 0, len(serverIDs))
+	outIDs := make([]string, 0, len(serverIDs))
+	for _, serverID := range serverIDs {
+		profileServer := profile.Servers[serverID]
+		catalogServer := g.config.CatalogServers[serverID]
+		u, err := url.Parse(catalogURL(profileServer.URL, serverID))
+		if err != nil {
+			return nil, nil, err
+		}
+		headers := [][2]string{
+			{":method", http.MethodPost},
+			{":path", u.RequestURI()},
+			{":scheme", u.Scheme},
+			{"host", u.Host},
+			{"content-type", "application/json"},
+			{"accept", "application/json"},
+		}
+		if sessionID := headerValue(r.headers, mcpprofilerouter.SessionIDHeader); sessionID != "" {
+			headers = append(headers, [2]string{mcpprofilerouter.SessionIDHeader, sessionID})
+		}
+		if protocol := headerValue(r.headers, mcpprofilerouter.ProtocolVersionHeader); protocol != "" {
+			headers = append(headers, [2]string{mcpprofilerouter.ProtocolVersionHeader, protocol})
+		}
+		if profileServer.CredentialRef != "" {
+			headers = append(headers, [2]string{"x-mcp-credential-ref", profileServer.CredentialRef})
+		}
+		if profileServer.CredentialEnvelope != "" {
+			headers = append(headers, [2]string{"x-mcp-credential-envelope", profileServer.CredentialEnvelope})
+		}
+		reqs = append(reqs, up.HTTPCalloutRequest{
+			Cluster:       catalogCluster(catalogServer),
+			Headers:       headers,
+			Body:          body,
+			TimeoutMillis: timeoutMillis(g.config.TimeoutMillis),
+		})
+		outIDs = append(outIDs, serverID)
+	}
+	return reqs, outIDs, nil
 }
 
 func (g *Gateway) serveNetHTTPInTransit(w *up.Writer, r transitRequest, body []byte) {
@@ -155,6 +267,19 @@ func (g *Gateway) catalogServerFromTransitPath(path string) (string, CatalogServ
 	}
 	server, ok := g.config.CatalogServers[serverID]
 	return serverID, server, ok
+}
+
+func (g *Gateway) profileFromTransitPath(path string) (string, Profile, bool) {
+	rawID, ok := strings.CutPrefix(stripQuery(path), "/mcp/")
+	if !ok || rawID == "" || strings.HasPrefix(rawID, "s/") {
+		return "", Profile{}, false
+	}
+	profileID, err := url.PathUnescape(rawID)
+	if err != nil {
+		return rawID, Profile{}, false
+	}
+	profile, ok := g.config.Profiles[profileID]
+	return profileID, profile, ok
 }
 
 func catalogCluster(server CatalogServer) string {

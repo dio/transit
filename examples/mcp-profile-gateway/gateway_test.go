@@ -3,6 +3,7 @@ package mcpprofilegateway
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -57,6 +58,415 @@ func TestGateway_forwardsPublicCatalogServerToOwningL2(t *testing.T) {
 	require.Empty(t, gotCredRef)
 	require.Empty(t, gotCredEnvelope)
 	require.Equal(t, "l2-session", resp.Header.Get(mcpprofilerouter.SessionIDHeader))
+}
+
+func TestGateway_catalogCalloutRequestBlanksProfileCredentialHeaders(t *testing.T) {
+	gateway := New(Config{
+		CatalogServers: map[string]CatalogServer{
+			"aws-knowledge": {URL: "http://l2-catalog.local", Cluster: "l2"},
+		},
+	})
+	req, err := gateway.catalogCalloutRequest(transitRequest{
+		path: "/mcp/s/aws-knowledge",
+		headers: [][2]string{
+			{"content-type", "application/json"},
+			{"x-mcp-credential-ref", "client-supplied"},
+			{"x-mcp-credential-envelope", "client-supplied-envelope"},
+		},
+	}, []byte(`{}`), "aws-knowledge", CatalogServer{URL: "http://l2-catalog.local", Cluster: "l2"})
+	require.NoError(t, err)
+
+	require.Equal(t, "", headerValue(req.Headers, "x-mcp-credential-ref"))
+	require.Equal(t, "", headerValue(req.Headers, "x-mcp-credential-envelope"))
+}
+
+func TestGateway_profileToolsListFansOutAndNamespaces(t *testing.T) {
+	var awsCredRef, githubEnvelope string
+	aws := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		awsCredRef = r.Header.Get("x-mcp-credential-ref")
+		require.Equal(t, "/mcp/s/aws-knowledge", r.URL.Path)
+		writeJSON(w, http.StatusOK, mcpprofilerouter.JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      json.RawMessage(`1`),
+			Result: mcpprofilerouter.ListToolsResult{Tools: []mcpprofilerouter.Tool{
+				{Name: "read", Description: "read docs", InputSchema: map[string]any{"type": "object"}},
+				{Name: "disabled", Description: "disabled", InputSchema: map[string]any{"type": "object"}},
+			}},
+		})
+	}))
+	defer aws.Close()
+	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		githubEnvelope = r.Header.Get("x-mcp-credential-envelope")
+		require.Equal(t, "/mcp/s/github", r.URL.Path)
+		writeJSON(w, http.StatusOK, mcpprofilerouter.JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      json.RawMessage(`1`),
+			Result: mcpprofilerouter.ListToolsResult{Tools: []mcpprofilerouter.Tool{
+				{Name: "search", Description: "search repos", InputSchema: map[string]any{"type": "object"}},
+			}},
+		})
+	}))
+	defer github.Close()
+
+	gateway := New(Config{
+		CatalogServers: map[string]CatalogServer{
+			"aws-knowledge": {URL: aws.URL},
+			"github":        {URL: github.URL},
+		},
+		Profiles: map[string]Profile{
+			"profile": {
+				Name:   "profile",
+				APIKey: "profile-key",
+				Servers: map[string]ProfileServer{
+					"aws-knowledge": {
+						URL:           aws.URL,
+						Prefix:        "aws",
+						CredentialRef: "profile/aws/user",
+						EnabledTools:  map[string]bool{"read": true},
+					},
+					"github": {
+						URL:                github.URL,
+						Prefix:             "github",
+						CredentialEnvelope: "opaque",
+					},
+				},
+			},
+		},
+	})
+	server := httptest.NewServer(gateway.Handler())
+	defer server.Close()
+
+	resp := postRPCRaw(t, server.URL+"/mcp/profile", "", mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  mcpprofilerouter.MethodToolsList,
+	}, map[string]string{"authorization": "Bearer profile-key"})
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
+	require.Equal(t, "profile/aws/user", awsCredRef)
+	require.Equal(t, "opaque", githubEnvelope)
+
+	var rpc mcpprofilerouter.JSONRPCResponse
+	require.NoError(t, json.Unmarshal(body, &rpc))
+	raw, err := json.Marshal(rpc.Result)
+	require.NoError(t, err)
+	var list mcpprofilerouter.ListToolsResult
+	require.NoError(t, json.Unmarshal(raw, &list))
+	require.Len(t, list.Tools, 2)
+	require.Equal(t, []string{"aws.read", "github.search"}, []string{list.Tools[0].Name, list.Tools[1].Name})
+}
+
+func TestGateway_profileToolsListAuthFailureReachesNoL2(t *testing.T) {
+	var reached bool
+	l2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer l2.Close()
+	gateway := New(Config{
+		CatalogServers: map[string]CatalogServer{"github": {URL: l2.URL}},
+		Profiles: map[string]Profile{
+			"profile": {
+				Name:    "profile",
+				APIKey:  "profile-key",
+				Servers: map[string]ProfileServer{"github": {URL: l2.URL}},
+			},
+		},
+	})
+	server := httptest.NewServer(gateway.Handler())
+	defer server.Close()
+
+	resp := postRPCRaw(t, server.URL+"/mcp/profile", "", mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  mcpprofilerouter.MethodToolsList,
+	}, nil)
+	defer func() { _ = resp.Body.Close() }()
+
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	require.False(t, reached)
+}
+
+func TestGateway_profileToolsListPartialFailureReturnsHealthyTools(t *testing.T) {
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer bad.Close()
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, mcpprofilerouter.JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      json.RawMessage(`1`),
+			Result: mcpprofilerouter.ListToolsResult{Tools: []mcpprofilerouter.Tool{
+				{Name: "search", InputSchema: map[string]any{"type": "object"}},
+			}},
+		})
+	}))
+	defer good.Close()
+	gateway := New(Config{
+		CatalogServers: map[string]CatalogServer{
+			"bad":  {URL: bad.URL},
+			"good": {URL: good.URL},
+		},
+		Profiles: map[string]Profile{
+			"profile": {
+				Name: "profile",
+				Servers: map[string]ProfileServer{
+					"bad":  {URL: bad.URL},
+					"good": {URL: good.URL, Prefix: "github"},
+				},
+			},
+		},
+	})
+	server := httptest.NewServer(gateway.Handler())
+	defer server.Close()
+
+	resp := postRPCRaw(t, server.URL+"/mcp/profile", "", mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  mcpprofilerouter.MethodToolsList,
+	}, nil)
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
+	var rpc mcpprofilerouter.JSONRPCResponse
+	require.NoError(t, json.Unmarshal(body, &rpc))
+	raw, err := json.Marshal(rpc.Result)
+	require.NoError(t, err)
+	var list mcpprofilerouter.ListToolsResult
+	require.NoError(t, json.Unmarshal(raw, &list))
+	require.Len(t, list.Tools, 1)
+	require.Equal(t, "github.search", list.Tools[0].Name)
+}
+
+func TestGateway_profileToolsListAllFailuresReturnsEmptyList(t *testing.T) {
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer bad.Close()
+	gateway := New(Config{
+		CatalogServers: map[string]CatalogServer{"bad": {URL: bad.URL}},
+		Profiles: map[string]Profile{
+			"profile": {
+				Name:    "profile",
+				Servers: map[string]ProfileServer{"bad": {URL: bad.URL}},
+			},
+		},
+	})
+	server := httptest.NewServer(gateway.Handler())
+	defer server.Close()
+
+	resp := postRPCRaw(t, server.URL+"/mcp/profile", "", mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  mcpprofilerouter.MethodToolsList,
+	}, nil)
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
+	var rpc mcpprofilerouter.JSONRPCResponse
+	require.NoError(t, json.Unmarshal(body, &rpc))
+	raw, err := json.Marshal(rpc.Result)
+	require.NoError(t, err)
+	var list mcpprofilerouter.ListToolsResult
+	require.NoError(t, json.Unmarshal(raw, &list))
+	require.Empty(t, list.Tools)
+}
+
+func TestGateway_profileToolsListAllToolsDisabledReturnsEmptyList(t *testing.T) {
+	l2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, mcpprofilerouter.JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      json.RawMessage(`1`),
+			Result: mcpprofilerouter.ListToolsResult{Tools: []mcpprofilerouter.Tool{
+				{Name: "read", InputSchema: map[string]any{"type": "object"}},
+				{Name: "search", InputSchema: map[string]any{"type": "object"}},
+			}},
+		})
+	}))
+	defer l2.Close()
+	gateway := New(Config{
+		CatalogServers: map[string]CatalogServer{"aws-knowledge": {URL: l2.URL}},
+		Profiles: map[string]Profile{
+			"profile": {
+				Name: "profile",
+				Servers: map[string]ProfileServer{
+					"aws-knowledge": {URL: l2.URL, Prefix: "aws", EnabledTools: map[string]bool{}},
+				},
+			},
+		},
+	})
+	server := httptest.NewServer(gateway.Handler())
+	defer server.Close()
+
+	resp := postRPCRaw(t, server.URL+"/mcp/profile", "", mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  mcpprofilerouter.MethodToolsList,
+	}, nil)
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
+	var rpc mcpprofilerouter.JSONRPCResponse
+	require.NoError(t, json.Unmarshal(body, &rpc))
+	raw, err := json.Marshal(rpc.Result)
+	require.NoError(t, err)
+	var list mcpprofilerouter.ListToolsResult
+	require.NoError(t, json.Unmarshal(raw, &list))
+	require.Empty(t, list.Tools)
+}
+
+func TestGateway_profileToolsListXAPIKeyAuth(t *testing.T) {
+	var reached bool
+	l2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		writeJSON(w, http.StatusOK, mcpprofilerouter.JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      json.RawMessage(`1`),
+			Result:  mcpprofilerouter.ListToolsResult{},
+		})
+	}))
+	defer l2.Close()
+	gateway := New(Config{
+		CatalogServers: map[string]CatalogServer{"github": {URL: l2.URL}},
+		Profiles: map[string]Profile{
+			"profile": {
+				Name:    "profile",
+				APIKey:  "profile-key",
+				Servers: map[string]ProfileServer{"github": {URL: l2.URL}},
+			},
+		},
+	})
+	server := httptest.NewServer(gateway.Handler())
+	defer server.Close()
+
+	resp := postRPCRaw(t, server.URL+"/mcp/profile", "", mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  mcpprofilerouter.MethodToolsList,
+	}, map[string]string{"x-api-key": "profile-key"})
+	defer func() { _ = resp.Body.Close() }()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.True(t, reached)
+}
+
+func TestGateway_profileUnsupportedMethodReachesNoL2(t *testing.T) {
+	var reached bool
+	l2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer l2.Close()
+	gateway := New(Config{
+		CatalogServers: map[string]CatalogServer{"github": {URL: l2.URL}},
+		Profiles: map[string]Profile{
+			"profile": {
+				Name:    "profile",
+				Servers: map[string]ProfileServer{"github": {URL: l2.URL}},
+			},
+		},
+	})
+	server := httptest.NewServer(gateway.Handler())
+	defer server.Close()
+
+	resp := postRPCRaw(t, server.URL+"/mcp/profile", "", mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  mcpprofilerouter.MethodToolsCall,
+	}, nil)
+	defer func() { _ = resp.Body.Close() }()
+
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	require.False(t, reached)
+}
+
+func TestGateway_unknownProfileReachesNoL2(t *testing.T) {
+	var reached bool
+	l2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer l2.Close()
+	gateway := New(Config{
+		CatalogServers: map[string]CatalogServer{"github": {URL: l2.URL}},
+	})
+	server := httptest.NewServer(gateway.Handler())
+	defer server.Close()
+
+	resp := postRPCRaw(t, server.URL+"/mcp/missing", "", mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  mcpprofilerouter.MethodToolsList,
+	}, nil)
+	defer func() { _ = resp.Body.Close() }()
+
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	require.False(t, reached)
+}
+
+func TestGateway_profileToolsListBackendJSONRPCErrorIsPartialFailure(t *testing.T) {
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, mcpprofilerouter.JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      json.RawMessage(`1`),
+			Error:   &mcpprofilerouter.JSONRPCError{Code: -32000, Message: "backend failed"},
+		})
+	}))
+	defer bad.Close()
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, mcpprofilerouter.JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      json.RawMessage(`1`),
+			Result: mcpprofilerouter.ListToolsResult{Tools: []mcpprofilerouter.Tool{
+				{Name: "search", InputSchema: map[string]any{"type": "object"}},
+			}},
+		})
+	}))
+	defer good.Close()
+	gateway := New(Config{
+		CatalogServers: map[string]CatalogServer{
+			"bad":  {URL: bad.URL},
+			"good": {URL: good.URL},
+		},
+		Profiles: map[string]Profile{
+			"profile": {
+				Name: "profile",
+				Servers: map[string]ProfileServer{
+					"bad":  {URL: bad.URL},
+					"good": {URL: good.URL},
+				},
+			},
+		},
+	})
+	server := httptest.NewServer(gateway.Handler())
+	defer server.Close()
+
+	resp := postRPCRaw(t, server.URL+"/mcp/profile", "", mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  mcpprofilerouter.MethodToolsList,
+	}, nil)
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
+	var rpc mcpprofilerouter.JSONRPCResponse
+	require.NoError(t, json.Unmarshal(body, &rpc))
+	raw, err := json.Marshal(rpc.Result)
+	require.NoError(t, err)
+	var list mcpprofilerouter.ListToolsResult
+	require.NoError(t, json.Unmarshal(raw, &list))
+	require.Equal(t, []string{"good.search"}, []string{list.Tools[0].Name})
 }
 
 func TestGateway_unknownCatalogServer(t *testing.T) {

@@ -2,16 +2,21 @@
 
 `mcp-profile-gateway` is the L1 public gateway for MCP profile routing.
 
-This first implementation slice supports public catalog forwarding:
+This implementation supports public catalog forwarding and profile
+`tools/list` fan-out:
 
 ```text
 POST /mcp/s/{server-slug}
   -> owning L2 /mcp/s/{server-slug}
+
+POST /mcp/{profile-id} method=tools/list
+  -> fan out to profile member L2 catalog endpoints
+  -> merge enabled tools as {prefix}.{tool}
 ```
 
-Profile fan-out on `/mcp/{profile-id}` is planned next. This example is
-separate from `examples/mcp-catalog-router`, which is the L2 execution front
-end.
+Profile `initialize` session fan-out and `tools/call` routing are planned next.
+This example is separate from `examples/mcp-catalog-router`, which is the L2
+execution front end.
 
 ## Config
 
@@ -66,8 +71,9 @@ Direct public `/mcp/s/{server-slug}` requests have no profile context in this
 first slice, so the gateway does not forward profile-bound credential refs or
 credential envelopes on that path.
 
-Profile-bound credential transport will be added with `/mcp/{profile-id}`.
+Profile `/mcp/{profile-id}` requests forward configured `credential_ref` and
+`credential_envelope` values to the owning L2 server request.
 
-In the dynamic module path, L2 forwarding uses Transit `HTTPCallout` so Envoy
-owns routing, DNS, TLS, retries, and telemetry. The pure Go HTTP handler remains
-available for unit tests and local debugging.
+In the dynamic module path, L2 forwarding uses Transit `HTTPCallout` and
+`HTTPCalloutAllSettled` so Envoy owns routing, DNS, TLS, retries, and telemetry. The
+pure Go HTTP handler remains available for unit tests and local debugging.

@@ -158,6 +158,15 @@ func SortedCatalogServerIDs(servers map[string]CatalogServer) []string {
 	return out
 }
 
+func sortedProfileServerIDs(servers map[string]ProfileServer) []string {
+	out := make([]string, 0, len(servers))
+	for id := range servers {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func catalogURL(base, serverID string) string {
 	return strings.TrimRight(base, "/") + "/mcp/s/" + url.PathEscape(serverID)
 }
@@ -195,6 +204,71 @@ func stripQuery(path string) string {
 		return path[:i]
 	}
 	return path
+}
+
+func profileToolEnabled(server ProfileServer, name string) bool {
+	if server.EnabledTools == nil {
+		return true
+	}
+	return server.EnabledTools[name]
+}
+
+func profileAuthorized(apiKey string, header func(string) string) bool {
+	if apiKey == "" {
+		return true
+	}
+	if header("x-api-key") == apiKey {
+		return true
+	}
+	return strings.TrimSpace(header("authorization")) == "Bearer "+apiKey
+}
+
+func toolsListRequestBody(id json.RawMessage) ([]byte, error) {
+	return json.Marshal(mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      cloneRaw(id),
+		Method:  mcpprofilerouter.MethodToolsList,
+	})
+}
+
+func mergeToolsResult(serverID string, server ProfileServer, body []byte) ([]mcpprofilerouter.Tool, error) {
+	var rpc mcpprofilerouter.JSONRPCResponse
+	if err := json.Unmarshal(body, &rpc); err != nil {
+		return nil, err
+	}
+	if rpc.Error != nil {
+		return nil, errors.New(rpc.Error.Message)
+	}
+	raw, err := json.Marshal(rpc.Result)
+	if err != nil {
+		return nil, err
+	}
+	var out mcpprofilerouter.ListToolsResult
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	tools := make([]mcpprofilerouter.Tool, 0, len(out.Tools))
+	for _, tool := range out.Tools {
+		if !profileToolEnabled(server, tool.Name) {
+			continue
+		}
+		tool.Name = serverPrefix(serverID, server) + "." + tool.Name
+		tools = append(tools, tool)
+	}
+	return tools, nil
+}
+
+func sortTools(tools []mcpprofilerouter.Tool) {
+	sort.Slice(tools, func(i, j int) bool {
+		return tools[i].Name < tools[j].Name
+	})
+}
+
+func cloneRaw(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return nil
+	}
+	return append(json.RawMessage(nil), raw...)
 }
 
 func errorResponse(id json.RawMessage, code int, format string, args ...any) mcpprofilerouter.JSONRPCResponse {
