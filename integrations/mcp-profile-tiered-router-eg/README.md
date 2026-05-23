@@ -41,20 +41,21 @@ The demo proves:
 
 ## Architecture
 
-```text
-client
-  |
-  v
-Gateway/l1  (mcp-profile-gateway filter)
-  profile auth, initialize fan-out, tools/list fan-out, tools/call routing
-  |                                  |
-  v                                  v
-Gateway/l2-a                     Gateway/l2-b
-  (mcp-catalog-router)             (mcp-catalog-router)
-  (cluster-router egress)          (cluster-router egress)
-  |               |                 |                |
-  v               v                 v                v
-mcp-kiwi  mcp-aws-knowledge   mcp-microsoft     mcp-github
+```mermaid
+flowchart TD
+    client[client]
+    l1["Gateway/l1\nmcp-profile-gateway\nprofile auth · fan-out · tool routing"]
+    l2a["Gateway/l2-a\nmcp-catalog-router\ncluster-router egress"]
+    l2b["Gateway/l2-b\nmcp-catalog-router\ncluster-router egress"]
+    kiwi[mcp-kiwi]
+    aws[mcp-aws-knowledge]
+    ms[mcp-microsoft]
+    gh[mcp-github]
+
+    client --> l1
+    l1 --> l2a & l2b
+    l2a --> kiwi & aws
+    l2b --> ms & gh
 ```
 
 L1 selects the owning L2 cluster from an explicit server-slug→L2 ownership map

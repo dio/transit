@@ -222,36 +222,24 @@ with HTTP/2 protocol options.
 
 ## Architecture
 
-```text
-client or demo CLI
-  |
-  | Host: tiered-router.example.com
-  | x-transit-tag / x-tenant / x-user-key / x-byok-key-id
-  | x-model
-  v
-Gateway/l1
-HTTPRoute/l1-public
-  |
-  v
-EnvoyProxy/l1
-Transit cluster-shard-router
-  |
-  | adds x-transit-l1-shard and x-transit-l1-target
-  | selects l2-a or l2-b
-  |
-  +-------------------------------+
-  |                               |
-  v                               v
-Service/l2-a                  Service/l2-b
-  |                               |
-  v                               v
-Gateway/l2-a                  Gateway/l2-b
-EnvoyProxy/l2-a               EnvoyProxy/l2-b
-  |                               |
-  | cluster-router                | cluster-router
-  | local cluster + HTTPS cluster | local cluster + HTTPS cluster
-  v                               v
-upstream-a                     upstream-c
+```mermaid
+flowchart TD
+    client["client\nx-transit-tag / x-model"]
+    l1["Gateway/l1\nEnvoyProxy/l1\ncluster-shard-router\nshard selection"]
+    l2a["Gateway/l2-a\nEnvoyProxy/l2-a\ncluster-router\nmodel → provider"]
+    l2b["Gateway/l2-b\nEnvoyProxy/l2-b\ncluster-router\nmodel → provider"]
+    ua[upstream-a]
+    ub[upstream-b]
+    uc[upstream-c]
+    ud[upstream-d]
+    cp["demo control plane\nshard table + model routes"]
+
+    client --> l1
+    l1 -->|"tag→a\nx-transit-l1-shard"| l2a
+    l1 -->|"tag→b\nx-transit-l1-shard"| l2b
+    l2a --> ua & ub
+    l2b --> uc & ud
+    cp -. live config .-> l1 & l2a & l2b
 ```
 
 The visible response from the demo upstream should identify every routing

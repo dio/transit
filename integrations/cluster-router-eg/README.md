@@ -36,26 +36,23 @@ The e2e proves both the data-plane behavior and the operational surface:
 
 ## Architecture
 
-```text
-CLI or client
-  |
-  v
-Gateway API Gateway and HTTPRoute
-  |
-  v
-Envoy Gateway translates Gateway API to xDS
-  |
-  v
-EnvoyPatchPolicy patches the generated listener and backend cluster
-  |
-  v
-Envoy proxy with /etc/envoy/dynamic-modules/libcluster-router.so
-  |
-  v
-Transit Cluster Extension chooses upstream A, B, or C
-  |
-  v
-Transit upstream HTTP filter injects provider headers
+```mermaid
+flowchart TD
+    client["client\nx-model header"]
+    gw["Gateway + HTTPRoute"]
+    eg["Envoy Gateway\nxDS translation"]
+    epp["EnvoyPatchPolicy\npatches listener + cluster"]
+    envoy["Envoy proxy\nlibcluster-router.so"]
+    ce["Cluster Extension\nhost selection"]
+    uf["upstream HTTP filter\nprovider header injection"]
+    ua[upstream A]
+    ub[upstream B]
+    uc[upstream C]
+    cp["demo control plane\n/routes.json"]
+
+    client --> gw --> eg --> epp --> envoy --> ce --> uf
+    uf --> ua & ub & uc
+    cp -. live config .-> ce
 ```
 
 ## Components
