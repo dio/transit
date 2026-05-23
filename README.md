@@ -91,6 +91,10 @@ different points in the stream. `RegisterWithBody` sees request body chunks as
 they arrive. `RegisterWithMutableBody` buffers the body first so the handler can
 read or replace the complete content.
 
+For request-time Envoy HTTP callouts, use `w.HTTPCallout` when the handler may
+send a local response. Use `w.Go` plus `w.Do` only for async work that forwards
+the request after queued mutations. See `docs/async-http-callouts.md`.
+
 ## What Writer can do
 
 `up.Writer` wraps the common Envoy actions you need from a filter:
