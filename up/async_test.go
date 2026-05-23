@@ -292,9 +292,13 @@ func TestWriterGo_bodyCallbackProceedsAfterResume(t *testing.T) {
 		handle:     handle,
 		bufferBody: true,
 		handler: func(w *Writer, _ *Request) {
-			// Block the goroutine until OnRequestHeaders has returned Stop, so the
-			// goroutine's flush(true) and the headers-return read of goStarted cannot
-			// race. Unblocked by close(proceed) after OnRequestHeaders returns.
+			// Block the goroutine until close(proceed) so the goroutine's flush(true)
+			// cannot race with OnRequestHeaders' read of goStarted. This models the
+			// real Envoy scheduler, which posts the resume closure back to the stream
+			// worker/event loop; because OnRequestHeaders is already running on that
+			// worker, the closure cannot execute until the current filter callback
+			// returns. (The schedule request itself may arrive earlier; only the
+			// closure execution is deferred.)
 			w.Go(func(_ context.Context) {
 				<-proceed
 				w.SetRequestHeader("x-go-done", "1")

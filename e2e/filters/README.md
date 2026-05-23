@@ -135,3 +135,47 @@ Access logger side (`RegisterAccessLogger`):
 - `h.GetResponseFlags()` + `up.ResponseFlagsString(...)` — error flags
 
 `CorrelatorSuite` in `e2e/correlator_test.go` asserts `status_filter == response_code`.
+
+## e2e-async-callout — [`async_callout.go`](async_callout.go)
+
+Exercises the two async request-handling modes:
+
+| Path | Mode | What it tests |
+|---|---|---|
+| `/checked` (default) | `HTTPCallout` callback | Callout body returned as a local 200 response; `x-async-callout: ok` set |
+| `/forward` | `HTTPCallout` callback | Callback mutates `x-callout-result`, no local reply → request forwarded |
+| `/missing-host` | `HTTPCallout` init error | Omits required `host` header; Envoy rejects at init → filter sends 503 |
+| `/go-do` | `Go` + `Do` | Goroutine issues `w.Do` callout, sets `x-go-result` from body, forwards |
+
+Used by `AsyncCalloutSuite` in `e2e/async_callout_test.go`.
+
+## e2e-async-callout-body — [`async_callout.go`](async_callout.go)
+
+Registered with `RegisterWithMutableBody` to exercise Go+Do combined with a
+buffered request body handler. The headers handler calls `w.Go` (which pauses
+the stream); after the goroutine issues a `w.Do` callout and resumes, the body
+handler runs with `f.goStarted == false` and sets `x-body-len` from the
+accumulated body length. Both headers are echoed by the forward-echo upstream.
+
+Used by `TestPost_goDoBodyCallbackProceedsAfterResume` in `AsyncCalloutSuite`.
+
+### Scheduler ordering and the unit-test channel trick
+
+In production Envoy, `scheduler.Schedule` posts the resume closure to the
+stream's worker/event loop. Because `OnRequestHeaders` is already running on
+that worker, the closure cannot execute until the current filter callback
+returns. Ordering is always:
+
+1. `handler` calls `w.Go` — `f.goStarted = true`
+2. goroutine may finish and call `scheduler.Schedule(resume)`
+3. `OnRequestHeaders` still reads `f.goStarted == true`, returns `Stop`
+4. Envoy runs the scheduled closure — `f.goStarted = false`, `flush(true)`, `ContinueRequest`
+5. `OnRequestBody` sees `f.goStarted == false`, runs normally
+
+The schedule *request* (step 2) may arrive before step 3; only the closure
+*execution* (step 4) is deferred until the worker is free.
+
+The unit-test `fakeScheduler` runs `fn()` synchronously on the goroutine
+thread, which can race with the main-thread read in step 3. The body test
+blocks the goroutine on a channel until `OnRequestHeaders` returns, making the
+unit-test ordering match the production ordering.

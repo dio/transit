@@ -66,3 +66,4 @@ All three sinks live under [`sinks/`](sinks/) and expose a consistent pattern:
 | `upstream_filter_test.go` | `UpstreamFilterSuite` | dynamic module filter as upstream filter; auth injection |
 | `lb_policy_test.go` | LB Policy | custom LB policy host selection |
 | `cluster_test.go` | Cluster Extension | module-owned host discovery and host selection |
+| `async_callout_test.go` | `AsyncCalloutSuite` | `HTTPCallout` callback path, `Go`+`Do` fan-out, request body after goroutine resume |
