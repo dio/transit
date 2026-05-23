@@ -45,6 +45,7 @@ func (s *EchoSuite) TestExtraHeaders_passesThrough() {
 	req, _ := http.NewRequest(http.MethodGet, echoAddr+"/", nil)
 	req.Header.Set("x-custom-header", "value")
 	resp := mustDo(s.T(), req)
-	defer resp.Body.Close()
+	body := readBody(s.T(), resp)
 	s.Equal(http.StatusOK, resp.StatusCode)
+	s.Equal("echo ok", body)
 }
