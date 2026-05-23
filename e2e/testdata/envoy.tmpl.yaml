@@ -554,6 +554,35 @@ static_resources:
                           route:
                             cluster: async-callout-forward-upstream
 
+    - name: async-callout-body-e2e
+      address:
+        socket_address: { address: 0.0.0.0, port_value: {{.AsyncCalloutBodyPort}} }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: async_callout_body_e2e
+                http_filters:
+                  - name: e2e-async-callout-body
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: e2e
+                      filter_name: e2e-async-callout-body
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: async_callout_body_e2e
+                  virtual_hosts:
+                    - name: local
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          route:
+                            cluster: async-callout-forward-upstream
+
   clusters:
     - name: compress-upstream
       connect_timeout: 5s

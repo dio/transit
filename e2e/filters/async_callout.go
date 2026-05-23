@@ -2,6 +2,7 @@ package filters
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
 
@@ -10,6 +11,7 @@ import (
 
 func init() {
 	up.Register("e2e-async-callout", asyncCallout)
+	up.RegisterWithMutableBody("e2e-async-callout-body", asyncCalloutBodyHeaders, asyncCalloutBodyHandler, nil)
 }
 
 func asyncCallout(w *up.Writer, r *up.Request) {
@@ -108,5 +110,36 @@ func asyncCallout(w *up.Writer, r *up.Request) {
 		if err != nil {
 			w.SendLocalResponse(503, []byte(err.Error()), [2]string{"content-type", "text/plain"})
 		}
+	}
+}
+
+// asyncCalloutBodyHeaders is the request-headers handler for e2e-async-callout-body.
+// It launches a Go+Do callout; the result is set as x-go-result on the forwarded request.
+func asyncCalloutBodyHeaders(w *up.Writer, r *up.Request) {
+	w.Go(func(ctx context.Context) {
+		resp, err := w.Do(ctx, up.HTTPCalloutRequest{
+			Cluster: "async-callout-upstream",
+			Headers: [][2]string{
+				{":method", "GET"},
+				{":path", r.Path},
+				{":scheme", "http"},
+				{"host", "async-callout.local"},
+			},
+			TimeoutMillis: 1000,
+		})
+		if err != nil || resp.Result != up.HTTPCalloutSuccess {
+			return
+		}
+		if len(resp.Body) > 0 {
+			w.SetRequestHeader("x-go-result", resp.Body[0].ToString())
+		}
+	})
+}
+
+// asyncCalloutBodyHandler runs after the Go+Do goroutine resumes (goStarted=false).
+// It records the body length as a request header so the forward-echo upstream echoes it back.
+func asyncCalloutBodyHandler(w *up.Writer, chunk *up.BodyChunk) {
+	if chunk.EndStream {
+		w.SetRequestHeader("x-body-len", fmt.Sprintf("%d", len(chunk.Data)))
 	}
 }

@@ -70,6 +70,7 @@ var (
 	clusterExtensionMTLSAddr string
 	clusterSchedulerAddr     string
 	asyncCalloutAddr         string
+	asyncCalloutBodyAddr     string
 	adminAddr                string
 )
 
@@ -118,6 +119,7 @@ func TestMain(m *testing.M) {
 	}
 	clusterSchedulerPort := freePort()
 	asyncCalloutPort := freePort()
+	asyncCalloutBodyPort := freePort()
 	asyncCalloutUpstreamPort := startAsyncCalloutUpstream()
 	asyncCalloutForwardUpstreamPort := startForwardEchoUpstream()
 	adminPort := freePort()
@@ -141,6 +143,7 @@ func TestMain(m *testing.M) {
 	clusterExtensionMTLSAddr = fmt.Sprintf("http://localhost:%d", clusterExtensionMTLSPort)
 	clusterSchedulerAddr = fmt.Sprintf("http://localhost:%d", clusterSchedulerPort)
 	asyncCalloutAddr = fmt.Sprintf("http://localhost:%d", asyncCalloutPort)
+	asyncCalloutBodyAddr = fmt.Sprintf("http://localhost:%d", asyncCalloutBodyPort)
 	adminAddr = fmt.Sprintf("http://localhost:%d", adminPort)
 
 	otelSink = otelsink.New()
@@ -211,6 +214,7 @@ func TestMain(m *testing.M) {
 		ClusterExtensionMTLSClientKeyPath:  clusterExtensionMTLSUpstream.clientKeyPath,
 		ClusterSchedulerPort:               clusterSchedulerPort,
 		AsyncCalloutPort:                   asyncCalloutPort,
+		AsyncCalloutBodyPort:               asyncCalloutBodyPort,
 		AsyncCalloutUpstreamPort:           asyncCalloutUpstreamPort,
 		AsyncCalloutForwardUpstreamPort:    asyncCalloutForwardUpstreamPort,
 		AdminPort:                          adminPort,
@@ -565,6 +569,7 @@ type envoyPorts struct {
 	ClusterExtensionMTLSClientKeyPath  string
 	ClusterSchedulerPort               int
 	AsyncCalloutPort                   int
+	AsyncCalloutBodyPort               int
 	AsyncCalloutUpstreamPort           int
 	AsyncCalloutForwardUpstreamPort    int
 	AdminPort                          int

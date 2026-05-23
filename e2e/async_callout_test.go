@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -52,6 +53,25 @@ func (s *AsyncCalloutSuite) TestGet_calloutMissingHostFails() {
 
 	s.Require().Equal(http.StatusServiceUnavailable, resp.StatusCode)
 	s.Require().Contains(body, "missing required headers")
+}
+
+func (s *AsyncCalloutSuite) TestPost_goDoBodyCallbackProceedsAfterResume() {
+	// Verifies that after Go+Do completes (goStarted cleared), the request body
+	// handler runs normally and its header mutation reaches upstream.
+	//
+	// Filter: headers handler calls w.Go → w.Do → sets x-go-result from callout body.
+	//         body handler (after resume) sets x-body-len from body length.
+	// Both headers are echoed by the forward-echo upstream.
+	req, err := http.NewRequest(http.MethodPost, asyncCalloutBodyAddr+"/go-do-body", strings.NewReader("hello"))
+	s.Require().NoError(err)
+	req.Header.Set("content-type", "text/plain")
+
+	resp := mustDo(s.T(), req)
+	readBody(s.T(), resp)
+
+	s.Require().Equal(http.StatusOK, resp.StatusCode)
+	s.Require().Equal("go-do-body", resp.Header.Get("x-received-x-go-result"))
+	s.Require().Equal("5", resp.Header.Get("x-received-x-body-len"))
 }
 
 func (s *AsyncCalloutSuite) TestGet_goDoSetsHeaderAndForwards() {
