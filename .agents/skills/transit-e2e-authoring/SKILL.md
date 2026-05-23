@@ -91,6 +91,9 @@ Choose the right in-process upstream or listener for each test scenario:
   Envoy verifies that body `StopAndBuffer` actually prevents fallback routing
   before the callout callback runs. Do not assert late request header mutations
   from body callbacks unless headers were intentionally stopped earlier.
+- If a new `HTTPCalloutAllSettled` user is added, keep one root e2e case that proves
+  multiple Envoy callout callbacks can be merged into one local response. Then
+  add example-level e2e for the concrete workflow that uses wait-all fan-out.
 - If **body replacement** is involved, the harness must assert the upstream-
   observed body length/content, not just the client-visible status code.
 - If **multiple Transit APIs compose**, write one minimal root regression per

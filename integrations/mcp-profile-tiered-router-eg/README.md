@@ -1,15 +1,17 @@
 # MCP Profile Tiered Router Integration
 
 Status: skeleton integration. The topology contract and placeholder Kubernetes
-resource shape exist; images, concrete module wiring, and e2e assertions are not
-implemented yet.
+resource shape exist; images and integration e2e assertions are not implemented
+yet. The L1 example module now exists and covers catalog forwarding plus profile
+`tools/list` fan-out, but this integration has not wired it into runnable Envoy
+Gateway images.
 
 This integration should take the proven local MCP routing semantics and make the
 L1/L2 product topology explicit under Envoy Gateway.
 
 Role mapping for this skeleton:
 
-- L1 profile front end: future `examples/mcp-profile-gateway`
+- L1 profile front end: `examples/mcp-profile-gateway`
 - L2 catalog front end: `examples/mcp-catalog-router`
 - L2 egress router: `examples/cluster-router`
 
@@ -139,7 +141,7 @@ POST /mcp/s/aws-knowledge method=tools/list
 ```text
 Gateway/l1
   EnvoyProxy/l1
-  mcp-profile-gateway (future examples/mcp-profile-gateway)
+  mcp-profile-gateway (examples/mcp-profile-gateway)
     profile fetch/auth/policy/session
     fan-out to L2 server cluster endpoints
     explicit catalog-server ownership map
@@ -206,9 +208,12 @@ not log, dump, or persist raw user-provided tokens.
 
 For the skeleton, L1 gets static profile JSON through a placeholder
 `MCP_PROFILE_GATEWAY_PROFILE` environment value. The `mcp-profile-gateway`
-module does not exist yet; the Envoy Gateway templates reserve the future
-`libmcp-profile-gateway.so` module name and path so the integration contract
-does not drift back into the older local example naming.
+module now exists. The current example implements public catalog forwarding and
+profile `tools/list` fan-out; profile `initialize`, `tools/call`, and session
+handling are still planned.
+The Envoy Gateway templates reserve the `libmcp-profile-gateway.so` module name
+and path so the integration contract does not drift back into the older local
+example naming.
 
 Later, static profile JSON should be replaced by dynamic profile fetching from
 an L1-owned profile service:
@@ -336,7 +341,10 @@ Nice-to-have later cases:
 1. Use this README as the contract for the first implementation pass.
 2. Add k8s templates for L1, L2-A, L2-B, and fake MCP backends. Done as a
    skeleton under `k8s/`.
-3. Create the future `examples/mcp-profile-gateway` L1 profile front end.
+3. Wire the existing `examples/mcp-profile-gateway` L1 front end into the
+   integration image/resource shape. Its current implemented behavior is public
+   `/mcp/s/{server-slug}` catalog forwarding and profile `tools/list` fan-out;
+   profile session and `tools/call` routing remain later example slices.
 4. Use `examples/mcp-catalog-router` as the L2 server-cluster front end for
    `/mcp/s/{server-slug}`. It sets `x-mcp-server` and calls a separate
    cluster-router-patched egress cluster.

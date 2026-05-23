@@ -113,6 +113,11 @@ callback. Route to a harmless blackhole/static cluster instead, as in the MCP
 profile examples, so request-body buffering and the local response path are
 exercised before router completion.
 
+For examples that fan out to multiple Envoy-managed upstream requests and then
+return one synthesized response, use `Writer.HTTPCalloutAllSettled` from the
+request callback. Do not use `w.Go` + `w.Do` when the example needs
+`SendLocalResponse`; Envoy only honors local responses from filter callbacks.
+
 ## Upstream selection examples
 
 LB Policy and Cluster Extension are separate APIs. Do not treat coverage or

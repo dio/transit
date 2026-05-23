@@ -81,9 +81,10 @@ client needs a merged response.
 
 ### HTTPCallout path
 
-`w.HTTPCallout` is mutex-free by design. It can be initiated from request
-headers or request body callbacks. `OnHttpCalloutDone` fires the user callback
-and calls `flush(true)` when the initiating callback has already returned Stop.
+`w.HTTPCallout` and `w.HTTPCalloutAllSettled` are mutex-free on the stream mutation
+path. They can be initiated from request headers or request body callbacks.
+`OnHttpCalloutDone` fires the user callback and calls `flush(true)` when the
+initiating callback has already returned Stop.
 
 `OnHttpCalloutDone` may fire from a different goroutine before the initiating
 request callback returns — Envoy does not guarantee the callback is deferred.
@@ -99,7 +100,24 @@ header mutations from a body callback can be too late to affect upstream routing
 or forwarded headers if request headers already continued before the body
 callback ran.
 
-There is no mutex on this path. No extra struct is allocated.
+Use `w.HTTPCalloutAllSettled` when one request callback needs multiple
+Envoy-managed outbound requests and one merged local response, such as MCP
+`tools/list` fan-out. Response headers and bodies are copied before the final
+callback runs, because earlier Envoy-owned response buffers may be invalid by
+the time every callout has settled. The API intentionally reports every slot and
+leaves aggregate policy to the caller: partial success, all-failed error, or
+empty successful result are application decisions.
+
+The callback naming intentionally follows the Promise vocabulary:
+
+- `HTTPCalloutAllSettled` exists now: wait for every callout and report every
+  success or failure slot.
+- `HTTPCalloutRace` is reserved for a future first-settled primitive.
+- `HTTPCalloutAny` is reserved for a future first-success primitive.
+- `HTTPCalloutAll` is reserved for a future all-success/fail-fast helper if a
+  real user need appears.
+
+There is no mutex around Envoy handle calls on this path.
 
 ### Go+Do path
 
