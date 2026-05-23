@@ -1,0 +1,73 @@
+# MCP Profile Gateway
+
+`mcp-profile-gateway` is the L1 public gateway for MCP profile routing.
+
+This first implementation slice supports public catalog forwarding:
+
+```text
+POST /mcp/s/{server-slug}
+  -> owning L2 /mcp/s/{server-slug}
+```
+
+Profile fan-out on `/mcp/{profile-id}` is planned next. This example is
+separate from `examples/mcp-catalog-router`, which is the L2 execution front
+end.
+
+## Config
+
+The dynamic module reads `MCP_PROFILE_GATEWAY_CONFIG`:
+
+```json
+{
+  "timeout_millis": 800,
+  "catalog_servers": {
+    "aws-knowledge": {
+      "url": "http://l2-a.local",
+      "cluster": "l2-a-catalog"
+    },
+    "github": {
+      "url": "http://l2-b.local",
+      "cluster": "l2-b-catalog"
+    }
+  },
+  "profiles": {
+    "9b3f7d0a80c4aa6d-67261ca9ea3dadb2": {
+      "name": "kiwi",
+      "api_key": "profile-key",
+      "servers": {
+        "aws-knowledge": {
+          "url": "http://l2-a.local",
+          "prefix": "aws-knowledge",
+          "credential_ref": "profile/aws-knowledge/user-123"
+        }
+      }
+    }
+  }
+}
+```
+
+`catalog_servers[*].url` is the owning L2 base URL used for the outbound
+`:scheme`, `host`, and `:path` callout headers. `cluster` is the Envoy cluster
+that should carry the callout. If omitted, it defaults to
+`mcp-profile-gateway-l2`.
+
+The gateway forwards public catalog requests to:
+
+```text
+{url}/mcp/s/{server-slug}
+```
+
+Do not put concrete MCP backend hosts in this config. Concrete host selection
+belongs to L2 `mcp-catalog-router` plus `cluster-router`.
+
+## Direct Catalog Credentials
+
+Direct public `/mcp/s/{server-slug}` requests have no profile context in this
+first slice, so the gateway does not forward profile-bound credential refs or
+credential envelopes on that path.
+
+Profile-bound credential transport will be added with `/mcp/{profile-id}`.
+
+In the dynamic module path, L2 forwarding uses Transit `HTTPCallout` so Envoy
+owns routing, DNS, TLS, retries, and telemetry. The pure Go HTTP handler remains
+available for unit tests and local debugging.
