@@ -141,6 +141,13 @@ type filter struct {
 	override    *upstreamOverrideMutation
 	localReply  *localResponse // set by SendLocalResponse; cleared by flush after sending
 
+	// stripFramingOnResume is set by OnRequestHeaders when a body is expected and
+	// buffered-body replacement is active. flush removes content-length and
+	// transfer-encoding after applying all queued header mutations, so that a
+	// handler-queued framing value cannot reach upstream before OnRequestBody
+	// writes the correct content-length after body replacement.
+	stripFramingOnResume bool
+
 	// Body replacements are set by SetRequestBody/SetResponseBody and applied
 	// inline in the body callbacks (not via flush). The flags are cleared
 	// immediately after application to prevent replay on the next body frame.
@@ -204,6 +211,15 @@ func (f *filter) flush(continueReq bool) {
 		}
 		f.reqHeaders = f.reqHeaders[:0]
 	}
+	// Strip framing headers after all queued mutations so a handler-queued
+	// content-length or transfer-encoding is removed, not forwarded upstream.
+	// The correct content-length is written by OnRequestBody after replacement.
+	if f.stripFramingOnResume {
+		hdrs := f.handle.RequestHeaders()
+		hdrs.Remove("content-length")
+		hdrs.Remove("transfer-encoding")
+		f.stripFramingOnResume = false
+	}
 	for _, m := range f.filterState {
 		f.handle.SetFilterState(m.key, m.value)
 	}
@@ -225,7 +241,7 @@ func (f *filter) flush(continueReq bool) {
 		if buf != nil {
 			buf.Drain(buf.GetSize())
 			buf.Append(f.requestBodyReplacement)
-			// content-length was pre-cleared in OnRequestHeaders; set correct value.
+			// content-length was cleared above; set the replacement body's value.
 			f.handle.RequestHeaders().Set("content-length", fmt.Sprintf("%d", len(f.requestBodyReplacement)))
 		}
 		f.hasRequestBodyReplacement = false
@@ -254,17 +270,15 @@ func (f *filter) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool) sh
 	w := &Writer{f: f, calloutCB: f}
 	f.handler(w, newRequestWithContext(headers, f.name, &f.context))
 
-	// Strip framing headers before any async/callout stop path. This guarantees
-	// upstream never receives a stale content-length or transfer-encoding even when
-	// the stream is paused here and ContinueRequest fires later (after a Go goroutine
-	// or HTTPCallout). The correct content-length is written by flush/OnRequestBody
-	// after any body replacement. Not needed when endOfStream is true (no body).
+	// Mark that framing headers must be stripped. The actual removal happens in
+	// flush after all queued header mutations are applied, so a handler-queued
+	// content-length or transfer-encoding cannot survive past the strip point.
+	// Not needed when endOfStream is true (no body replacement will follow).
 	//
 	// Do NOT use HeadersStatusStopAllAndBuffer: the SDK has no async resume path
 	// for that status and it freezes the filter chain permanently.
 	if !endOfStream && f.bufferBody && f.requestBodyHandler != nil {
-		headers.Remove("content-length")
-		headers.Remove("transfer-encoding")
+		f.stripFramingOnResume = true
 	}
 
 	if f.pausePendingCallout(w.calloutStarted) {

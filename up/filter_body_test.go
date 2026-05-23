@@ -109,6 +109,9 @@ func TestFilter_OnRequestHeaders_bufferedMode_stripsLengthHeaders(t *testing.T) 
 		"transfer-encoding": {"chunked"},
 		"content-type":      {"text/plain"},
 	})
+	// flush calls handle.RequestHeaders() to apply the framing strip after queued
+	// mutations; stub it to return the same map the test passes to OnRequestHeaders.
+	handle.EXPECT().RequestHeaders().Return(headers).AnyTimes()
 	f := newFilterWithBodyBuffered(handle, func(_ *Writer, _ *BodyChunk) {})
 
 	status := f.OnRequestHeaders(headers, false)

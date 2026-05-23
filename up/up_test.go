@@ -1,7 +1,6 @@
 package up
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -392,22 +391,12 @@ func TestFilter_staleQueueNotReplayed(t *testing.T) {
 	require.Empty(t, handle.RequestHeaders().GetOne("x-stale").ToString())
 }
 
-// --- Framing strip before async stop ---
+// --- Framing strip ordering ---
 
-func TestFilter_OnRequestHeaders_stripsFramingBeforeAsyncStop(t *testing.T) {
-	// When the filter has buffered-body mode enabled and a goroutine is in flight
-	// (f.async != nil), content-length and transfer-encoding must be stripped from
-	// the request headers before OnRequestHeaders returns Stop. If they are stripped
-	// only on the sync continue path, ContinueRequest later forwards stale framing
-	// upstream before OnRequestBody has a chance to write the correct value.
-	//
-	// We simulate the async-active state by pre-setting f.async directly rather than
-	// launching a real goroutine. A real goroutine would write f.async=nil from a
-	// separate goroutine concurrently with OnRequestHeaders reading it, which is a
-	// data race that does not exist in production (Envoy's real scheduler posts back
-	// to the event loop, so f.async=nil only runs after OnRequestHeaders returns).
-	_, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
+func TestFilter_OnRequestHeaders_stripsFramingOnSyncContinue(t *testing.T) {
+	// On the synchronous-continue path, content-length and transfer-encoding must
+	// be stripped AFTER flush so that a handler-queued framing mutation cannot
+	// survive and reach upstream before OnRequestBody writes the replacement value.
 	handle := testutil.NewFilterHandle(
 		testutil.WithHeaders(map[string]string{
 			":method":           "POST",
@@ -417,18 +406,43 @@ func TestFilter_OnRequestHeaders_stripsFramingBeforeAsyncStop(t *testing.T) {
 		}),
 	)
 	f := &filter{
-		handle:             handle,
-		bufferBody:         true,
-		async:              &asyncState{cancel: cancel},
-		handler:            func(_ *Writer, _ *Request) {},
+		handle:     handle,
+		bufferBody: true,
+		handler: func(w *Writer, _ *Request) {
+			// Handler queues a stale framing value; strip must undo it.
+			w.SetRequestHeader("content-length", "999")
+		},
 		requestBodyHandler: func(_ *Writer, _ *BodyChunk) {},
 	}
 	status := f.OnRequestHeaders(handle.RequestHeaders(), false)
-	// Stream paused — goroutine (simulated) is in flight.
-	require.Equal(t, shared.HeadersStatusStop, status)
-	// Strip happened synchronously before the async check; headers are already clean.
+	require.Equal(t, shared.HeadersStatusContinue, status)
+	// Strip happened inside flush, after the queued mutation was applied.
 	require.Empty(t, handle.RequestHeaders().GetOne("content-length").ToString())
 	require.Empty(t, handle.RequestHeaders().GetOne("transfer-encoding").ToString())
+}
+
+func TestFilter_flush_stripsFramingOnAsyncResume(t *testing.T) {
+	// On the async-resume path (flush(true)), content-length and transfer-encoding
+	// must be stripped after applying queued mutations so that ContinueRequest
+	// never forwards stale framing upstream.
+	handle := testutil.NewFilterHandle(
+		testutil.WithHeaders(map[string]string{
+			"content-length":    "100",
+			"transfer-encoding": "chunked",
+		}),
+	)
+	f := &filter{
+		handle:               handle,
+		bufferBody:           true,
+		requestBodyHandler:   func(_ *Writer, _ *BodyChunk) {},
+		stripFramingOnResume: true,
+		// Pre-queue a stale content-length to verify strip runs after mutations.
+		reqHeaders: []requestHeaderMutation{{name: "content-length", value: "999"}},
+	}
+	f.flush(true)
+	require.Empty(t, handle.RequestHeaders().GetOne("content-length").ToString())
+	require.Empty(t, handle.RequestHeaders().GetOne("transfer-encoding").ToString())
+	require.Equal(t, 1, handle.ContinuedReq)
 }
 
 // --- Direct-write SendLocalResponse deduplication ---
