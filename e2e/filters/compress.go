@@ -4,7 +4,7 @@
 // and strips the Content-Encoding response header so Go's http.Transport does
 // not attempt a second decompress pass.
 //
-// Used by CodecSuite to verify the full RequestIdentity → Decode → SetResponseBody
+// Used by CompressSuite to verify the full RequestIdentity → Decode → SetResponseBody
 // pipeline and the Content-Encoding stripping behaviour.
 package filters
 

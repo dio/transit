@@ -31,13 +31,13 @@ Two filters that exercise body handling:
 
 Used by `BodySuite` and `MutableBodySuite`.
 
-## e2e-codec — [`codec.go`](codec.go)
+## e2e-compress — [`compress.go`](compress.go)
 
 A buffered response-body filter that calls `RequestIdentity`, decodes a
 gzip-compressed upstream response, strips `Content-Encoding`, and replaces
 the body with the plain-text version via `SetResponseBody`.
 
-Used by `CodecSuite` to verify the full gzip-decode pipeline.
+Used by `CompressSuite` to verify the full gzip-decode pipeline.
 
 ## e2e-metadata — [`metadata.go`](metadata.go)
 
