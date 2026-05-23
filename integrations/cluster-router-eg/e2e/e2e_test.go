@@ -6,18 +6,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"text/template"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/dio/transit/integrations/internal/egtest"
 )
 
 const gatewayHost = "cluster-router.example.com"
@@ -28,8 +27,10 @@ func TestClusterRouterEnvoyGateway(t *testing.T) {
 	}
 	suite.Run(t, &clusterRouterSuite{
 		envoyGatewaySuite: envoyGatewaySuite{
-			cluster: "transit-cluster-router-eg",
-			timeout: 14 * time.Minute,
+			Suite: egtest.Suite{
+				Cluster: "transit-cluster-router-eg",
+				Timeout: 14 * time.Minute,
+			},
 		},
 	})
 }
@@ -46,17 +47,7 @@ func (s *clusterRouterSuite) SetupSuite() {
 	s.controlImage = requireEnv(s.T(), "CONTROL_PLANE_IMAGE")
 
 	s.envoyGatewaySuite.SetupSuite()
-	if os.Getenv("K3D_SKIP_IMAGE_IMPORT") == "1" {
-		liveLogf(s.T(), "skipping k3d image import; cluster will pull %s and %s", s.envoyImage, s.controlImage)
-		return
-	}
-	liveLogf(s.T(), "importing images into k3d cluster %s", s.cluster)
-	args := []string{"image", "import", "-c", s.cluster}
-	if mode := os.Getenv("K3D_IMAGE_IMPORT_MODE"); mode != "" {
-		args = append(args, "--mode", mode)
-	}
-	args = append(args, s.envoyImage, s.controlImage)
-	run(s.ctx, s.T(), "", "k3d", args...)
+	s.ImportImages(s.envoyImage, s.controlImage)
 }
 
 func (s *clusterRouterSuite) TestClusterRouterEnvoyGateway() {
@@ -64,49 +55,49 @@ func (s *clusterRouterSuite) TestClusterRouterEnvoyGateway() {
 	s.verifyEnvoyGatewayInstall()
 
 	liveLogf(s.T(), "applying EnvoyProxy and demo workloads")
-	renderApply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "envoyproxy.tmpl.yaml"), map[string]string{
+	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "envoyproxy.tmpl.yaml"), map[string]string{
 		"EnvoyImage": s.envoyImage,
 	})
-	renderApply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "demo.tmpl.yaml"), map[string]string{
+	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "demo.tmpl.yaml"), map[string]string{
 		"ControlPlaneImage": s.controlImage,
 	})
-	apply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "gateway.yaml"))
-	apply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "httproute.yaml"))
+	apply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "gateway.yaml"))
+	apply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "httproute.yaml"))
 
 	liveLogf(s.T(), "waiting for demo pods and Gateway")
-	waitReady(s.ctx, s.T(), "app=cluster-router-control")
-	waitReady(s.ctx, s.T(), "app=upstream-a")
-	waitReady(s.ctx, s.T(), "app=upstream-b")
-	waitReady(s.ctx, s.T(), "app=upstream-c")
-	run(s.ctx, s.T(), "", "kubectl", "wait", "gateway/cluster-router", "--for=condition=Accepted", "--timeout=120s")
+	waitReady(s.Ctx, s.T(), "app=cluster-router-control")
+	waitReady(s.Ctx, s.T(), "app=upstream-a")
+	waitReady(s.Ctx, s.T(), "app=upstream-b")
+	waitReady(s.Ctx, s.T(), "app=upstream-c")
+	run(s.Ctx, s.T(), "", "kubectl", "wait", "gateway/cluster-router", "--for=condition=Accepted", "--timeout=120s")
 
 	liveLogf(s.T(), "waiting for generated Envoy deployment")
-	envoyDeploy := envoyDeployment(s.ctx, s.T())
-	waitDeployment(s.ctx, s.T(), "envoy-gateway-system", envoyDeploy)
+	envoyDeploy := envoyDeployment(s.Ctx, s.T())
+	waitDeployment(s.Ctx, s.T(), "envoy-gateway-system", envoyDeploy)
 	liveLogf(s.T(), "opening Envoy admin port-forward")
-	adminURL, stopAdmin := portForward(s.ctx, s.T(), "envoy-gateway-system", "deploy/"+envoyDeploy, 19000)
+	adminURL, stopAdmin := portForward(s.Ctx, s.T(), "envoy-gateway-system", "deploy/"+envoyDeploy, 19000)
 	defer stopAdmin()
-	clusterName := discoverBackendCluster(s.ctx, s.T(), adminURL)
+	clusterName := discoverBackendCluster(s.Ctx, s.T(), adminURL)
 	liveLogf(s.T(), "patching generated cluster %q", clusterName)
-	renderApply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "epp.tmpl.yaml"), map[string]string{
+	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "epp.tmpl.yaml"), map[string]string{
 		"ClusterName": clusterName,
 	})
-	waitEnvoyPatchPolicyProgrammed(s.ctx, s.T(), "cluster-router")
+	waitEnvoyPatchPolicyProgrammed(s.Ctx, s.T(), "cluster-router")
 
 	liveLogf(s.T(), "opening Gateway and control-plane port-forwards")
-	gatewayURL, stopGateway := portForward(s.ctx, s.T(), "envoy-gateway-system", "service/"+envoyService(s.ctx, s.T()), 80)
+	gatewayURL, stopGateway := portForward(s.Ctx, s.T(), "envoy-gateway-system", "service/"+envoyService(s.Ctx, s.T()), 80)
 	defer stopGateway()
-	controlURL, stopControl := portForward(s.ctx, s.T(), "default", "service/cluster-router-control", 8080)
+	controlURL, stopControl := portForward(s.Ctx, s.T(), "default", "service/cluster-router-control", 8080)
 	defer stopControl()
 
 	liveLogf(s.T(), "asserting bootstrap routes")
-	assertRoute(s.ctx, s.T(), gatewayURL, "gpt-fast", upstreamResponse{
+	assertRoute(s.Ctx, s.T(), gatewayURL, "gpt-fast", upstreamResponse{
 		Upstream: "upstream-a",
 		Auth:     "Bearer openai-token",
 		Provider: "openai",
 		Version:  "bootstrap",
 	})
-	assertRoute(s.ctx, s.T(), gatewayURL, "claude-safe", upstreamResponse{
+	assertRoute(s.Ctx, s.T(), gatewayURL, "claude-safe", upstreamResponse{
 		Upstream: "upstream-b",
 		Auth:     "Bearer anthropic-token",
 		Provider: "anthropic",
@@ -114,14 +105,14 @@ func (s *clusterRouterSuite) TestClusterRouterEnvoyGateway() {
 	})
 
 	liveLogf(s.T(), "posting updated model routes")
-	postModel(s.ctx, s.T(), controlURL, modelUpdate{
+	postModel(s.Ctx, s.T(), controlURL, modelUpdate{
 		Name:       "gpt-slow",
 		Target:     "upstream-a.default.svc.cluster.local:8080",
 		Provider:   "openai",
 		AuthHeader: "Bearer slow-token",
 		Version:    "updated",
 	})
-	postModel(s.ctx, s.T(), controlURL, modelUpdate{
+	postModel(s.Ctx, s.T(), controlURL, modelUpdate{
 		Name:       "kimi-fast",
 		Target:     "upstream-c.default.svc.cluster.local:8080",
 		Provider:   "moonshot",
@@ -130,8 +121,8 @@ func (s *clusterRouterSuite) TestClusterRouterEnvoyGateway() {
 	})
 
 	liveLogf(s.T(), "waiting for gpt-slow to use updated config")
-	eventually(s.ctx, s.T(), func() error {
-		return checkRoute(s.ctx, gatewayURL, "gpt-slow", upstreamResponse{
+	eventually(s.Ctx, s.T(), func() error {
+		return checkRoute(s.Ctx, gatewayURL, "gpt-slow", upstreamResponse{
 			Upstream: "upstream-a",
 			Auth:     "Bearer slow-token",
 			Provider: "openai",
@@ -139,8 +130,8 @@ func (s *clusterRouterSuite) TestClusterRouterEnvoyGateway() {
 		})
 	})
 	liveLogf(s.T(), "waiting for kimi-fast to use updated config")
-	eventually(s.ctx, s.T(), func() error {
-		return checkRoute(s.ctx, gatewayURL, "kimi-fast", upstreamResponse{
+	eventually(s.Ctx, s.T(), func() error {
+		return checkRoute(s.Ctx, gatewayURL, "kimi-fast", upstreamResponse{
 			Upstream: "upstream-c",
 			Auth:     "Bearer moonshot-token",
 			Provider: "moonshot",
@@ -149,7 +140,7 @@ func (s *clusterRouterSuite) TestClusterRouterEnvoyGateway() {
 	})
 
 	liveLogf(s.T(), "checking redacted control-plane dump")
-	dumpBody := get(s.ctx, s.T(), controlURL+"/dump", nil)
+	dumpBody := get(s.Ctx, s.T(), controlURL+"/dump", nil)
 	require.NotContains(s.T(), string(dumpBody), "Bearer ", "dump leaked bearer token")
 	require.Contains(s.T(), string(dumpBody), "kimi-fast")
 	require.Contains(s.T(), string(dumpBody), "gpt-slow")
@@ -294,52 +285,6 @@ func do(req *http.Request) ([]byte, int, error) {
 	return body, resp.StatusCode, nil
 }
 
-func waitReady(ctx context.Context, t *testing.T, label string) {
-	t.Helper()
-	run(ctx, t, "", "kubectl", "wait", "pods", "--for=condition=Ready", "-n", "default", "-l", label, "--timeout=120s")
-}
-
-func waitDeployment(ctx context.Context, t *testing.T, namespace, name string) {
-	t.Helper()
-	run(ctx, t, "", "kubectl", "rollout", "status", "deployment/"+name, "-n", namespace, "--timeout=180s")
-	run(ctx, t, "", "kubectl", "wait", "deployment/"+name, "-n", namespace, "--for=condition=Available", "--timeout=180s")
-}
-
-func waitEnvoyPatchPolicyProgrammed(ctx context.Context, t *testing.T, name string) {
-	t.Helper()
-	deadline := time.Now().Add(120 * time.Second)
-	var last string
-	for time.Now().Before(deadline) {
-		last = output(ctx, t, "", "kubectl", "get", "envoypatchpolicy", name,
-			"-o", "jsonpath={range .status.ancestors[*].conditions[*]}{.type}={.status}:{.reason}:{.message}{'\\n'}{end}")
-		if strings.Contains(last, "Programmed=True") {
-			return
-		}
-		select {
-		case <-ctx.Done():
-			require.NoError(t, ctx.Err())
-		case <-time.After(500 * time.Millisecond):
-		}
-	}
-	require.Failf(t, "EnvoyPatchPolicy not programmed", "last conditions:\n%s", last)
-}
-
-func apply(ctx context.Context, t *testing.T, path string) {
-	t.Helper()
-	run(ctx, t, "", "kubectl", "apply", "-f", path)
-}
-
-func renderApply(ctx context.Context, t *testing.T, path string, data any) {
-	t.Helper()
-	raw, err := os.ReadFile(path)
-	require.NoError(t, err)
-	tmpl, err := template.New(filepath.Base(path)).Parse(string(raw))
-	require.NoError(t, err)
-	var out bytes.Buffer
-	require.NoError(t, tmpl.Execute(&out, data))
-	run(ctx, t, out.String(), "kubectl", "apply", "-f", "-")
-}
-
 func envoyDeployment(ctx context.Context, t *testing.T) string {
 	t.Helper()
 	return generatedResourceName(ctx, t, "deploy")
@@ -371,161 +316,4 @@ func generatedResourceName(ctx context.Context, t *testing.T, kind string) strin
 	}
 	require.Failf(t, "generated Envoy resource not found", "%s not found; last output: %q", kind, last)
 	return ""
-}
-
-func portForward(ctx context.Context, t *testing.T, namespace, target string, remotePort int) (string, func()) {
-	t.Helper()
-	port := freePort(t)
-	pctx, cancel := context.WithCancel(ctx)
-	args := append([]string{"--context", kubeContext(t), "-n", namespace, "port-forward", target}, fmt.Sprintf("%d:%d", port, remotePort))
-	cmd := exec.CommandContext(pctx, "kubectl", args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	cmd.Stdout = &stderr
-	if err := cmd.Start(); err != nil {
-		cancel()
-		require.NoError(t, err)
-	}
-	stop := func() {
-		cancel()
-		_ = cmd.Wait()
-	}
-	url := fmt.Sprintf("http://127.0.0.1:%d", port)
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 200*time.Millisecond)
-		if err == nil {
-			_ = conn.Close()
-			return url, stop
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	stop()
-	require.Failf(t, "port-forward not ready", "port-forward %s/%s did not become ready: %s", namespace, target, stderr.String())
-	return "", func() {}
-}
-
-func eventually(ctx context.Context, t *testing.T, check func() error) {
-	t.Helper()
-	deadline := time.Now().Add(20 * time.Second)
-	var last error
-	for time.Now().Before(deadline) {
-		if err := check(); err == nil {
-			return
-		} else {
-			last = err
-		}
-		select {
-		case <-ctx.Done():
-			require.NoError(t, ctx.Err())
-		case <-time.After(200 * time.Millisecond):
-		}
-	}
-	require.NoErrorf(t, last, "condition did not pass")
-}
-
-func run(ctx context.Context, t *testing.T, stdin, name string, args ...string) {
-	t.Helper()
-	_ = output(ctx, t, stdin, name, args...)
-}
-
-func deleteK3dCluster(ctx context.Context, t *testing.T, cluster string) {
-	t.Helper()
-	liveLogf(t, "$ k3d cluster delete %s", cluster)
-	start := time.Now()
-	cmd := exec.CommandContext(ctx, "k3d", "cluster", "delete", cluster)
-	out, err := cmd.CombinedOutput()
-	if err == nil {
-		liveLogf(t, "ok k3d cluster delete %s (%s)", cluster, time.Since(start).Round(time.Millisecond))
-		return
-	}
-	text := string(out)
-	if strings.Contains(text, "No nodes found") || strings.Contains(text, "not found") {
-		liveLogf(t, "ok k3d cluster delete %s: already absent (%s)", cluster, time.Since(start).Round(time.Millisecond))
-		return
-	}
-	require.NoErrorf(t, err, "k3d cluster delete %s failed:\n%s", cluster, out)
-}
-
-func k3dClusterExists(ctx context.Context, cluster string) bool {
-	cmd := exec.CommandContext(ctx, "k3d", "cluster", "list", cluster, "--no-headers")
-	out, err := cmd.CombinedOutput()
-	return err == nil && strings.Contains(string(out), cluster)
-}
-
-func output(ctx context.Context, t *testing.T, stdin, name string, args ...string) string {
-	t.Helper()
-	args = scopedCommandArgs(t, name, args)
-	liveLogf(t, "$ %s %s%s", name, strings.Join(args, " "), stdinNote(stdin))
-	start := time.Now()
-	cmd := exec.CommandContext(ctx, name, args...)
-	if stdin != "" {
-		cmd.Stdin = strings.NewReader(stdin)
-	}
-	out, err := cmd.CombinedOutput()
-	require.NoErrorf(t, err, "%s %s failed:\n%s", name, strings.Join(args, " "), out)
-	liveLogf(t, "ok (%s)", time.Since(start).Round(time.Millisecond))
-	return strings.TrimSpace(string(out))
-}
-
-func liveLogf(t *testing.T, format string, args ...any) {
-	t.Helper()
-	msg := fmt.Sprintf(format, args...)
-	fmt.Fprintf(os.Stderr, "e2e: %s\n", msg)
-}
-
-func stdinNote(stdin string) string {
-	if stdin == "" {
-		return ""
-	}
-	return fmt.Sprintf(" <stdin:%d bytes>", len(stdin))
-}
-
-func scopedCommandArgs(t *testing.T, name string, args []string) []string {
-	t.Helper()
-	switch name {
-	case "kubectl":
-		return append([]string{"--context", kubeContext(t)}, args...)
-	case "helm":
-		return append([]string{"--kube-context", kubeContext(t)}, args...)
-	default:
-		return args
-	}
-}
-
-func kubeContext(t *testing.T) string {
-	t.Helper()
-	contextName := os.Getenv("KUBECTL_CONTEXT")
-	require.NotEmpty(t, contextName, "KUBECTL_CONTEXT must be set for integration e2e kubectl/helm commands")
-	require.Truef(t, strings.HasPrefix(contextName, "k3d-"), "refusing to run kubectl/helm against non-k3d context %q", contextName)
-	return contextName
-}
-
-func freePort(t *testing.T) int {
-	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	defer func() { _ = l.Close() }()
-	return l.Addr().(*net.TCPAddr).Port
-}
-
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	root := output(context.Background(), t, "", "git", "rev-parse", "--show-toplevel")
-	require.NotEmpty(t, root)
-	return root
-}
-
-func requireEnv(t *testing.T, name string) string {
-	t.Helper()
-	value := os.Getenv(name)
-	require.NotEmptyf(t, value, "%s is required", name)
-	return value
-}
-
-func envOr(name, fallback string) string {
-	if value := os.Getenv(name); value != "" {
-		return value
-	}
-	return fallback
 }

@@ -15,6 +15,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/dio/transit/integrations/internal/egtest"
 )
 
 const (
@@ -43,8 +45,10 @@ func TestMCPProfileTieredRouterEnvoyGateway(t *testing.T) {
 	}
 	suite.Run(t, &mcpProfileGatewaySuite{
 		envoyGatewaySuite: envoyGatewaySuite{
-			cluster: "transit-mcp-profile-eg",
-			timeout: 20 * time.Minute,
+			Suite: egtest.Suite{
+				Cluster: "transit-mcp-profile-eg",
+				Timeout: 20 * time.Minute,
+			},
 		},
 	})
 }
@@ -61,17 +65,7 @@ func (s *mcpProfileGatewaySuite) SetupSuite() {
 	s.demoImage = requireEnv(s.T(), "DEMO_IMAGE")
 
 	s.envoyGatewaySuite.SetupSuite()
-	if os.Getenv("K3D_SKIP_IMAGE_IMPORT") == "1" {
-		liveLogf(s.T(), "skipping k3d image import; cluster will pull %s and %s", s.envoyImage, s.demoImage)
-		return
-	}
-	liveLogf(s.T(), "importing images into k3d cluster %s", s.cluster)
-	args := []string{"image", "import", "-c", s.cluster}
-	if mode := os.Getenv("K3D_IMAGE_IMPORT_MODE"); mode != "" {
-		args = append(args, "--mode", mode)
-	}
-	args = append(args, s.envoyImage, s.demoImage)
-	run(s.ctx, s.T(), "", "k3d", args...)
+	s.ImportImages(s.envoyImage, s.demoImage)
 }
 
 func (s *mcpProfileGatewaySuite) TestMCPProfileGatewayTopology() {
@@ -82,7 +76,7 @@ func (s *mcpProfileGatewaySuite) TestMCPProfileGatewayTopology() {
 	// satisfies MCP_PROFILE_GATEWAY_CONFIG parsing), demo workloads, Gateways, and
 	// HTTPRoutes including L1 catalog egress routes for cluster name discovery.
 	liveLogf(s.T(), "applying namespaces and workloads")
-	apply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "namespaces.yaml"))
+	apply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "namespaces.yaml"))
 
 	l2ACfg := l2CatalogConfig(map[string]struct{ URL, Credential string }{
 		"kiwi":          {URL: "http://mcp-kiwi.transit-dataplane.svc.cluster.local:8080", Credential: "Bearer kiwi-token"},
@@ -92,41 +86,41 @@ func (s *mcpProfileGatewaySuite) TestMCPProfileGatewayTopology() {
 		"microsoft": {URL: "http://mcp-microsoft.transit-dataplane.svc.cluster.local:8080", Credential: "Bearer microsoft-token"},
 		"github":    {URL: "http://mcp-github.transit-dataplane.svc.cluster.local:8080", Credential: "Bearer github-token"},
 	})
-	renderApply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "envoyproxies.tmpl.yaml"), map[string]string{
+	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "envoyproxies.tmpl.yaml"), map[string]string{
 		"EnvoyImage":       s.envoyImage,
 		"L1ConfigJSON":     `{"catalog_servers":{"_placeholder":{"url":"http://placeholder.invalid"}}}`,
 		"L2ACatalogConfig": l2ACfg,
 		"L2BCatalogConfig": l2BCfg,
 	})
-	renderApply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "demo.tmpl.yaml"), map[string]string{
+	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "demo.tmpl.yaml"), map[string]string{
 		"DemoImage": s.demoImage,
 	})
-	apply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "gateways.yaml"))
-	apply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "httproutes.yaml"))
+	apply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "gateways.yaml"))
+	apply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "httproutes.yaml"))
 
 	liveLogf(s.T(), "waiting for fake MCP backends")
 	for _, app := range []string{"mcp-kiwi", "mcp-aws-knowledge", "mcp-microsoft", "mcp-github"} {
-		waitReady(s.ctx, s.T(), dataplaneNamespace, "app="+app)
+		waitReady(s.Ctx, s.T(), dataplaneNamespace, "app="+app)
 	}
 
 	liveLogf(s.T(), "waiting for Gateways to be accepted")
 	for _, gw := range []string{"l1", "l2-a", "l2-b"} {
-		run(s.ctx, s.T(), "", "kubectl", "wait", "gateway/"+gw, "-n", dataplaneNamespace,
+		run(s.Ctx, s.T(), "", "kubectl", "wait", "gateway/"+gw, "-n", dataplaneNamespace,
 			"--for=condition=Accepted", "--timeout=120s")
 	}
 
 	liveLogf(s.T(), "waiting for generated Envoy deployments")
-	l1Deploy := generatedResourceName(s.ctx, s.T(), dataplaneNamespace, "l1", "deploy")
-	waitDeployment(s.ctx, s.T(), dataplaneNamespace, l1Deploy)
-	run(s.ctx, s.T(), "", "kubectl", "wait", "pods", "--for=condition=Ready",
+	l1Deploy := generatedResourceName(s.Ctx, s.T(), dataplaneNamespace, "l1", "deploy")
+	waitDeployment(s.Ctx, s.T(), dataplaneNamespace, l1Deploy)
+	run(s.Ctx, s.T(), "", "kubectl", "wait", "pods", "--for=condition=Ready",
 		"-n", dataplaneNamespace, "-l", "transit.dio/proxy=l1", "--timeout=180s")
-	l2ADeploy := generatedResourceName(s.ctx, s.T(), dataplaneNamespace, "l2-a", "deploy")
-	waitDeployment(s.ctx, s.T(), dataplaneNamespace, l2ADeploy)
-	run(s.ctx, s.T(), "", "kubectl", "wait", "pods", "--for=condition=Ready",
+	l2ADeploy := generatedResourceName(s.Ctx, s.T(), dataplaneNamespace, "l2-a", "deploy")
+	waitDeployment(s.Ctx, s.T(), dataplaneNamespace, l2ADeploy)
+	run(s.Ctx, s.T(), "", "kubectl", "wait", "pods", "--for=condition=Ready",
 		"-n", dataplaneNamespace, "-l", "transit.dio/proxy=l2-a", "--timeout=180s")
-	l2BDeploy := generatedResourceName(s.ctx, s.T(), dataplaneNamespace, "l2-b", "deploy")
-	waitDeployment(s.ctx, s.T(), dataplaneNamespace, l2BDeploy)
-	run(s.ctx, s.T(), "", "kubectl", "wait", "pods", "--for=condition=Ready",
+	l2BDeploy := generatedResourceName(s.Ctx, s.T(), dataplaneNamespace, "l2-b", "deploy")
+	waitDeployment(s.Ctx, s.T(), dataplaneNamespace, l2BDeploy)
+	run(s.Ctx, s.T(), "", "kubectl", "wait", "pods", "--for=condition=Ready",
 		"-n", dataplaneNamespace, "-l", "transit.dio/proxy=l2-b", "--timeout=180s")
 
 	// Phase 2: patch each L2 shard's dedicated cluster-router-init cluster with
@@ -135,60 +129,60 @@ func (s *mcpProfileGatewaySuite) TestMCPProfileGatewayTopology() {
 	// route store and serve /__cluster-router/config. Real catalog traffic continues
 	// to flow through the demo catalog-router app unchanged.
 	liveLogf(s.T(), "patching L2-A cluster-router")
-	l2AAdminURL, stopL2AAdmin := portForward(s.ctx, s.T(), "deploy/"+l2ADeploy, 19000)
+	l2AAdminURL, stopL2AAdmin := portForward(s.Ctx, s.T(), "deploy/"+l2ADeploy, 19000)
 	defer stopL2AAdmin()
-	l2AInitCluster := discoverBackendCluster(s.ctx, s.T(), l2AAdminURL, "l2-a-cluster-router-init")
-	renderApply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "epp-l2.tmpl.yaml"), map[string]string{
+	l2AInitCluster := discoverBackendCluster(s.Ctx, s.T(), l2AAdminURL, "l2-a-cluster-router-init")
+	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "epp-l2.tmpl.yaml"), map[string]string{
 		"PolicyName":        "l2-a-cluster-router",
 		"GatewayName":       "l2-a",
 		"InitClusterName":   l2AInitCluster,
 		"Shard":             "l2-a",
 		"BackendRoutesJSON": l2ABackendsJSON,
 	})
-	waitEnvoyPatchPolicyProgrammed(s.ctx, s.T(), dataplaneNamespace, "l2-a-cluster-router")
+	waitEnvoyPatchPolicyProgrammed(s.Ctx, s.T(), dataplaneNamespace, "l2-a-cluster-router")
 
 	liveLogf(s.T(), "patching L2-B cluster-router")
-	l2BAdminURL, stopL2BAdmin := portForward(s.ctx, s.T(), "deploy/"+l2BDeploy, 19000)
+	l2BAdminURL, stopL2BAdmin := portForward(s.Ctx, s.T(), "deploy/"+l2BDeploy, 19000)
 	defer stopL2BAdmin()
-	l2BInitCluster := discoverBackendCluster(s.ctx, s.T(), l2BAdminURL, "l2-b-cluster-router-init")
-	renderApply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "epp-l2.tmpl.yaml"), map[string]string{
+	l2BInitCluster := discoverBackendCluster(s.Ctx, s.T(), l2BAdminURL, "l2-b-cluster-router-init")
+	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "epp-l2.tmpl.yaml"), map[string]string{
 		"PolicyName":        "l2-b-cluster-router",
 		"GatewayName":       "l2-b",
 		"InitClusterName":   l2BInitCluster,
 		"Shard":             "l2-b",
 		"BackendRoutesJSON": l2BBackendsJSON,
 	})
-	waitEnvoyPatchPolicyProgrammed(s.ctx, s.T(), dataplaneNamespace, "l2-b-cluster-router")
+	waitEnvoyPatchPolicyProgrammed(s.Ctx, s.T(), dataplaneNamespace, "l2-b-cluster-router")
 
 	// Phase 3: discover the L1 callout cluster names for l2-a and l2-b egress routes,
 	// build the real L1 config with those cluster names, and restart L1.
 	// l1-l2a-catalog and l1-l2b-catalog HTTPRoutes on L1 create backend clusters that
 	// the mcp-profile-gateway module uses for its outbound catalog callouts.
 	liveLogf(s.T(), "discovering L1 catalog callout clusters")
-	l1AdminURL, stopL1Admin := portForward(s.ctx, s.T(), "deploy/"+l1Deploy, 19000)
+	l1AdminURL, stopL1Admin := portForward(s.Ctx, s.T(), "deploy/"+l1Deploy, 19000)
 	defer stopL1Admin()
-	l1L2ACluster := discoverBackendCluster(s.ctx, s.T(), l1AdminURL, "l1-l2a-catalog")
-	l1L2BCluster := discoverBackendCluster(s.ctx, s.T(), l1AdminURL, "l1-l2b-catalog")
+	l1L2ACluster := discoverBackendCluster(s.Ctx, s.T(), l1AdminURL, "l1-l2a-catalog")
+	l1L2BCluster := discoverBackendCluster(s.Ctx, s.T(), l1AdminURL, "l1-l2b-catalog")
 	l1Config := buildL1Config(l1L2ACluster, l1L2BCluster)
 	liveLogf(s.T(), "applying real L1 config and restarting L1")
-	renderApply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "envoyproxies.tmpl.yaml"), map[string]string{
+	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "envoyproxies.tmpl.yaml"), map[string]string{
 		"EnvoyImage":       s.envoyImage,
 		"L1ConfigJSON":     l1Config,
 		"L2ACatalogConfig": l2ACfg,
 		"L2BCatalogConfig": l2BCfg,
 	})
-	waitDeployment(s.ctx, s.T(), dataplaneNamespace, l1Deploy)
+	waitDeployment(s.Ctx, s.T(), dataplaneNamespace, l1Deploy)
 
 	// Apply L1 filter insertion (epp-l1 is static; no cluster name needed).
-	apply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "epp-l1.tmpl.yaml"))
-	waitEnvoyPatchPolicyProgrammed(s.ctx, s.T(), dataplaneNamespace, "l1-mcp-profile-gateway")
+	apply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "epp-l1.tmpl.yaml"))
+	waitEnvoyPatchPolicyProgrammed(s.Ctx, s.T(), dataplaneNamespace, "l1-mcp-profile-gateway")
 
 	// Open service port-forwards for test assertions.
-	l1URL, stopL1 := portForward(s.ctx, s.T(), "service/l1", 80)
+	l1URL, stopL1 := portForward(s.Ctx, s.T(), "service/l1", 80)
 	defer stopL1()
-	l2AURL, stopL2A := portForward(s.ctx, s.T(), "service/l2-a", 80)
+	l2AURL, stopL2A := portForward(s.Ctx, s.T(), "service/l2-a", 80)
 	defer stopL2A()
-	l2BURL, stopL2B := portForward(s.ctx, s.T(), "service/l2-b", 80)
+	l2BURL, stopL2B := portForward(s.Ctx, s.T(), "service/l2-b", 80)
 	defer stopL2B()
 
 	// Test matrix — all required cases from README Test Matrix.
@@ -269,7 +263,7 @@ func (s *mcpProfileGatewaySuite) assertAuthFailure(l1URL string) {
 	s.T().Helper()
 	body, err := json.Marshal(jsonRPCRequest{JSONRPC: "2.0", ID: 1, Method: "initialize"})
 	require.NoError(s.T(), err)
-	resp, status, _ := mcpPost(s.ctx, s.T(), l1URL, "/mcp/"+profileID,
+	resp, status, _ := mcpPost(s.Ctx, s.T(), l1URL, "/mcp/"+profileID,
 		map[string]string{"x-api-key": "wrong-key"}, body)
 	require.Equal(s.T(), http.StatusUnauthorized, status, "expected 401 on wrong API key; body: %s", resp)
 }
@@ -281,8 +275,8 @@ func (s *mcpProfileGatewaySuite) assertInitializeAllHealthy(l1URL string) string
 	body, err := json.Marshal(jsonRPCRequest{JSONRPC: "2.0", ID: 1, Method: "initialize"})
 	require.NoError(s.T(), err)
 	var sessionID string
-	eventually(s.ctx, s.T(), func() error {
-		resp, status, headers := mcpPost(s.ctx, s.T(), l1URL, "/mcp/"+profileID,
+	eventually(s.Ctx, s.T(), func() error {
+		resp, status, headers := mcpPost(s.Ctx, s.T(), l1URL, "/mcp/"+profileID,
 			map[string]string{"x-api-key": profileKey}, body)
 		if status != http.StatusOK {
 			return fmt.Errorf("initialize status %d body %s", status, resp)
@@ -324,8 +318,8 @@ func (s *mcpProfileGatewaySuite) assertToolsListAllServers(l1URL, sessionID stri
 	s.T().Helper()
 	body, err := json.Marshal(jsonRPCRequest{JSONRPC: "2.0", ID: 2, Method: "tools/list"})
 	require.NoError(s.T(), err)
-	eventually(s.ctx, s.T(), func() error {
-		resp, status, _ := mcpPost(s.ctx, s.T(), l1URL, "/mcp/"+profileID,
+	eventually(s.Ctx, s.T(), func() error {
+		resp, status, _ := mcpPost(s.Ctx, s.T(), l1URL, "/mcp/"+profileID,
 			map[string]string{"x-api-key": profileKey, "mcp-session-id": sessionID}, body)
 		if status != http.StatusOK {
 			return fmt.Errorf("tools/list status %d body %s", status, resp)
@@ -372,8 +366,8 @@ func (s *mcpProfileGatewaySuite) assertCatalogForwardingL2A(l1URL string) {
 	s.T().Helper()
 	body, err := json.Marshal(jsonRPCRequest{JSONRPC: "2.0", ID: 3, Method: "tools/list"})
 	require.NoError(s.T(), err)
-	eventually(s.ctx, s.T(), func() error {
-		resp, status, _ := mcpPost(s.ctx, s.T(), l1URL, "/mcp/s/aws-knowledge", nil, body)
+	eventually(s.Ctx, s.T(), func() error {
+		resp, status, _ := mcpPost(s.Ctx, s.T(), l1URL, "/mcp/s/aws-knowledge", nil, body)
 		if status != http.StatusOK {
 			return fmt.Errorf("catalog /mcp/s/aws-knowledge status %d body %s", status, resp)
 		}
@@ -387,8 +381,8 @@ func (s *mcpProfileGatewaySuite) assertCatalogForwardingL2B(l1URL string) {
 	s.T().Helper()
 	body, err := json.Marshal(jsonRPCRequest{JSONRPC: "2.0", ID: 4, Method: "tools/list"})
 	require.NoError(s.T(), err)
-	eventually(s.ctx, s.T(), func() error {
-		resp, status, _ := mcpPost(s.ctx, s.T(), l1URL, "/mcp/s/github", nil, body)
+	eventually(s.Ctx, s.T(), func() error {
+		resp, status, _ := mcpPost(s.Ctx, s.T(), l1URL, "/mcp/s/github", nil, body)
 		if status != http.StatusOK {
 			return fmt.Errorf("catalog /mcp/s/github status %d body %s", status, resp)
 		}
@@ -473,7 +467,7 @@ func (s *mcpProfileGatewaySuite) assertCrossShardRejectionL2A(l2AURL string) {
 	body, err := json.Marshal(jsonRPCRequest{JSONRPC: "2.0", ID: 5, Method: "tools/list"})
 	require.NoError(s.T(), err)
 	// Direct to L2-A, no gatewayHost needed (no hostname routing on L2 gateways).
-	req, err := http.NewRequestWithContext(s.ctx, http.MethodPost, l2AURL+"/mcp/s/github", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(s.Ctx, http.MethodPost, l2AURL+"/mcp/s/github", bytes.NewReader(body))
 	require.NoError(s.T(), err)
 	req.Header.Set("content-type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
@@ -489,7 +483,7 @@ func (s *mcpProfileGatewaySuite) assertCrossShardRejectionL2B(l2BURL string) {
 	s.T().Helper()
 	body, err := json.Marshal(jsonRPCRequest{JSONRPC: "2.0", ID: 6, Method: "tools/list"})
 	require.NoError(s.T(), err)
-	req, err := http.NewRequestWithContext(s.ctx, http.MethodPost, l2BURL+"/mcp/s/kiwi", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(s.Ctx, http.MethodPost, l2BURL+"/mcp/s/kiwi", bytes.NewReader(body))
 	require.NoError(s.T(), err)
 	req.Header.Set("content-type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
@@ -504,8 +498,8 @@ func (s *mcpProfileGatewaySuite) assertCrossShardRejectionL2B(l2BURL string) {
 func (s *mcpProfileGatewaySuite) assertClusterRouterDumpShowsMCPRouteHeader(l2AURL, l2BURL string) {
 	s.T().Helper()
 	for _, url := range []string{l2AURL, l2BURL} {
-		eventually(s.ctx, s.T(), func() error {
-			req, err := http.NewRequestWithContext(s.ctx, http.MethodGet, url+"/__cluster-router/config", nil)
+		eventually(s.Ctx, s.T(), func() error {
+			req, err := http.NewRequestWithContext(s.Ctx, http.MethodGet, url+"/__cluster-router/config", nil)
 			if err != nil {
 				return err
 			}
@@ -539,7 +533,7 @@ func (s *mcpProfileGatewaySuite) assertDumpsRedactSecrets(l1URL, l2AURL, l2BURL 
 		{l2AURL, "/__cluster-router/config"},
 		{l2BURL, "/__cluster-router/config"},
 	} {
-		req, err := http.NewRequestWithContext(s.ctx, http.MethodGet, endpoint.url+endpoint.path, nil)
+		req, err := http.NewRequestWithContext(s.Ctx, http.MethodGet, endpoint.url+endpoint.path, nil)
 		require.NoError(s.T(), err)
 		resp, err := http.DefaultClient.Do(req)
 		require.NoError(s.T(), err)
@@ -570,7 +564,7 @@ func (s *mcpProfileGatewaySuite) doToolsCall(l1URL, sessionID, toolName string, 
 		Params:  params,
 	})
 	require.NoError(s.T(), err)
-	body, status, _ := mcpPost(s.ctx, s.T(), l1URL, "/mcp/"+profileID,
+	body, status, _ := mcpPost(s.Ctx, s.T(), l1URL, "/mcp/"+profileID,
 		map[string]string{"x-api-key": profileKey, "mcp-session-id": sessionID}, reqBody)
 	return body, status
 }

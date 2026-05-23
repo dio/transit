@@ -14,6 +14,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/dio/transit/integrations/internal/egtest"
 )
 
 const gatewayHost = "tiered-router.example.com"
@@ -24,8 +26,10 @@ func TestTieredRouterEnvoyGateway(t *testing.T) {
 	}
 	suite.Run(t, &tieredRouterSuite{
 		envoyGatewaySuite: envoyGatewaySuite{
-			cluster: "transit-tiered-router-eg",
-			timeout: 14 * time.Minute,
+			Suite: egtest.Suite{
+				Cluster: "transit-tiered-router-eg",
+				Timeout: 14 * time.Minute,
+			},
 		},
 	})
 }
@@ -42,17 +46,7 @@ func (s *tieredRouterSuite) SetupSuite() {
 	s.controlImage = requireEnv(s.T(), "CONTROL_PLANE_IMAGE")
 
 	s.envoyGatewaySuite.SetupSuite()
-	if os.Getenv("K3D_SKIP_IMAGE_IMPORT") == "1" {
-		liveLogf(s.T(), "skipping k3d image import; cluster will pull %s and %s", s.envoyImage, s.controlImage)
-		return
-	}
-	liveLogf(s.T(), "importing images into k3d cluster %s", s.cluster)
-	args := []string{"image", "import", "-c", s.cluster}
-	if mode := os.Getenv("K3D_IMAGE_IMPORT_MODE"); mode != "" {
-		args = append(args, "--mode", mode)
-	}
-	args = append(args, s.envoyImage, s.controlImage)
-	run(s.ctx, s.T(), "", "k3d", args...)
+	s.ImportImages(s.envoyImage, s.controlImage)
 }
 
 func (s *tieredRouterSuite) TestL1SelectsPhysicalL2ShardServices() {
@@ -60,40 +54,40 @@ func (s *tieredRouterSuite) TestL1SelectsPhysicalL2ShardServices() {
 	s.verifyEnvoyGatewayInstall()
 
 	liveLogf(s.T(), "applying tiered namespaces and workloads")
-	apply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "namespaces.yaml"))
-	renderApply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "envoyproxies.tmpl.yaml"), map[string]string{
+	apply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "namespaces.yaml"))
+	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "envoyproxies.tmpl.yaml"), map[string]string{
 		"EnvoyImage": s.envoyImage,
 	})
-	renderApply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "demo.tmpl.yaml"), map[string]string{
+	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "demo.tmpl.yaml"), map[string]string{
 		"ControlPlaneImage": s.controlImage,
 	})
-	apply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "gateways.yaml"))
-	apply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "httproutes.yaml"))
+	apply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "gateways.yaml"))
+	apply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "httproutes.yaml"))
 
 	liveLogf(s.T(), "waiting for demo pods and Gateways")
-	waitReady(s.ctx, s.T(), dataplaneNamespace, "app=tiered-router-control")
-	waitReady(s.ctx, s.T(), dataplaneNamespace, "app=upstream-a")
-	waitReady(s.ctx, s.T(), dataplaneNamespace, "app=upstream-c")
-	run(s.ctx, s.T(), "", "kubectl", "wait", "gateway/l1", "-n", dataplaneNamespace, "--for=condition=Accepted", "--timeout=120s")
-	run(s.ctx, s.T(), "", "kubectl", "wait", "gateway/l2-a", "-n", dataplaneNamespace, "--for=condition=Accepted", "--timeout=120s")
-	run(s.ctx, s.T(), "", "kubectl", "wait", "gateway/l2-b", "-n", dataplaneNamespace, "--for=condition=Accepted", "--timeout=120s")
+	waitReady(s.Ctx, s.T(), dataplaneNamespace, "app=tiered-router-control")
+	waitReady(s.Ctx, s.T(), dataplaneNamespace, "app=upstream-a")
+	waitReady(s.Ctx, s.T(), dataplaneNamespace, "app=upstream-c")
+	run(s.Ctx, s.T(), "", "kubectl", "wait", "gateway/l1", "-n", dataplaneNamespace, "--for=condition=Accepted", "--timeout=120s")
+	run(s.Ctx, s.T(), "", "kubectl", "wait", "gateway/l2-a", "-n", dataplaneNamespace, "--for=condition=Accepted", "--timeout=120s")
+	run(s.Ctx, s.T(), "", "kubectl", "wait", "gateway/l2-b", "-n", dataplaneNamespace, "--for=condition=Accepted", "--timeout=120s")
 
 	liveLogf(s.T(), "waiting for generated Envoy deployments")
-	envoyDeploy := generatedResourceName(s.ctx, s.T(), dataplaneNamespace, "l1", "deploy")
-	waitDeployment(s.ctx, s.T(), dataplaneNamespace, envoyDeploy)
-	run(s.ctx, s.T(), "", "kubectl", "wait", "pods", "--for=condition=Ready", "-n", dataplaneNamespace, "-l", "transit.dio/proxy=l1", "--timeout=180s")
-	l2ADeploy := generatedResourceName(s.ctx, s.T(), dataplaneNamespace, "l2-a", "deploy")
-	waitDeployment(s.ctx, s.T(), dataplaneNamespace, l2ADeploy)
-	run(s.ctx, s.T(), "", "kubectl", "wait", "pods", "--for=condition=Ready", "-n", dataplaneNamespace, "-l", "transit.dio/proxy=l2-a", "--timeout=180s")
-	l2BDeploy := generatedResourceName(s.ctx, s.T(), dataplaneNamespace, "l2-b", "deploy")
-	waitDeployment(s.ctx, s.T(), dataplaneNamespace, l2BDeploy)
-	run(s.ctx, s.T(), "", "kubectl", "wait", "pods", "--for=condition=Ready", "-n", dataplaneNamespace, "-l", "transit.dio/proxy=l2-b", "--timeout=180s")
+	envoyDeploy := generatedResourceName(s.Ctx, s.T(), dataplaneNamespace, "l1", "deploy")
+	waitDeployment(s.Ctx, s.T(), dataplaneNamespace, envoyDeploy)
+	run(s.Ctx, s.T(), "", "kubectl", "wait", "pods", "--for=condition=Ready", "-n", dataplaneNamespace, "-l", "transit.dio/proxy=l1", "--timeout=180s")
+	l2ADeploy := generatedResourceName(s.Ctx, s.T(), dataplaneNamespace, "l2-a", "deploy")
+	waitDeployment(s.Ctx, s.T(), dataplaneNamespace, l2ADeploy)
+	run(s.Ctx, s.T(), "", "kubectl", "wait", "pods", "--for=condition=Ready", "-n", dataplaneNamespace, "-l", "transit.dio/proxy=l2-a", "--timeout=180s")
+	l2BDeploy := generatedResourceName(s.Ctx, s.T(), dataplaneNamespace, "l2-b", "deploy")
+	waitDeployment(s.Ctx, s.T(), dataplaneNamespace, l2BDeploy)
+	run(s.Ctx, s.T(), "", "kubectl", "wait", "pods", "--for=condition=Ready", "-n", dataplaneNamespace, "-l", "transit.dio/proxy=l2-b", "--timeout=180s")
 
 	liveLogf(s.T(), "patching generated L2 clusters with cluster-router")
-	l2AAdminURL, stopL2AAdmin := portForward(s.ctx, s.T(), "deploy/"+l2ADeploy, 19000)
+	l2AAdminURL, stopL2AAdmin := portForward(s.Ctx, s.T(), "deploy/"+l2ADeploy, 19000)
 	defer stopL2AAdmin()
-	l2AClusterName := discoverBackendCluster(s.ctx, s.T(), l2AAdminURL, "l2-a")
-	renderApply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "epp-l2.tmpl.yaml"), map[string]string{
+	l2AClusterName := discoverBackendCluster(s.Ctx, s.T(), l2AAdminURL, "l2-a")
+	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "epp-l2.tmpl.yaml"), map[string]string{
 		"PolicyName":    "l2-a-cluster-router",
 		"GatewayName":   "l2-a",
 		"ClusterName":   l2AClusterName,
@@ -104,14 +98,14 @@ func (s *tieredRouterSuite) TestL1SelectsPhysicalL2ShardServices() {
 		"Profile":       "profile-a",
 		"BYOKKeyID":     "key-a-001",
 	})
-	waitEnvoyPatchPolicyProgrammed(s.ctx, s.T(), dataplaneNamespace, "l2-a-cluster-router")
-	l2AURL, stopL2A := portForward(s.ctx, s.T(), "service/l2-a", 80)
+	waitEnvoyPatchPolicyProgrammed(s.Ctx, s.T(), dataplaneNamespace, "l2-a-cluster-router")
+	l2AURL, stopL2A := portForward(s.Ctx, s.T(), "service/l2-a", 80)
 	defer stopL2A()
 
-	l2BAdminURL, stopL2BAdmin := portForward(s.ctx, s.T(), "deploy/"+l2BDeploy, 19000)
+	l2BAdminURL, stopL2BAdmin := portForward(s.Ctx, s.T(), "deploy/"+l2BDeploy, 19000)
 	defer stopL2BAdmin()
-	l2BClusterName := discoverBackendCluster(s.ctx, s.T(), l2BAdminURL, "l2-b")
-	renderApply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "epp-l2.tmpl.yaml"), map[string]string{
+	l2BClusterName := discoverBackendCluster(s.Ctx, s.T(), l2BAdminURL, "l2-b")
+	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "epp-l2.tmpl.yaml"), map[string]string{
 		"PolicyName":    "l2-b-cluster-router",
 		"GatewayName":   "l2-b",
 		"ClusterName":   l2BClusterName,
@@ -122,26 +116,26 @@ func (s *tieredRouterSuite) TestL1SelectsPhysicalL2ShardServices() {
 		"Profile":       "profile-b",
 		"BYOKKeyID":     "key-b-001",
 	})
-	waitEnvoyPatchPolicyProgrammed(s.ctx, s.T(), dataplaneNamespace, "l2-b-cluster-router")
-	l2BURL, stopL2B := portForward(s.ctx, s.T(), "service/l2-b", 80)
+	waitEnvoyPatchPolicyProgrammed(s.Ctx, s.T(), dataplaneNamespace, "l2-b-cluster-router")
+	l2BURL, stopL2B := portForward(s.Ctx, s.T(), "service/l2-b", 80)
 	defer stopL2B()
 
 	liveLogf(s.T(), "opening L1 Envoy admin port-forward")
-	adminURL, stopAdmin := portForward(s.ctx, s.T(), "deploy/"+envoyDeploy, 19000)
+	adminURL, stopAdmin := portForward(s.Ctx, s.T(), "deploy/"+envoyDeploy, 19000)
 	defer stopAdmin()
-	clusterName := discoverBackendCluster(s.ctx, s.T(), adminURL, "l1-public")
+	clusterName := discoverBackendCluster(s.Ctx, s.T(), adminURL, "l1-public")
 	liveLogf(s.T(), "patching generated L1 cluster %q", clusterName)
-	renderApply(s.ctx, s.T(), filepath.Join(s.dir, "k8s", "epp-l1.tmpl.yaml"), map[string]string{
+	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "epp-l1.tmpl.yaml"), map[string]string{
 		"ClusterName": clusterName,
 	})
-	waitEnvoyPatchPolicyProgrammed(s.ctx, s.T(), dataplaneNamespace, "l1-cluster-shard-router")
+	waitEnvoyPatchPolicyProgrammed(s.Ctx, s.T(), dataplaneNamespace, "l1-cluster-shard-router")
 
 	liveLogf(s.T(), "opening L1 Gateway port-forward")
-	gatewayURL, stopGateway := portForward(s.ctx, s.T(), "service/l1", 80)
+	gatewayURL, stopGateway := portForward(s.Ctx, s.T(), "service/l1", 80)
 	defer stopGateway()
 
 	liveLogf(s.T(), "asserting explicit tag shard routing through physical L2 services")
-	assertL1Route(s.ctx, s.T(), gatewayURL, expectedRoute{
+	assertL1Route(s.Ctx, s.T(), gatewayURL, expectedRoute{
 		Tag:       "a-demo",
 		Upstream:  "upstream-a",
 		L1Shard:   "a",
@@ -152,7 +146,7 @@ func (s *tieredRouterSuite) TestL1SelectsPhysicalL2ShardServices() {
 		Auth:      "Bearer shard-a-openai-token",
 		L2Version: "bootstrap",
 	})
-	assertL1Route(s.ctx, s.T(), gatewayURL, expectedRoute{
+	assertL1Route(s.Ctx, s.T(), gatewayURL, expectedRoute{
 		Tag:       "b-demo",
 		Upstream:  "upstream-c",
 		L1Shard:   "b",
@@ -165,7 +159,7 @@ func (s *tieredRouterSuite) TestL1SelectsPhysicalL2ShardServices() {
 	})
 
 	liveLogf(s.T(), "asserting redacted active L2 config dumps")
-	assertL2Dump(s.ctx, s.T(), l2AURL, expectedL2Dump{
+	assertL2Dump(s.Ctx, s.T(), l2AURL, expectedL2Dump{
 		Shard:     "a",
 		Model:     "gpt-fast",
 		Target:    "upstream-a.transit-dataplane.svc.cluster.local:8080",
@@ -179,7 +173,7 @@ func (s *tieredRouterSuite) TestL1SelectsPhysicalL2ShardServices() {
 			"auth_header",
 		},
 	})
-	assertL2Dump(s.ctx, s.T(), l2BURL, expectedL2Dump{
+	assertL2Dump(s.Ctx, s.T(), l2BURL, expectedL2Dump{
 		Shard:     "b",
 		Model:     "gpt-fast",
 		Target:    "upstream-c.transit-dataplane.svc.cluster.local:8080",
