@@ -1,8 +1,21 @@
-# Envoy 1.39 Dynamic Module Upstream Selection
+# Envoy Dynamic Module Upstream Selection
 
-Tested against: `1.39.0-dev / 4616750da8dfc1e3293b7dc8db9fe5093b3ff242`
+The ABI version, SDK module, and SDK commit this document tracks are defined in
+`down/abi_impl/VERSION`. The Envoy binary used for local runs and e2e tests is
+built by [dio/envoy-builder](https://github.com/dio/envoy-builder) and tagged
+`envoy-{8-char SDK commit}`. The Makefile derives the download URL from
+`VERSION` automatically — `make download-envoy` always fetches the binary that
+matches the pinned SDK.
+
+Current pin (from `down/abi_impl/VERSION`):
+
+```
+SDK_MODULE=github.com/envoyproxy/envoy/source/extensions/dynamic_modules
+SDK_VERSION=v0.0.0-20260521055639-0d6e3c60aa55
+SDK_COMMIT=0d6e3c60aa55
+```
+
 ABI version: `v0.1.0`
-SDK: `github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go`
 
 This document describes transit's Go wrapper APIs for Envoy dynamic module
 upstream selection. The interfaces below track the upstream host-selection ABI
