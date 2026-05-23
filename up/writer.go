@@ -108,7 +108,7 @@ func NewWriter(h shared.HttpFilterHandle) *Writer {
 // Writer was created by the filter factory (not by NewWriter) — in that case flush()
 // is always called at the right point in the lifecycle.
 func (w *Writer) queued() bool {
-	return !w.directWrite || w.f.async != nil || w.calloutStarted
+	return !w.directWrite || w.f.goStarted || w.calloutStarted
 }
 
 // Log emits a message via Envoy's logging mechanism at the given severity.
@@ -251,36 +251,41 @@ func (w *Writer) IncrementCounter(id MetricID, delta uint64) {
 // hops back to the Envoy worker thread, applies queued mutations, and resumes
 // the stream — unless the stream was cancelled while fn was running.
 //
-// f.async is cleared before flush(true) so that subsequent callbacks
-// (e.g. OnRequestBody on a request that still has a body) do not see stale
-// goroutine state and spuriously return StopAndBuffer.
+// goStarted is cleared inside the scheduled finish before flush(true) so that
+// subsequent callbacks (e.g. OnRequestBody on a request that still has a body)
+// do not see stale goroutine state and spuriously return StopAndBuffer.
 //
 // Panics if called twice or after HTTPCallout.
 //
 // SendLocalResponse from inside fn is NOT reliable — see type-level docs.
 func (w *Writer) Go(fn func(ctx context.Context)) {
-	if w.f.async != nil {
+	if w.f.goStarted {
 		panic("up: Go called twice on the same request")
 	}
 	if w.calloutStarted {
 		panic("up: Go cannot be started after HTTPCallout")
 	}
-	scheduler := w.f.handle.GetScheduler()
-	state := &asyncState{scheduler: scheduler}
 	ctx, cancel := context.WithCancel(context.Background())
-	state.cancel = cancel
-	w.f.async = state
 	f := w.f
+	f.goScheduler = w.f.handle.GetScheduler()
+	f.goCancel = cancel
+	f.goCompleted.Store(false)
+	f.goStarted = true
 	go func() {
 		defer cancel()
 		fn(ctx)
-		if state.done() {
+		if f.goCompleted.Load() {
+			// OnStreamComplete won the race; stream is dead. Skip scheduling.
 			return
 		}
-		state.finish(func() {
-			// Clear async state before flush so that callbacks arriving after
-			// ContinueRequest (e.g. OnRequestBody) see f.async == nil.
-			f.async = nil
+		f.goScheduler.Schedule(func() {
+			if f.goCompleted.Swap(true) {
+				// OnStreamComplete won the race. Do not resume.
+				return
+			}
+			// Clear goroutine active flag before flush so that callbacks arriving
+			// after ContinueRequest (e.g. OnRequestBody) see goStarted=false.
+			f.goStarted = false
 			f.flush(true)
 		})
 	}()
@@ -295,7 +300,7 @@ func (w *Writer) Go(fn func(ctx context.Context)) {
 //
 // Panics if called after Go or after a previous HTTPCallout.
 func (w *Writer) HTTPCallout(req HTTPCalloutRequest, fn HTTPCalloutFunc) (HTTPCalloutInitResult, error) {
-	if w.calloutStarted || w.f.async != nil {
+	if w.calloutStarted || w.f.goStarted {
 		panic("up: HTTPCallout cannot be started after Go or another HTTPCallout")
 	}
 	// Set calloutFn and calloutStarted BEFORE calling handle.HttpCallout.
@@ -330,7 +335,7 @@ func (w *Writer) HTTPCallout(req HTTPCalloutRequest, fn HTTPCalloutFunc) (HTTPCa
 //
 // Response buffers (Headers, Body) are Go-owned copies safe to use after Do returns.
 func (w *Writer) Do(ctx context.Context, req HTTPCalloutRequest) (*HTTPCalloutResponse, error) {
-	if w.f.async == nil {
+	if !w.f.goStarted {
 		panic("up: Do called outside Go")
 	}
 	type result struct {
@@ -338,8 +343,8 @@ func (w *Writer) Do(ctx context.Context, req HTTPCalloutRequest) (*HTTPCalloutRe
 		err  error
 	}
 	ch := make(chan result, 1)
-	w.f.async.scheduler.Schedule(func() {
-		if w.f.async.done() {
+	w.f.goScheduler.Schedule(func() {
+		if w.f.goCompleted.Load() {
 			ch <- result{err: context.Canceled}
 			return
 		}

@@ -92,13 +92,13 @@ detects `Done` and flushes inline without calling `ContinueRequest`. If the
 callback fires after the headers callback returns `Stop`, it transitions
 `Paused→Flushed` and calls `ContinueRequest` to resume the request.
 
-There is no mutex on this path. `asyncState` is not allocated.
+There is no mutex on this path. No extra struct is allocated.
 
 ### Go+Do path
 
 `w.Go` launches a goroutine that is the sole writer to `Writer`'s mutation
-slices. After the goroutine exits, `scheduler.Schedule` hops back to the Envoy
-worker thread to call `w.flush(true)`. `asyncState.completed` is an
+slices. After the goroutine exits, `goScheduler.Schedule` hops back to the
+Envoy worker thread to call `w.flush(true)`. `filter.goCompleted` is an
 `atomic.Bool`; it protects the single race between the goroutine finishing and
 `OnStreamComplete`. There is no mutex.
 

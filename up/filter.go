@@ -1,6 +1,7 @@
 package up
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"sync/atomic"
@@ -93,9 +94,9 @@ func (f *filterFactory) OnDestroy() {
 //
 // Once Writer.Go launches a goroutine, that goroutine is the sole writer to the
 // mutation queues until it returns. OnStreamComplete must not reset those queues
-// while the goroutine may still be writing — it only touches async.cancel and
-// async.completed. The queue reset happens inside flush, which runs on the
-// worker thread after the goroutine has called scheduler.Schedule and exited.
+// while the goroutine may still be writing — it only calls goCancel and marks
+// goCompleted. The queue reset happens inside flush, which runs on the
+// worker thread after the goroutine has called goScheduler.Schedule and exited.
 //
 // HTTPCallout concurrency:
 //
@@ -122,10 +123,23 @@ type filter struct {
 	responseContentType     string
 	responseContentEncoding string
 
-	// async holds the goroutine lifecycle for the Go+Do path. nil on HTTPCallout path.
-	// Only touched by OnStreamComplete (cancel/complete) and Writer.Go (set).
-	// Never reset or read for queue operations while a goroutine may be writing.
-	async *asyncState
+	// goStarted is true while a goroutine launched by Writer.Go is active.
+	// Set by Writer.Go; cleared inside the scheduled finish after the goroutine returns,
+	// so subsequent callbacks (e.g. OnRequestBody) see false and do not block.
+	goStarted bool
+
+	// goScheduler hops from the goroutine back to the Envoy worker thread.
+	// Set by Writer.Go; valid while goStarted is true.
+	goScheduler shared.Scheduler
+
+	// goCancel cancels the goroutine's context. Called by OnStreamComplete when
+	// the stream terminates while the goroutine is still running.
+	goCancel context.CancelFunc
+
+	// goCompleted arbitrates between normal goroutine exit (finish) and early stream
+	// termination (OnStreamComplete). Whichever side wins Swap(true) takes the
+	// terminal action; the other is a no-op.
+	goCompleted atomic.Bool
 
 	// --- Mutation queues (request phase) ---
 	//
@@ -178,7 +192,7 @@ type filter struct {
 // Must be called on the Envoy worker thread. All CGO calls made here
 // (RequestHeaders().Set, SetFilterState, ContinueRequest, etc.) require it.
 // On the HTTPCallout path this is guaranteed by OnHttpCalloutDone. On the
-// Go+Do path, asyncState.finish uses scheduler.Schedule to hop back first.
+// Go+Do path, Writer.Go uses goScheduler.Schedule to hop back first.
 //
 // continueReq=true:  async path — stream was paused; call ContinueRequest to resume.
 // continueReq=false: sync-done path — OnRequestHeaders returns Continue itself;
@@ -285,8 +299,8 @@ func (f *filter) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool) sh
 		// Callback has not fired yet; OnHttpCalloutDone will call flush(true).
 		return shared.HeadersStatusStop
 	}
-	if f.async != nil {
-		// Goroutine started; scheduler.Schedule will call flush(true) after fn returns.
+	if f.goStarted {
+		// Goroutine started; goScheduler.Schedule will call flush(true) after fn returns.
 		return shared.HeadersStatusStop
 	}
 
@@ -303,7 +317,7 @@ func (f *filter) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool) sh
 		if f.pausePendingCallout(w.calloutStarted) {
 			return shared.HeadersStatusStop
 		}
-		if f.async != nil {
+		if f.goStarted {
 			return shared.HeadersStatusStop
 		}
 		f.flushCompletedCallout(w.calloutStarted)
@@ -354,8 +368,8 @@ func (f *filter) OnRequestBody(body shared.BodyBuffer, endOfStream bool) shared.
 		ContentEncoding: f.requestContentEncoding,
 		Context:         &f.context,
 	})
-	if f.async != nil {
-		// Goroutine started; flush(true) will run after it exits via scheduler.
+	if f.goStarted {
+		// Goroutine started; flush(true) will run after it exits via goScheduler.
 		// Do not reset body replacement here — the goroutine may call SetRequestBody.
 		return shared.BodyStatusStopAndBuffer
 	}
@@ -439,9 +453,11 @@ func (f *filter) flushCompletedCallout(calloutStarted bool) {
 // flush, so the stale mutations are never applied.
 func (f *filter) OnStreamComplete() {
 	f.streamDone.Store(true)
-	if f.async != nil {
-		f.async.completeWithoutResume()
-		f.async = nil
+	if f.goStarted {
+		f.goCompleted.Store(true)
+		if f.goCancel != nil {
+			f.goCancel()
+		}
 	}
 }
 

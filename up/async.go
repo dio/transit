@@ -14,7 +14,7 @@
 //  2. Go + Do — goroutine form. The handler calls w.Go(fn); fn runs in a
 //     goroutine and may call w.Do(...) to issue callouts from that goroutine.
 //     After fn returns, Transit hops back to the Envoy worker thread via
-//     scheduler.Schedule and applies queued mutations, then continues the
+//     goScheduler.Schedule and applies queued mutations, then continues the
 //     request. SendLocalResponse from this path is NOT reliable — Envoy ignores
 //     it from scheduled callbacks. Use Go+Do only for work that forwards the
 //     request.
@@ -24,10 +24,8 @@
 package up
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"sync/atomic"
 
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
 )
@@ -142,92 +140,6 @@ type counterMutation struct {
 type upstreamOverrideMutation struct {
 	host   string
 	strict bool
-}
-
-// asyncState holds coordination state for the Go+Do path only.
-//
-// Why no handle, no mutex, no mutation queues:
-//
-// The Go+Do path has single-writer discipline. The goroutine started by
-// Writer.Go is the sole writer to Writer's mutation slices from the moment Go
-// returns until the goroutine exits. No other goroutine or Envoy callback
-// touches those slices during that window. After the goroutine exits,
-// scheduler.Schedule hops back to the Envoy worker thread, where flush()
-// runs as the sole reader — again, no concurrent access.
-//
-// The only genuine race is between the goroutine finishing normally
-// (asyncState.finish) and OnStreamComplete cancelling the stream before the
-// goroutine exits (asyncState.completeWithoutResume). A single atomic.Bool
-// is sufficient to resolve that race: whichever side wins the Swap(true) owns
-// the terminal action; the other side is a no-op.
-//
-// Why no handle: the Envoy handle is stored on filter and accessed by Writer
-// via w.handle. asyncState does not need it; keeping it out avoids accidental
-// CGO calls from the wrong thread.
-type asyncState struct {
-	// scheduler is used to hop back to the Envoy worker thread after the
-	// goroutine exits. It is acquired once in Writer.Go and stored here so
-	// that Do (which may call Schedule from a different goroutine) uses the
-	// same scheduler instance as finish.
-	scheduler shared.Scheduler
-
-	// cancel is the context.CancelFunc for the goroutine's context. Calling it
-	// unblocks ctx.Done() inside the goroutine so it can exit promptly when the
-	// stream is cancelled. It is also deferred by the goroutine itself so that
-	// resources are cleaned up even on normal exit.
-	cancel context.CancelFunc
-
-	// completed is set to true exactly once, by whichever of finish or
-	// completeWithoutResume wins the race. The loser sees Swap return true and
-	// does nothing.
-	completed atomic.Bool
-}
-
-// finish is called by the goroutine after fn(ctx) returns normally. It
-// schedules resume on the Envoy worker thread so that queued mutations are
-// applied and ContinueRequest is called to resume the stream.
-//
-// resume is a closure (func() { f.flush(true) }) rather than a *Writer so
-// that asyncState has no dependency on filter's concrete type.
-//
-// Why Schedule and not a direct call: flush() calls CGO functions
-// (ContinueRequest, SendLocalResponse) that Envoy requires to be invoked on
-// the stream's worker thread. The goroutine runs on an arbitrary Go OS thread,
-// which is not the worker thread. Schedule posts a task to Envoy's event loop
-// so flush runs in the correct context.
-func (s *asyncState) finish(resume func()) {
-	s.scheduler.Schedule(func() {
-		// completed.Swap returns the old value. If it was already true,
-		// completeWithoutResume won the race: the stream is dead, do not resume.
-		if s.completed.Swap(true) {
-			return
-		}
-		resume()
-	})
-}
-
-// completeWithoutResume is called by OnStreamComplete when Envoy terminates
-// the stream while a Go goroutine is still running. It prevents finish from
-// resuming a stream that no longer exists, and cancels the goroutine's context
-// so it exits promptly rather than blocking indefinitely on Do or other ops.
-//
-// Note: cancel() unblocks ctx.Done() but does NOT wait for the goroutine to
-// actually return. The goroutine may still be running after this call. For
-// Phase 4 (filter pooling), this means the filter must not be reused until
-// the goroutine has actually exited — not just until cancel() has been called.
-func (s *asyncState) completeWithoutResume() {
-	// Store(true) instead of Swap: we do not need to check the old value here
-	// because completeWithoutResume never calls flush regardless.
-	s.completed.Store(true)
-	if s.cancel != nil {
-		s.cancel()
-	}
-}
-
-// done returns true if the stream has been completed without resume, meaning
-// any pending scheduled flush should be skipped.
-func (s *asyncState) done() bool {
-	return s.completed.Load()
 }
 
 // errCalloutInitResult converts a non-success HTTPCalloutInitResult to an error.
