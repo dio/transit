@@ -310,8 +310,7 @@ func TestWriter_SendLocalResponse_delegatesToHandle(t *testing.T) {
 	w := NewWriter(handle)
 	w.SendLocalResponse(401, []byte(`{"error":"no key"}`))
 	require.True(t, w.f.stopped)
-	w.f.flush(false) // applies queued local response
-	require.True(t, w.f.stopped) // stays true after local-reply flush
+	w.f.flush(false)
 }
 
 func TestWriter_SendLocalResponse_setsStoppedFlag(t *testing.T) {

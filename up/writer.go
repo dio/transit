@@ -58,20 +58,24 @@ const (
 )
 
 // Writer is a thin per-invocation view over filter. It carries only the state
-// scoped to a single handler invocation: calloutCB and calloutStarted. All
-// mutable stream state — mutation queues, callout fn/state, async state — lives
-// on the backing filter, which is long-lived for the stream.
+// scoped to a single handler invocation: calloutCB, calloutStarted, and
+// directWrite. All mutable stream state — mutation queues, callout fn/state,
+// async state — lives on the backing filter, which is long-lived for the stream.
 //
 // A Writer must not be retained beyond the handler call. On the HTTPCallout
 // path the same Writer is reused across the initial handler call and the callout
 // callback; both run sequentially within one stream operation so this is safe.
 //
-// Ownership: moving mutable state from the ephemeral Writer to the long-lived
-// filter changes the failure mode from "lost mutation" to "stale mutation
-// replayed on a later callback." filter.flush resets all queues after applying
-// them to prevent this.
+// directWrite mode (set only by NewWriter):
+//
+// Filter-created Writers (all production paths) set directWrite=false; mutation
+// methods queue unconditionally so flush() applies them on the worker thread at
+// the right time. NewWriter sets directWrite=true so that mutation methods apply
+// directly to the handle — this preserves the behaviour expected by tests and
+// examples that call handler functions outside a filter lifecycle, where there is
+// no enclosing flush() call.
 type Writer struct {
-	// f is the backing filter for this stream. All mutable state is on f. Never nil.
+	// f is the backing filter for this stream. All mutable stream state is on f.
 	f *filter
 
 	// calloutCB is pre-set to the filter before the handler runs. Passed to
@@ -80,39 +84,57 @@ type Writer struct {
 	calloutCB shared.HttpCalloutCallback
 
 	// calloutStarted is true once HTTPCallout has been accepted by Envoy.
-	// It gates the Active→Paused/Done CAS transitions in pausePendingCallout and
-	// flushCompletedCallout, and the Go-after-HTTPCallout panic.
+	// It gates the Active→Paused/Done CAS transitions and the Go-after-HTTPCallout
+	// panic. Also forces queueing of mutations even in directWrite mode, because
+	// mutations from the callout callback must be deferred to flush().
 	calloutStarted bool
+
+	// directWrite is true only for Writers created by NewWriter. It makes
+	// request-mutation methods apply directly to the handle instead of queuing,
+	// unless an async operation (callout or goroutine) is in flight.
+	directWrite bool
 }
 
-// NewWriter wraps handle in a Writer backed by a minimal filter. For tests;
-// production Writers are created by filter with calloutCB pre-set. Tests that
-// need callout or async behavior should instantiate filter directly.
-func NewWriter(h shared.HttpFilterHandle) *Writer { return &Writer{f: &filter{handle: h}} }
+// NewWriter wraps handle in a Writer that applies mutations directly (no queue).
+// Intended for use in tests and examples that invoke handler functions outside a
+// filter lifecycle. Tests that need callout or async lifecycle behavior should
+// instantiate filter directly.
+func NewWriter(h shared.HttpFilterHandle) *Writer {
+	return &Writer{f: &filter{handle: h}, directWrite: true}
+}
+
+// queued reports whether mutation methods should enqueue rather than apply directly.
+// True whenever the filter is inside an active callout or goroutine, OR when the
+// Writer was created by the filter factory (not by NewWriter) — in that case flush()
+// is always called at the right point in the lifecycle.
+func (w *Writer) queued() bool {
+	return !w.directWrite || w.f.async != nil || w.calloutStarted
+}
 
 // Log emits a message via Envoy's logging mechanism at the given severity.
 func (w *Writer) Log(level LogLevel, format string, args ...any) {
 	w.f.handle.Log(shared.LogLevel(level), format, args...)
 }
 
-// SendLocalResponse queues an immediate client response. Only the first call
-// takes effect; additional calls are silently ignored.
-//
-// The response is applied by flush() on the worker thread. After flush, the
-// backing filter's stopped flag stays true so the caller can return Stop.
+// SendLocalResponse queues (or immediately sends) a client response.
+// Only the first call takes effect; additional calls are silently ignored.
 //
 // NOTE: SendLocalResponse from inside w.Go is NOT reliable. Envoy only honours
-// it from filter callbacks (OnRequestHeaders, OnHttpCalloutDone, etc.). Use
-// HTTPCallout (callback form) if the filter needs to reject with a local response.
+// it from filter callbacks. Use HTTPCallout (callback form) if the filter needs
+// to reject with a local response.
 func (w *Writer) SendLocalResponse(status int, body []byte, headers ...[2]string) {
-	if w.f.localReply == nil {
-		w.f.localReply = &localResponse{status: uint32(status), headers: headers, body: body}
+	if w.queued() {
+		if w.f.localReply == nil {
+			w.f.localReply = &localResponse{status: uint32(status), headers: headers, body: body}
+		}
+		w.f.stopped = true
+		return
 	}
+	w.f.handle.SendLocalResponse(uint32(status), headers, body, "")
 	w.f.stopped = true
 }
 
 // GetAttributeString returns the string stream attribute for the given ID.
-// The returned Buffer is a copy safe to hold after the handler returns.
 func (w *Writer) GetAttributeString(id AttributeID) (Buffer, bool) {
 	v, ok := w.f.handle.GetAttributeString(shared.AttributeID(id))
 	if !ok {
@@ -136,37 +158,54 @@ func (w *Writer) GetActiveSpan() shared.Span {
 	return w.f.handle.GetActiveSpan()
 }
 
-// SetRequestHeader queues a request header set. Applied by flush() on the worker thread.
-// For response-phase use, call SetResponseHeader instead.
+// SetRequestHeader queues (or immediately sets) a request header.
 func (w *Writer) SetRequestHeader(name, value string) {
-	w.f.reqHeaders = append(w.f.reqHeaders, requestHeaderMutation{name: name, value: value})
+	if w.queued() {
+		w.f.reqHeaders = append(w.f.reqHeaders, requestHeaderMutation{name: name, value: value})
+		return
+	}
+	w.f.handle.RequestHeaders().Set(name, value)
 }
 
-// AddRequestHeader queues a request header add (multi-value, no existing values removed).
+// AddRequestHeader queues (or immediately adds) a request header (multi-value).
 func (w *Writer) AddRequestHeader(name, value string) {
-	w.f.reqHeaders = append(w.f.reqHeaders, requestHeaderMutation{name: name, value: value, add: true})
+	if w.queued() {
+		w.f.reqHeaders = append(w.f.reqHeaders, requestHeaderMutation{name: name, value: value, add: true})
+		return
+	}
+	w.f.handle.RequestHeaders().Add(name, value)
 }
 
-// RemoveRequestHeader queues removal of all values for the named request header.
+// RemoveRequestHeader queues (or immediately removes) all values for the named header.
 func (w *Writer) RemoveRequestHeader(name string) {
-	w.f.reqHeaders = append(w.f.reqHeaders, requestHeaderMutation{name: name, del: true})
+	if w.queued() {
+		w.f.reqHeaders = append(w.f.reqHeaders, requestHeaderMutation{name: name, del: true})
+		return
+	}
+	w.f.handle.RequestHeaders().Remove(name)
 }
 
-// SetFilterState queues a per-stream filter state write.
-// Downstream filters, access loggers, and upstream selection callbacks can read it.
+// SetFilterState queues (or immediately writes) a per-stream filter state value.
 func (w *Writer) SetFilterState(key, value string) {
-	w.f.filterState = append(w.f.filterState, filterStateMutation{key: key, value: []byte(value)})
+	if w.queued() {
+		w.f.filterState = append(w.f.filterState, filterStateMutation{key: key, value: []byte(value)})
+		return
+	}
+	w.f.handle.SetFilterState(key, []byte(value))
 }
 
-// SetUpstreamOverrideHost queues an upstream host override. Last call wins.
-// Returns true (optimistic; actual Envoy acceptance is not known until flush).
+// SetUpstreamOverrideHost queues (or immediately sets) an upstream host override.
+// Returns true when queued (optimistic). Returns the handle's result in direct-write mode.
 func (w *Writer) SetUpstreamOverrideHost(host string, strict bool) bool {
-	w.f.override = &upstreamOverrideMutation{host: host, strict: strict}
-	return true
+	if w.queued() {
+		w.f.override = &upstreamOverrideMutation{host: host, strict: strict}
+		return true
+	}
+	return w.f.handle.SetUpstreamOverrideHost(host, strict)
 }
 
 // SetResponseHeader sets a response header inline. Response-phase callbacks only.
-// Not queued — applied immediately. Not visible to flush().
+// Not queued — response mutations are always applied immediately.
 func (w *Writer) SetResponseHeader(name, value string) {
 	w.f.handle.ResponseHeaders().Set(name, value)
 }
@@ -195,22 +234,23 @@ func (w *Writer) SetResponseBody(data []byte) {
 	w.f.hasResponseBodyReplacement = true
 }
 
-// IncrementCounter queues a counter increment. Applied in order at flush time.
-// id must have been obtained from ConfigHandle.DefineCounter at config time.
+// IncrementCounter queues (or immediately applies) a counter increment.
 func (w *Writer) IncrementCounter(id MetricID, delta uint64) {
-	w.f.counters = append(w.f.counters, counterMutation{id: id, delta: delta})
+	if w.queued() {
+		w.f.counters = append(w.f.counters, counterMutation{id: id, delta: delta})
+		return
+	}
+	w.f.handle.IncrementCounterValue(shared.MetricID(id), delta)
 }
 
 // Go upgrades this request to asynchronous mode. fn runs in a new goroutine
 // and may call w.Do to issue outbound HTTP callouts. After fn returns, Transit
-// hops back to the Envoy worker thread, applies queued mutations, and calls
-// ContinueRequest to resume the stream — unless the stream was cancelled while
-// fn was running.
+// hops back to the Envoy worker thread, applies queued mutations, and resumes
+// the stream — unless the stream was cancelled while fn was running.
 //
-// Goroutine ownership: once Go is called, the goroutine is the sole writer to
-// the backing filter's mutation queues until it returns. OnStreamComplete must
-// not reset those queues while the goroutine may still be writing — it only
-// touches the async cancellation/completion state.
+// f.async is cleared before flush(true) so that subsequent callbacks
+// (e.g. OnRequestBody on a request that still has a body) do not see stale
+// goroutine state and spuriously return StopAndBuffer.
 //
 // Panics if called twice or after HTTPCallout.
 //
@@ -222,23 +262,24 @@ func (w *Writer) Go(fn func(ctx context.Context)) {
 	if w.calloutStarted {
 		panic("up: Go cannot be started after HTTPCallout")
 	}
-	// GetScheduler must be called on the worker thread, not from the goroutine.
 	scheduler := w.f.handle.GetScheduler()
 	state := &asyncState{scheduler: scheduler}
 	ctx, cancel := context.WithCancel(context.Background())
 	state.cancel = cancel
 	w.f.async = state
-	// Capture f before spawning; w may be collected after the goroutine starts.
 	f := w.f
 	go func() {
 		defer cancel()
 		fn(ctx)
-		// If OnStreamComplete fired while fn was running, done() is true.
-		// Do not call finish — the stream is dead.
 		if state.done() {
 			return
 		}
-		state.finish(func() { f.flush(true) })
+		state.finish(func() {
+			// Clear async state before flush so that callbacks arriving after
+			// ContinueRequest (e.g. OnRequestBody) see f.async == nil.
+			f.async = nil
+			f.flush(true)
+		})
 	}()
 }
 
@@ -256,8 +297,7 @@ func (w *Writer) HTTPCallout(req HTTPCalloutRequest, fn HTTPCalloutFunc) (HTTPCa
 	}
 	// Set calloutFn and calloutStarted BEFORE calling handle.HttpCallout.
 	// handle.HttpCallout may invoke the callback synchronously. If we set these
-	// fields after, the synchronous callback would fire with calloutFn == nil
-	// and calloutStarted == false, breaking both the routing and the state machine.
+	// fields after, the synchronous callback would fire with calloutFn == nil.
 	w.f.calloutFn = fn
 	w.calloutStarted = true
 	init, _ := w.f.handle.HttpCallout(
@@ -265,11 +305,10 @@ func (w *Writer) HTTPCallout(req HTTPCalloutRequest, fn HTTPCalloutFunc) (HTTPCa
 		req.Headers,
 		req.Body,
 		req.TimeoutMillis,
-		w.calloutCB, // pre-set to filter; routes to filter.OnHttpCalloutDone
+		w.calloutCB,
 	)
 	calloutInit := HTTPCalloutInitResult(init)
 	if calloutInit != HTTPCalloutInitSuccess {
-		// Roll back: no callback will fire, leave Writer in a clean state.
 		w.f.calloutFn = nil
 		w.calloutStarted = false
 		w.f.calloutState.Store(calloutStateActive)
@@ -281,9 +320,8 @@ func (w *Writer) HTTPCallout(req HTTPCalloutRequest, fn HTTPCalloutFunc) (HTTPCa
 // Do performs an Envoy HTTP callout from inside a Go goroutine and blocks
 // until the callout completes or ctx is cancelled.
 //
-// Multiple Do calls may be in flight concurrently. However, Writer mutation
-// methods are NOT goroutine-safe; call them only after all fan-out goroutines
-// have joined (e.g. after wg.Wait()).
+// Multiple Do calls may be in flight concurrently. Writer mutation methods are
+// NOT goroutine-safe; call them only after all fan-out goroutines have joined.
 //
 // Panics if called outside a Go goroutine.
 //
@@ -296,8 +334,6 @@ func (w *Writer) Do(ctx context.Context, req HTTPCalloutRequest) (*HTTPCalloutRe
 		resp *HTTPCalloutResponse
 		err  error
 	}
-	// Buffered so the doCallbackFunc send never blocks if Do already returned
-	// due to context cancellation.
 	ch := make(chan result, 1)
 	w.f.async.scheduler.Schedule(func() {
 		if w.f.async.done() {
@@ -310,8 +346,6 @@ func (w *Writer) Do(ctx context.Context, req HTTPCalloutRequest) (*HTTPCalloutRe
 			req.Body,
 			req.TimeoutMillis,
 			doCallbackFunc(func(_ uint64, r HTTPCalloutResult, headers [][2]shared.UnsafeEnvoyBuffer, body []shared.UnsafeEnvoyBuffer) {
-				// Copy before sending: Envoy may free the memory as soon as
-				// this callback returns, before the goroutine reads from ch.
 				ch <- result{resp: &HTTPCalloutResponse{
 					Result:  r,
 					Headers: copyUnsafeEnvoyHeaderBuffers(headers),
