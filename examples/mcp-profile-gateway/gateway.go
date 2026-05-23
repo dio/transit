@@ -339,6 +339,48 @@ func sortTools(tools []mcpprofilerouter.Tool) {
 	})
 }
 
+func serverByPrefix(profile Profile, prefix string) (string, ProfileServer, bool) {
+	for serverID, server := range profile.Servers {
+		if serverPrefix(serverID, server) == prefix {
+			return serverID, server, true
+		}
+	}
+	return "", ProfileServer{}, false
+}
+
+func resolveProfileTool(paramsRaw json.RawMessage, profile Profile) (serverID, backendTool string, params mcpprofilerouter.CallToolParams, errCode int, errMsg string) {
+	if err := json.Unmarshal(paramsRaw, &params); err != nil || params.Name == "" {
+		return "", "", params, -32602, "invalid tools/call params"
+	}
+	prefix, tool, ok := strings.Cut(params.Name, ".")
+	if !ok || tool == "" {
+		return "", "", params, -32602, "tool name must be namespaced as prefix.tool"
+	}
+	sid, _, ok := serverByPrefix(profile, prefix)
+	if !ok {
+		return "", "", params, -32602, fmt.Sprintf("unknown tool: %s", params.Name)
+	}
+	server := profile.Servers[sid]
+	if !profileToolEnabled(server, tool) {
+		return "", "", params, -32602, fmt.Sprintf("disabled tool: %s", params.Name)
+	}
+	return sid, tool, params, 0, ""
+}
+
+func toolCallForwardBody(id json.RawMessage, backendTool string, params mcpprofilerouter.CallToolParams) ([]byte, error) {
+	params.Name = backendTool
+	paramsRaw, err := json.Marshal(params)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      cloneRaw(id),
+		Method:  mcpprofilerouter.MethodToolsCall,
+		Params:  paramsRaw,
+	})
+}
+
 func cloneRaw(raw json.RawMessage) json.RawMessage {
 	if len(raw) == 0 {
 		return nil

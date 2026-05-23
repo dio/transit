@@ -69,6 +69,18 @@ func (g *Gateway) handleProfileNetHTTP(w http.ResponseWriter, r *http.Request) {
 			ID:      cloneRaw(req.ID),
 			Result:  result,
 		})
+	case mcpprofilerouter.MethodToolsCall:
+		sessionID := r.Header.Get(mcpprofilerouter.SessionIDHeader)
+		if sessionID == "" {
+			writeJSON(w, http.StatusBadRequest, errorResponse(req.ID, -32010, "missing MCP session ID"))
+			return
+		}
+		session, ok := decodeProfileSession(profileID, sessionID)
+		if !ok {
+			writeJSON(w, http.StatusBadRequest, errorResponse(req.ID, -32010, "invalid MCP session ID"))
+			return
+		}
+		g.callProfileToolNetHTTP(w, r, req.ID, req.Params, profile, session)
 	default:
 		writeJSON(w, http.StatusBadRequest, errorResponse(req.ID, -32601, "unsupported profile method: %s", req.Method))
 	}
@@ -220,6 +232,43 @@ func (g *Gateway) listProfileToolsNetHTTP(r *http.Request, id json.RawMessage, p
 	}
 	sortTools(merged)
 	return mcpprofilerouter.ListToolsResult{Tools: merged}
+}
+
+func (g *Gateway) callProfileToolNetHTTP(w http.ResponseWriter, r *http.Request, id json.RawMessage, params json.RawMessage, profile Profile, session profileSession) {
+	serverID, backendTool, callParams, errCode, errMsg := resolveProfileTool(params, profile)
+	if errCode != 0 {
+		writeJSON(w, http.StatusOK, errorResponse(id, errCode, "%s", errMsg))
+		return
+	}
+	server := profile.Servers[serverID]
+	body, err := toolCallForwardBody(id, backendTool, callParams)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse(id, -32603, "profile gateway failed"))
+		return
+	}
+	resp, err := g.forwardProfileServerNetHTTP(r, body, serverID, server, session.Backends[serverID], true)
+	if err != nil {
+		if catalog, ok := g.config.CatalogServers[serverID]; ok {
+			g.record(serverID, catalog, "error: "+err.Error())
+		}
+		writeJSON(w, http.StatusBadGateway, errorResponse(id, -32003, "tool backend failed: %s", serverID))
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		if catalog, ok := g.config.CatalogServers[serverID]; ok {
+			g.record(serverID, catalog, "error: tools/call")
+		}
+		writeJSON(w, http.StatusBadGateway, errorResponse(id, -32003, "tool backend failed: %s", serverID))
+		return
+	}
+	if catalog, ok := g.config.CatalogServers[serverID]; ok {
+		g.record(serverID, catalog, "ok")
+	}
+	copyNetHTTPResponseHeaders(w.Header(), resp.Header)
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(respBody)
 }
 
 func (g *Gateway) forwardProfileServerNetHTTP(r *http.Request, body []byte, serverID string, server ProfileServer, backendSessionID string, useBackendSession bool) (*http.Response, error) {

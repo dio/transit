@@ -612,7 +612,206 @@ func TestGateway_profileUnsupportedMethodReachesNoL2(t *testing.T) {
 	resp := postRPCRaw(t, server.URL+"/mcp/profile", "", mcpprofilerouter.JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      json.RawMessage(`1`),
+		Method:  "prompts/list",
+	}, nil)
+	defer func() { _ = resp.Body.Close() }()
+
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	require.False(t, reached)
+}
+
+func TestGateway_profileToolsCallForwardsToOwningServerOnly(t *testing.T) {
+	var awsGot, githubGot struct {
+		called    bool
+		method    string
+		toolName  string
+		sessionID string
+	}
+	aws := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		awsGot.called = true
+		var req mcpprofilerouter.JSONRPCRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		awsGot.method = req.Method
+		var p mcpprofilerouter.CallToolParams
+		_ = json.Unmarshal(req.Params, &p)
+		awsGot.toolName = p.Name
+		awsGot.sessionID = r.Header.Get(mcpprofilerouter.SessionIDHeader)
+		writeJSON(w, http.StatusOK, mcpprofilerouter.JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Result:  mcpprofilerouter.CallToolResult{Content: []mcpprofilerouter.ContentBlock{{Type: "text", Text: "aws result"}}},
+		})
+	}))
+	defer aws.Close()
+	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		githubGot.called = true
+		var req mcpprofilerouter.JSONRPCRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		githubGot.method = req.Method
+		var p mcpprofilerouter.CallToolParams
+		_ = json.Unmarshal(req.Params, &p)
+		githubGot.toolName = p.Name
+		githubGot.sessionID = r.Header.Get(mcpprofilerouter.SessionIDHeader)
+		writeJSON(w, http.StatusOK, mcpprofilerouter.JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Result:  mcpprofilerouter.CallToolResult{Content: []mcpprofilerouter.ContentBlock{{Type: "text", Text: "github result"}}},
+		})
+	}))
+	defer github.Close()
+
+	gateway := New(Config{
+		CatalogServers: map[string]CatalogServer{
+			"aws-knowledge": {URL: aws.URL},
+			"github":        {URL: github.URL},
+		},
+		Profiles: map[string]Profile{
+			"profile": {
+				Name: "profile",
+				Servers: map[string]ProfileServer{
+					"aws-knowledge": {URL: aws.URL, Prefix: "aws"},
+					"github":        {URL: github.URL, Prefix: "github"},
+				},
+			},
+		},
+	})
+	server := httptest.NewServer(gateway.Handler())
+	defer server.Close()
+
+	sessionID, err := encodeProfileSession("profile", map[string]string{
+		"aws-knowledge": "aws-backend-session",
+		"github":        "github-backend-session",
+	})
+	require.NoError(t, err)
+
+	resp := postRPCRaw(t, server.URL+"/mcp/profile", sessionID, mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
 		Method:  mcpprofilerouter.MethodToolsCall,
+		Params:  mustRaw(t, mcpprofilerouter.CallToolParams{Name: "github.search", Arguments: map[string]any{"q": "test"}}),
+	}, nil)
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
+	require.False(t, awsGot.called, "aws backend must not be called")
+	require.True(t, githubGot.called)
+	require.Equal(t, mcpprofilerouter.MethodToolsCall, githubGot.method)
+	require.Equal(t, "search", githubGot.toolName, "prefix must be stripped before forwarding")
+	require.Equal(t, "github-backend-session", githubGot.sessionID)
+
+	var rpc mcpprofilerouter.JSONRPCResponse
+	require.NoError(t, json.Unmarshal(body, &rpc))
+	require.Nil(t, rpc.Error)
+}
+
+func TestGateway_profileToolsCallRejectsUnknownTool(t *testing.T) {
+	var reached bool
+	l2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer l2.Close()
+	gateway := New(Config{
+		CatalogServers: map[string]CatalogServer{"github": {URL: l2.URL}},
+		Profiles: map[string]Profile{
+			"profile": {
+				Name:    "profile",
+				Servers: map[string]ProfileServer{"github": {URL: l2.URL, Prefix: "github"}},
+			},
+		},
+	})
+	server := httptest.NewServer(gateway.Handler())
+	defer server.Close()
+
+	sessionID, err := encodeProfileSession("profile", map[string]string{"github": "s"})
+	require.NoError(t, err)
+
+	resp := postRPCRaw(t, server.URL+"/mcp/profile", sessionID, mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  mcpprofilerouter.MethodToolsCall,
+		Params:  mustRaw(t, mcpprofilerouter.CallToolParams{Name: "unknown.tool"}),
+	}, nil)
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
+	var rpc mcpprofilerouter.JSONRPCResponse
+	require.NoError(t, json.Unmarshal(body, &rpc))
+	require.NotNil(t, rpc.Error)
+	require.Equal(t, -32602, rpc.Error.Code)
+	require.False(t, reached)
+}
+
+func TestGateway_profileToolsCallRejectsDisabledTool(t *testing.T) {
+	var reached bool
+	l2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer l2.Close()
+	gateway := New(Config{
+		CatalogServers: map[string]CatalogServer{"github": {URL: l2.URL}},
+		Profiles: map[string]Profile{
+			"profile": {
+				Name: "profile",
+				Servers: map[string]ProfileServer{
+					"github": {URL: l2.URL, Prefix: "github", EnabledTools: map[string]bool{"search": false}},
+				},
+			},
+		},
+	})
+	server := httptest.NewServer(gateway.Handler())
+	defer server.Close()
+
+	sessionID, err := encodeProfileSession("profile", map[string]string{"github": "s"})
+	require.NoError(t, err)
+
+	resp := postRPCRaw(t, server.URL+"/mcp/profile", sessionID, mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  mcpprofilerouter.MethodToolsCall,
+		Params:  mustRaw(t, mcpprofilerouter.CallToolParams{Name: "github.search"}),
+	}, nil)
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
+	var rpc mcpprofilerouter.JSONRPCResponse
+	require.NoError(t, json.Unmarshal(body, &rpc))
+	require.NotNil(t, rpc.Error)
+	require.Equal(t, -32602, rpc.Error.Code)
+	require.False(t, reached)
+}
+
+func TestGateway_profileToolsCallRequiresSession(t *testing.T) {
+	var reached bool
+	l2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer l2.Close()
+	gateway := New(Config{
+		CatalogServers: map[string]CatalogServer{"github": {URL: l2.URL}},
+		Profiles: map[string]Profile{
+			"profile": {
+				Name:    "profile",
+				Servers: map[string]ProfileServer{"github": {URL: l2.URL}},
+			},
+		},
+	})
+	server := httptest.NewServer(gateway.Handler())
+	defer server.Close()
+
+	resp := postRPCRaw(t, server.URL+"/mcp/profile", "", mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  mcpprofilerouter.MethodToolsCall,
+		Params:  mustRaw(t, mcpprofilerouter.CallToolParams{Name: "github.search"}),
 	}, nil)
 	defer func() { _ = resp.Body.Close() }()
 

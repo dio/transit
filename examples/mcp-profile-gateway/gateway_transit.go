@@ -120,6 +120,18 @@ func (g *Gateway) calloutProfileTransit(w *up.Writer, r transitRequest, body []b
 		g.initializeProfileTransit(w, r, rpcReq.ID, body, profileID, profile)
 	case mcpprofilerouter.MethodToolsList:
 		g.listProfileToolsTransit(w, r, rpcReq.ID, profileID, profile)
+	case mcpprofilerouter.MethodToolsCall:
+		sessionID := headerValue(r.headers, mcpprofilerouter.SessionIDHeader)
+		if sessionID == "" {
+			writeTransitJSON(w, http.StatusBadRequest, errorResponse(rpcReq.ID, -32010, "missing MCP session ID"))
+			return
+		}
+		session, ok := decodeProfileSession(profileID, sessionID)
+		if !ok {
+			writeTransitJSON(w, http.StatusBadRequest, errorResponse(rpcReq.ID, -32010, "invalid MCP session ID"))
+			return
+		}
+		g.callProfileToolTransit(w, r, rpcReq.ID, rpcReq.Params, profile, session)
 	default:
 		writeTransitJSON(w, http.StatusBadRequest, errorResponse(rpcReq.ID, -32601, "unsupported profile method: %s", rpcReq.Method))
 	}
@@ -221,6 +233,78 @@ func (g *Gateway) listProfileToolsTransit(w *up.Writer, r transitRequest, id jso
 	if err != nil {
 		writeTransitJSON(w, http.StatusBadGateway, errorResponse(id, -32002, "tools/list failed"))
 	}
+}
+
+func (g *Gateway) callProfileToolTransit(w *up.Writer, r transitRequest, id json.RawMessage, params json.RawMessage, profile Profile, session profileSession) {
+	serverID, backendTool, callParams, errCode, errMsg := resolveProfileTool(params, profile)
+	if errCode != 0 {
+		writeTransitJSON(w, http.StatusOK, errorResponse(id, errCode, "%s", errMsg))
+		return
+	}
+	server := profile.Servers[serverID]
+	catalogServer := g.config.CatalogServers[serverID]
+	body, err := toolCallForwardBody(id, backendTool, callParams)
+	if err != nil {
+		writeTransitJSON(w, http.StatusInternalServerError, errorResponse(id, -32603, "profile gateway failed"))
+		return
+	}
+	calloutReq, err := g.profileToolCallCalloutRequest(r, body, serverID, server, catalogServer, session.Backends[serverID])
+	if err != nil {
+		writeTransitJSON(w, http.StatusInternalServerError, errorResponse(id, -32603, "profile gateway failed"))
+		return
+	}
+	_, err = w.HTTPCallout(calloutReq, func(result up.HTTPCalloutResult, headers [][2]shared.UnsafeEnvoyBuffer, respBody []shared.UnsafeEnvoyBuffer) {
+		if result != up.HTTPCalloutSuccess {
+			g.record(serverID, catalogServer, fmt.Sprintf("error: callout result %d", result))
+			writeTransitJSON(w, http.StatusBadGateway, errorResponse(id, -32003, "tool backend failed: %s", serverID))
+			return
+		}
+		status, responseHeaders := responseFromCalloutHeaders(headers)
+		if status != http.StatusOK {
+			g.record(serverID, catalogServer, fmt.Sprintf("error: status %d", status))
+			writeTransitJSON(w, http.StatusBadGateway, errorResponse(id, -32003, "tool backend failed: %s", serverID))
+			return
+		}
+		g.record(serverID, catalogServer, "ok")
+		w.SendLocalResponse(status, calloutBodyBytes(respBody), responseHeaders...)
+	})
+	if err != nil {
+		g.record(serverID, catalogServer, "error: "+err.Error())
+		writeTransitJSON(w, http.StatusBadGateway, errorResponse(id, -32003, "tool backend failed: %s", serverID))
+	}
+}
+
+func (g *Gateway) profileToolCallCalloutRequest(r transitRequest, body []byte, serverID string, server ProfileServer, catalogServer CatalogServer, backendSessionID string) (up.HTTPCalloutRequest, error) {
+	u, err := url.Parse(catalogURL(server.URL, serverID))
+	if err != nil {
+		return up.HTTPCalloutRequest{}, err
+	}
+	headers := [][2]string{
+		{":method", http.MethodPost},
+		{":path", u.RequestURI()},
+		{":scheme", u.Scheme},
+		{"host", u.Host},
+		{"content-type", "application/json"},
+		{"accept", "application/json"},
+	}
+	if backendSessionID != "" {
+		headers = append(headers, [2]string{mcpprofilerouter.SessionIDHeader, backendSessionID})
+	}
+	if protocol := headerValue(r.headers, mcpprofilerouter.ProtocolVersionHeader); protocol != "" {
+		headers = append(headers, [2]string{mcpprofilerouter.ProtocolVersionHeader, protocol})
+	}
+	if server.CredentialRef != "" {
+		headers = append(headers, [2]string{"x-mcp-credential-ref", server.CredentialRef})
+	}
+	if server.CredentialEnvelope != "" {
+		headers = append(headers, [2]string{"x-mcp-credential-envelope", server.CredentialEnvelope})
+	}
+	return up.HTTPCalloutRequest{
+		Cluster:       catalogCluster(catalogServer),
+		Headers:       headers,
+		Body:          body,
+		TimeoutMillis: timeoutMillis(g.config.TimeoutMillis),
+	}, nil
 }
 
 func (g *Gateway) catalogCalloutRequest(r transitRequest, body []byte, serverID string, server CatalogServer) (up.HTTPCalloutRequest, error) {
