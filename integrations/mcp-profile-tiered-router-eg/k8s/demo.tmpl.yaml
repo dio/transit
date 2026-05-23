@@ -1,0 +1,257 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: l1-placeholder-backend
+  namespace: transit-dataplane
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: l1-placeholder-backend
+  template:
+    metadata:
+      labels:
+        app: l1-placeholder-backend
+    spec:
+      containers:
+      - name: placeholder
+        image: "{{.DemoImage}}"
+        imagePullPolicy: IfNotPresent
+        args: ["placeholder", "--addr=:8080"]
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: l1-placeholder-backend
+  namespace: transit-dataplane
+spec:
+  selector:
+    app: l1-placeholder-backend
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: l2-a-catalog-router
+  namespace: transit-dataplane
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: l2-a-catalog-router
+  template:
+    metadata:
+      labels:
+        app: l2-a-catalog-router
+        transit.dio/shard: a
+    spec:
+      containers:
+      - name: mcp-catalog-router
+        image: "{{.DemoImage}}"
+        imagePullPolicy: IfNotPresent
+        args: ["catalog-router", "--shard=a", "--addr=:8080"]
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: l2-a-catalog-router
+  namespace: transit-dataplane
+spec:
+  selector:
+    app: l2-a-catalog-router
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: l2-b-catalog-router
+  namespace: transit-dataplane
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: l2-b-catalog-router
+  template:
+    metadata:
+      labels:
+        app: l2-b-catalog-router
+        transit.dio/shard: b
+    spec:
+      containers:
+      - name: mcp-catalog-router
+        image: "{{.DemoImage}}"
+        imagePullPolicy: IfNotPresent
+        args: ["catalog-router", "--shard=b", "--addr=:8080"]
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: l2-b-catalog-router
+  namespace: transit-dataplane
+spec:
+  selector:
+    app: l2-b-catalog-router
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-kiwi
+  namespace: transit-dataplane
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-kiwi
+  template:
+    metadata:
+      labels:
+        app: mcp-kiwi
+        transit.dio/mcp-server: kiwi
+    spec:
+      containers:
+      - name: mcp
+        image: "{{.DemoImage}}"
+        imagePullPolicy: IfNotPresent
+        args: ["fake-mcp", "--server=kiwi", "--addr=:8080"]
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-kiwi
+  namespace: transit-dataplane
+spec:
+  selector:
+    app: mcp-kiwi
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-aws-knowledge
+  namespace: transit-dataplane
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-aws-knowledge
+  template:
+    metadata:
+      labels:
+        app: mcp-aws-knowledge
+        transit.dio/mcp-server: aws-knowledge
+    spec:
+      containers:
+      - name: mcp
+        image: "{{.DemoImage}}"
+        imagePullPolicy: IfNotPresent
+        args: ["fake-mcp", "--server=aws-knowledge", "--addr=:8080"]
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-aws-knowledge
+  namespace: transit-dataplane
+spec:
+  selector:
+    app: mcp-aws-knowledge
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-microsoft
+  namespace: transit-dataplane
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-microsoft
+  template:
+    metadata:
+      labels:
+        app: mcp-microsoft
+        transit.dio/mcp-server: microsoft
+    spec:
+      containers:
+      - name: mcp
+        image: "{{.DemoImage}}"
+        imagePullPolicy: IfNotPresent
+        args: ["fake-mcp", "--server=microsoft", "--addr=:8080"]
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-microsoft
+  namespace: transit-dataplane
+spec:
+  selector:
+    app: mcp-microsoft
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-github
+  namespace: transit-dataplane
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-github
+  template:
+    metadata:
+      labels:
+        app: mcp-github
+        transit.dio/mcp-server: github
+    spec:
+      containers:
+      - name: mcp
+        image: "{{.DemoImage}}"
+        imagePullPolicy: IfNotPresent
+        args: ["fake-mcp", "--server=github", "--addr=:8080"]
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-github
+  namespace: transit-dataplane
+spec:
+  selector:
+    app: mcp-github
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080

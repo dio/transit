@@ -1,0 +1,122 @@
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: l1
+  namespace: transit-dataplane
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        name: l1
+        type: ClusterIP
+        labels:
+          transit.dio/proxy: l1
+      envoyDeployment:
+        pod:
+          labels:
+            transit.dio/proxy: l1
+        container:
+          image: "{{.EnvoyImage}}"
+          env:
+          - name: GODEBUG
+            value: "cgocheck=0"
+          - name: ENVOY_DYNAMIC_MODULES_SEARCH_PATH
+            value: "/etc/envoy/dynamic-modules"
+          - name: MCP_PROFILE_GATEWAY_PROFILE
+            value: '{{.L1ProfileJSON}}'
+  dynamicModules:
+  # Placeholder for the future examples/mcp-profile-gateway module.
+  - name: mcp-profile-gateway
+    source:
+      type: Local
+      local:
+        path: /etc/envoy/dynamic-modules/libmcp-profile-gateway.so
+    doNotClose: true
+    loadGlobally: false
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: l2-a
+  namespace: transit-dataplane
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        name: l2-a
+        type: ClusterIP
+        labels:
+          transit.dio/proxy: l2-a
+          transit.dio/shard: a
+      envoyDeployment:
+        pod:
+          labels:
+            transit.dio/proxy: l2-a
+            transit.dio/shard: a
+        container:
+          image: "{{.EnvoyImage}}"
+          env:
+          - name: GODEBUG
+            value: "cgocheck=0"
+          - name: ENVOY_DYNAMIC_MODULES_SEARCH_PATH
+            value: "/etc/envoy/dynamic-modules"
+  dynamicModules:
+  - name: mcp-catalog-router
+    source:
+      type: Local
+      local:
+        path: /etc/envoy/dynamic-modules/libmcp-catalog-router.so
+    doNotClose: true
+    loadGlobally: false
+  - name: cluster-router
+    source:
+      type: Local
+      local:
+        path: /etc/envoy/dynamic-modules/libcluster-router.so
+    doNotClose: true
+    loadGlobally: false
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: l2-b
+  namespace: transit-dataplane
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        name: l2-b
+        type: ClusterIP
+        labels:
+          transit.dio/proxy: l2-b
+          transit.dio/shard: b
+      envoyDeployment:
+        pod:
+          labels:
+            transit.dio/proxy: l2-b
+            transit.dio/shard: b
+        container:
+          image: "{{.EnvoyImage}}"
+          env:
+          - name: GODEBUG
+            value: "cgocheck=0"
+          - name: ENVOY_DYNAMIC_MODULES_SEARCH_PATH
+            value: "/etc/envoy/dynamic-modules"
+  dynamicModules:
+  - name: mcp-catalog-router
+    source:
+      type: Local
+      local:
+        path: /etc/envoy/dynamic-modules/libmcp-catalog-router.so
+    doNotClose: true
+    loadGlobally: false
+  - name: cluster-router
+    source:
+      type: Local
+      local:
+        path: /etc/envoy/dynamic-modules/libcluster-router.so
+    doNotClose: true
+    loadGlobally: false

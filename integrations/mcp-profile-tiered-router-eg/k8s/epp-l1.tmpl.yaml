@@ -1,0 +1,24 @@
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyPatchPolicy
+metadata:
+  name: l1-mcp-profile-gateway
+  namespace: transit-dataplane
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: l1
+  type: JSONPatch
+  jsonPatches:
+  - type: "type.googleapis.com/envoy.config.listener.v3.Listener"
+    name: tcp-80
+    operation:
+      op: add
+      path: "/default_filter_chain/filters/0/typed_config/http_filters/0"
+      value:
+        name: mcp-profile-gateway
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+          dynamic_module_config:
+            name: mcp-profile-gateway
+          filter_name: mcp-profile-gateway

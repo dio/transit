@@ -1,0 +1,85 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: mcp-profile-tiered-router-eg
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: l1
+  namespace: transit-dataplane
+spec:
+  gatewayClassName: mcp-profile-tiered-router-eg
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: l1
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+    hostname: mcp-profile-tiered-router.example.com
+    allowedRoutes:
+      namespaces:
+        from: Selector
+        selector:
+          matchLabels:
+            transit.dio/gateway-routes: "true"
+      kinds:
+      - group: gateway.networking.k8s.io
+        kind: HTTPRoute
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: l2-a
+  namespace: transit-dataplane
+spec:
+  gatewayClassName: mcp-profile-tiered-router-eg
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: l2-a
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+    allowedRoutes:
+      namespaces:
+        from: Selector
+        selector:
+          matchLabels:
+            transit.dio/gateway-routes: "true"
+      kinds:
+      - group: gateway.networking.k8s.io
+        kind: HTTPRoute
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: l2-b
+  namespace: transit-dataplane
+spec:
+  gatewayClassName: mcp-profile-tiered-router-eg
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: l2-b
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+    allowedRoutes:
+      namespaces:
+        from: Selector
+        selector:
+          matchLabels:
+            transit.dio/gateway-routes: "true"
+      kinds:
+      - group: gateway.networking.k8s.io
+        kind: HTTPRoute

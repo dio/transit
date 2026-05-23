@@ -1,0 +1,55 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: l1-public
+  namespace: transit-dataplane
+spec:
+  parentRefs:
+  - name: l1
+    sectionName: http
+  hostnames:
+  - mcp-profile-tiered-router.example.com
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /mcp
+    backendRefs:
+    - name: l1-placeholder-backend
+      port: 8080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: l2-a-catalog-router
+  namespace: transit-dataplane
+spec:
+  parentRefs:
+  - name: l2-a
+    sectionName: http
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /mcp
+    backendRefs:
+    - name: l2-a-catalog-router
+      port: 8080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: l2-b-catalog-router
+  namespace: transit-dataplane
+spec:
+  parentRefs:
+  - name: l2-b
+    sectionName: http
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /mcp
+    backendRefs:
+    - name: l2-b-catalog-router
+      port: 8080
