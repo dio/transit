@@ -74,6 +74,7 @@ var (
 	asyncCalloutBodyAddr              string
 	asyncCalloutLocalResponseAddr     string
 	mutableBodyUpstreamAddr           string
+	lbPolicySelectionAddr             string
 	adminAddr                         string
 )
 
@@ -130,6 +131,9 @@ func TestMain(m *testing.M) {
 	mutableBodyUpstreamPort := freePort()
 	mutableBodyRecorder = startRecorderUpstream()
 	asyncCalloutLocalResponsePort := freePort()
+	lbPolicySelectionPort := freePort()
+	lbPolicyHost0Port := startIdentifiedUpstream("lb-host-0")
+	lbPolicyHost1Port := startIdentifiedUpstream("lb-host-1")
 	adminPort := freePort()
 
 	echoAddr = fmt.Sprintf("http://localhost:%d", echoPort)
@@ -154,6 +158,7 @@ func TestMain(m *testing.M) {
 	asyncCalloutBodyAddr = fmt.Sprintf("http://localhost:%d", asyncCalloutBodyPort)
 	mutableBodyUpstreamAddr = fmt.Sprintf("http://localhost:%d", mutableBodyUpstreamPort)
 	asyncCalloutLocalResponseAddr = fmt.Sprintf("http://localhost:%d", asyncCalloutLocalResponsePort)
+	lbPolicySelectionAddr = fmt.Sprintf("http://localhost:%d", lbPolicySelectionPort)
 	adminAddr = fmt.Sprintf("http://localhost:%d", adminPort)
 
 	otelSink = otelsink.New()
@@ -230,6 +235,9 @@ func TestMain(m *testing.M) {
 		MutableBodyUpstreamPort:            mutableBodyUpstreamPort,
 		MutableBodyRecorderPort:            mutableBodyRecorder.port,
 		AsyncCalloutLocalResponsePort:      asyncCalloutLocalResponsePort,
+		LbPolicySelectionPort:              lbPolicySelectionPort,
+		LbPolicyHost0Port:                  lbPolicyHost0Port,
+		LbPolicyHost1Port:                  lbPolicyHost1Port,
 		AdminPort:                          adminPort,
 	})
 
@@ -366,6 +374,23 @@ func startForwardEchoUpstream() int {
 		body, _ := io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(body)
+	})
+	go http.Serve(l, mux) //nolint:errcheck
+	return l.Addr().(*net.TCPAddr).Port
+}
+
+// startIdentifiedUpstream starts a minimal HTTP server that always responds with
+// the given body string. Useful for multi-host LB policy tests where each host
+// must return a distinguishable response.
+func startIdentifiedUpstream(body string) int {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic("startIdentifiedUpstream: " + err.Error())
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(body))
 	})
 	go http.Serve(l, mux) //nolint:errcheck
 	return l.Addr().(*net.TCPAddr).Port
@@ -695,6 +720,9 @@ type envoyPorts struct {
 	MutableBodyUpstreamPort            int
 	MutableBodyRecorderPort            int
 	AsyncCalloutLocalResponsePort      int
+	LbPolicySelectionPort              int
+	LbPolicyHost0Port                  int
+	LbPolicyHost1Port                  int
 	AdminPort                          int
 }
 
