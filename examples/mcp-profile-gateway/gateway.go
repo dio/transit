@@ -115,6 +115,9 @@ func ValidateConfig(config Config) error {
 			if _, ok := config.CatalogServers[serverID]; !ok {
 				return fmt.Errorf("profile %q server %q is not in catalog_servers", profileID, serverID)
 			}
+			if server.Prefix != "" && strings.Contains(server.Prefix, ".") {
+				return fmt.Errorf("profile %q server %q prefix %q must not contain .", profileID, serverID, server.Prefix)
+			}
 			prefix := serverPrefix(serverID, server)
 			if owner, ok := prefixes[prefix]; ok {
 				return fmt.Errorf("profile %q duplicate tool prefix %q for %q and %q", profileID, prefix, owner, serverID)
@@ -223,6 +226,9 @@ func validateSlug(kind, value string) error {
 	}
 	if strings.Contains(value, "/") {
 		return fmt.Errorf("%s %q must not contain /", kind, value)
+	}
+	if strings.Contains(value, ".") {
+		return fmt.Errorf("%s %q must not contain .", kind, value)
 	}
 	return nil
 }

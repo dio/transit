@@ -240,6 +240,10 @@ func (g *Gateway) callProfileToolNetHTTP(w http.ResponseWriter, r *http.Request,
 		writeJSON(w, http.StatusOK, errorResponse(id, errCode, "%s", errMsg))
 		return
 	}
+	if _, ok := session.Backends[serverID]; !ok {
+		writeJSON(w, http.StatusOK, errorResponse(id, -32602, "tool server not in session: %s", serverID))
+		return
+	}
 	server := profile.Servers[serverID]
 	body, err := toolCallForwardBody(id, backendTool, callParams)
 	if err != nil {

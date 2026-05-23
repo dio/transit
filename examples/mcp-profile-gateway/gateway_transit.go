@@ -241,6 +241,10 @@ func (g *Gateway) callProfileToolTransit(w *up.Writer, r transitRequest, id json
 		writeTransitJSON(w, http.StatusOK, errorResponse(id, errCode, "%s", errMsg))
 		return
 	}
+	if _, ok := session.Backends[serverID]; !ok {
+		writeTransitJSON(w, http.StatusOK, errorResponse(id, -32602, "tool server not in session: %s", serverID))
+		return
+	}
 	server := profile.Servers[serverID]
 	catalogServer := g.config.CatalogServers[serverID]
 	body, err := toolCallForwardBody(id, backendTool, callParams)
@@ -260,11 +264,6 @@ func (g *Gateway) callProfileToolTransit(w *up.Writer, r transitRequest, id json
 			return
 		}
 		status, responseHeaders := responseFromCalloutHeaders(headers)
-		if status != http.StatusOK {
-			g.record(serverID, catalogServer, fmt.Sprintf("error: status %d", status))
-			writeTransitJSON(w, http.StatusBadGateway, errorResponse(id, -32003, "tool backend failed: %s", serverID))
-			return
-		}
 		g.record(serverID, catalogServer, "ok")
 		w.SendLocalResponse(status, calloutBodyBytes(respBody), responseHeaders...)
 	})

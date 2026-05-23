@@ -788,6 +788,94 @@ func TestGateway_profileToolsCallRejectsDisabledTool(t *testing.T) {
 	require.False(t, reached)
 }
 
+func TestGateway_profileToolsCallRejectsBackendAbsentFromSession(t *testing.T) {
+	var reached bool
+	aws := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer aws.Close()
+	gateway := New(Config{
+		CatalogServers: map[string]CatalogServer{
+			"aws-knowledge": {URL: aws.URL},
+			"github":        {URL: aws.URL},
+		},
+		Profiles: map[string]Profile{
+			"profile": {
+				Name: "profile",
+				Servers: map[string]ProfileServer{
+					"aws-knowledge": {URL: aws.URL, Prefix: "aws"},
+					"github":        {URL: aws.URL, Prefix: "github"},
+				},
+			},
+		},
+	})
+	server := httptest.NewServer(gateway.Handler())
+	defer server.Close()
+
+	// session only contains github — aws-knowledge failed during initialize
+	sessionID, err := encodeProfileSession("profile", map[string]string{"github": "g-session"})
+	require.NoError(t, err)
+
+	resp := postRPCRaw(t, server.URL+"/mcp/profile", sessionID, mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  mcpprofilerouter.MethodToolsCall,
+		Params:  mustRaw(t, mcpprofilerouter.CallToolParams{Name: "aws.thing"}),
+	}, nil)
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode, string(body))
+	var rpc mcpprofilerouter.JSONRPCResponse
+	require.NoError(t, json.Unmarshal(body, &rpc))
+	require.NotNil(t, rpc.Error)
+	require.Equal(t, -32602, rpc.Error.Code)
+	require.False(t, reached)
+}
+
+func TestGateway_profileToolsCallForwardsNonOKBackendStatus(t *testing.T) {
+	l2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusUnprocessableEntity, mcpprofilerouter.JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      json.RawMessage(`1`),
+			Error:   &mcpprofilerouter.JSONRPCError{Code: -32600, Message: "invalid tool input"},
+		})
+	}))
+	defer l2.Close()
+	gateway := New(Config{
+		CatalogServers: map[string]CatalogServer{"github": {URL: l2.URL}},
+		Profiles: map[string]Profile{
+			"profile": {
+				Name:    "profile",
+				Servers: map[string]ProfileServer{"github": {URL: l2.URL, Prefix: "github"}},
+			},
+		},
+	})
+	server := httptest.NewServer(gateway.Handler())
+	defer server.Close()
+
+	sessionID, err := encodeProfileSession("profile", map[string]string{"github": "s"})
+	require.NoError(t, err)
+
+	resp := postRPCRaw(t, server.URL+"/mcp/profile", sessionID, mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  mcpprofilerouter.MethodToolsCall,
+		Params:  mustRaw(t, mcpprofilerouter.CallToolParams{Name: "github.search"}),
+	}, nil)
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, string(body))
+	var rpc mcpprofilerouter.JSONRPCResponse
+	require.NoError(t, json.Unmarshal(body, &rpc))
+	require.NotNil(t, rpc.Error)
+	require.Equal(t, -32600, rpc.Error.Code)
+}
+
 func TestGateway_profileToolsCallRequiresSession(t *testing.T) {
 	var reached bool
 	l2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -935,7 +1023,19 @@ func TestValidateConfig(t *testing.T) {
 	}))
 	require.Error(t, ValidateConfig(Config{}))
 	require.Error(t, ValidateConfig(Config{CatalogServers: map[string]CatalogServer{"bad/id": {URL: "http://127.0.0.1:8080"}}}))
+	require.Error(t, ValidateConfig(Config{CatalogServers: map[string]CatalogServer{"bad.id": {URL: "http://127.0.0.1:8080"}}}))
 	require.Error(t, ValidateConfig(Config{CatalogServers: map[string]CatalogServer{"github": {URL: "127.0.0.1:8080"}}}))
+	require.Error(t, ValidateConfig(Config{
+		CatalogServers: map[string]CatalogServer{"aws-knowledge": {URL: "http://127.0.0.1:8080"}},
+		Profiles: map[string]Profile{
+			"profile": {
+				Name: "profile",
+				Servers: map[string]ProfileServer{
+					"aws-knowledge": {URL: "http://127.0.0.1:8080", Prefix: "aws.knowledge"},
+				},
+			},
+		},
+	}))
 	require.Error(t, ValidateConfig(Config{
 		CatalogServers: map[string]CatalogServer{"github": {URL: "http://127.0.0.1:8080"}},
 		Profiles: map[string]Profile{
