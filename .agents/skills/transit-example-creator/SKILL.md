@@ -71,6 +71,9 @@ additional helper commands.
    Do not move that blank import into `up` or any library package: Linux rejects
    normal test binaries with unresolved Envoy callback symbols, while the `.so`
    is resolved by Envoy at runtime.
+   Register dynamic-module filters from `init()`, with an empty `main()`. Envoy
+   loads the shared library; it does not execute `main()`, so registering only
+   from `main()` leaves Envoy without a plugin config factory.
 6. Add unit tests for pure Go behavior where possible.
 7. Add e2e coverage for every example. Keep it focused on the user-facing
    behavior the example exists to demonstrate.
@@ -103,6 +106,12 @@ For examples that use `//go:embed`, make sure the embedded files exist in a
 clean checkout. `golangci-lint` typechecks packages in CI and fails on missing
 embed patterns before any build script can generate assets. If a small built
 fixture is intentional, unignore and track that exact fixture.
+
+For `RegisterWithMutableBody` examples, do not use `direct_response` as the
+catch-all e2e route for requests the filter is expected to answer from the body
+callback. Route to a harmless blackhole/static cluster instead, as in the MCP
+profile examples, so request-body buffering and the local response path are
+exercised before router completion.
 
 ## Upstream selection examples
 
