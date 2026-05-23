@@ -89,6 +89,12 @@ type Writer struct {
 	// mutations from the callout callback must be deferred to flush().
 	calloutStarted bool
 
+	// goStarted is set when w.Go is called and remains true for the Writer's
+	// lifetime. It is sticky — unlike f.goStarted which clears after the goroutine
+	// finishes — so that HTTPCallout can reliably panic even if the goroutine
+	// completes before the handler checks it.
+	goStarted bool
+
 	// directWrite is true only for Writers created by NewWriter. It makes
 	// request-mutation methods apply directly to the handle instead of queuing,
 	// unless an async operation (callout or goroutine) is in flight.
@@ -259,7 +265,7 @@ func (w *Writer) IncrementCounter(id MetricID, delta uint64) {
 //
 // SendLocalResponse from inside fn is NOT reliable — see type-level docs.
 func (w *Writer) Go(fn func(ctx context.Context)) {
-	if w.f.goStarted {
+	if w.goStarted {
 		panic("up: Go called twice on the same request")
 	}
 	if w.calloutStarted {
@@ -271,6 +277,7 @@ func (w *Writer) Go(fn func(ctx context.Context)) {
 	f.goCancel = cancel
 	f.goCompleted.Store(false)
 	f.goStarted = true
+	w.goStarted = true
 	go func() {
 		defer cancel()
 		fn(ctx)
@@ -300,7 +307,7 @@ func (w *Writer) Go(fn func(ctx context.Context)) {
 //
 // Panics if called after Go or after a previous HTTPCallout.
 func (w *Writer) HTTPCallout(req HTTPCalloutRequest, fn HTTPCalloutFunc) (HTTPCalloutInitResult, error) {
-	if w.calloutStarted || w.f.goStarted {
+	if w.calloutStarted || w.goStarted {
 		panic("up: HTTPCallout cannot be started after Go or another HTTPCallout")
 	}
 	// Set calloutFn and calloutStarted BEFORE calling handle.HttpCallout.

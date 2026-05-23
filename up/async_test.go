@@ -10,6 +10,7 @@ import (
 
 	"github.com/dio/transit/up/testutil"
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
+	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared/fake"
 	"github.com/stretchr/testify/require"
 )
 
@@ -253,6 +254,72 @@ func TestWriterGo_streamCompleteCancelsWithoutResume(t *testing.T) {
 		}
 	}, 2*time.Second, 10*time.Millisecond)
 	require.Equal(t, 0, handle.ContinuedReq)
+}
+
+func TestWriterHTTPCallout_panicsAfterGo(t *testing.T) {
+	// goStarted is a sticky Writer-level flag set when w.Go is called.
+	// HTTPCallout must panic regardless of whether the goroutine is still running.
+	// Construct the Writer directly to avoid real goroutine concurrency.
+	w := &Writer{f: &filter{handle: testutil.NewFilterHandle()}, goStarted: true}
+	require.PanicsWithValue(t, "up: HTTPCallout cannot be started after Go or another HTTPCallout", func() {
+		_, _ = w.HTTPCallout(HTTPCalloutRequest{Cluster: "c"}, func(HTTPCalloutResult, [][2]shared.UnsafeEnvoyBuffer, []shared.UnsafeEnvoyBuffer) {
+		})
+	})
+}
+
+func TestWriterDo_panicsOutsideGo(t *testing.T) {
+	handle := testutil.NewFilterHandle()
+	f := &filter{
+		handle: handle,
+		handler: func(w *Writer, _ *Request) {
+			require.PanicsWithValue(t, "up: Do called outside Go", func() {
+				_, _ = w.Do(context.Background(), HTTPCalloutRequest{Cluster: "c"})
+			})
+		},
+	}
+	f.OnRequestHeaders(handle.RequestHeaders(), true)
+}
+
+func TestWriterGo_bodyCallbackProceedsAfterResume(t *testing.T) {
+	// After w.Go finishes and goStarted is cleared, OnRequestBody must run the
+	// body handler and return Continue — not StopAndBuffer.
+	handle := testutil.NewFilterHandle(
+		testutil.WithHeaders(map[string]string{":method": "POST", ":path": "/upload"}),
+	)
+	proceed := make(chan struct{})
+	var bodyHandlerCalled bool
+	f := &filter{
+		handle:     handle,
+		bufferBody: true,
+		handler: func(w *Writer, _ *Request) {
+			// Block the goroutine until OnRequestHeaders has returned Stop, so the
+			// goroutine's flush(true) and the headers-return read of goStarted cannot
+			// race. Unblocked by close(proceed) after OnRequestHeaders returns.
+			w.Go(func(_ context.Context) {
+				<-proceed
+				w.SetRequestHeader("x-go-done", "1")
+			})
+		},
+		requestBodyHandler: func(_ *Writer, _ *BodyChunk) {
+			bodyHandlerCalled = true
+		},
+	}
+
+	// endOfStream=false: filter stops for the goroutine, no body yet.
+	status := f.OnRequestHeaders(handle.RequestHeaders(), false)
+	require.Equal(t, shared.HeadersStatusStop, status)
+
+	// Release the goroutine now that OnRequestHeaders has returned.
+	close(proceed)
+
+	// Goroutine finishes; flush(true) clears goStarted and calls ContinueRequest.
+	requireDone(t, handle.ContinueRequestC)
+	require.Equal(t, "1", handle.RequestHeaders().GetOne("x-go-done").ToString())
+
+	// Deliver the (empty) body. goStarted is now false; must call handler and continue.
+	bodyStatus := f.OnRequestBody(fake.NewFakeBodyBuffer(nil), true)
+	require.Equal(t, shared.BodyStatusContinue, bodyStatus)
+	require.True(t, bodyHandlerCalled)
 }
 
 func TestMetricIDPreservesSharedWidth(t *testing.T) {
