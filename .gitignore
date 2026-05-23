@@ -9,3 +9,4 @@ e2e/libe2e.h
 examples/*/lib*.h
 .graymatter/
 .claude
+.hermes/
