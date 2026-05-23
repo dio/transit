@@ -12,7 +12,7 @@
 //
 // Or manually:
 //
-//	ENVOY_BIN=.bin/envoy go test ./e2e/... -v -timeout=90s
+//	ENVOY_BIN=.bin/envoy go test ./e2e/... -v -timeout=30s
 //
 // Tests skip automatically when ENVOY_BIN is not present.
 // Set TRANSIT_SKIP_BUILD=1 to reuse a previously built .so (faster iteration).
@@ -37,6 +37,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"text/template"
 	"time"
@@ -68,6 +69,7 @@ var (
 	clusterExtensionTLSAddr  string
 	clusterExtensionMTLSAddr string
 	clusterSchedulerAddr     string
+	asyncCalloutAddr         string
 	adminAddr                string
 )
 
@@ -115,6 +117,8 @@ func TestMain(m *testing.M) {
 		cleanupMTLS()
 	}
 	clusterSchedulerPort := freePort()
+	asyncCalloutPort := freePort()
+	asyncCalloutUpstreamPort := startAsyncCalloutUpstream()
 	adminPort := freePort()
 
 	echoAddr = fmt.Sprintf("http://localhost:%d", echoPort)
@@ -135,6 +139,7 @@ func TestMain(m *testing.M) {
 	clusterExtensionTLSAddr = fmt.Sprintf("http://localhost:%d", clusterExtensionTLSPort)
 	clusterExtensionMTLSAddr = fmt.Sprintf("http://localhost:%d", clusterExtensionMTLSPort)
 	clusterSchedulerAddr = fmt.Sprintf("http://localhost:%d", clusterSchedulerPort)
+	asyncCalloutAddr = fmt.Sprintf("http://localhost:%d", asyncCalloutPort)
 	adminAddr = fmt.Sprintf("http://localhost:%d", adminPort)
 
 	otelSink = otelsink.New()
@@ -204,6 +209,8 @@ func TestMain(m *testing.M) {
 		ClusterExtensionMTLSClientCertPath: clusterExtensionMTLSUpstream.clientCertPath,
 		ClusterExtensionMTLSClientKeyPath:  clusterExtensionMTLSUpstream.clientKeyPath,
 		ClusterSchedulerPort:               clusterSchedulerPort,
+		AsyncCalloutPort:                   asyncCalloutPort,
+		AsyncCalloutUpstreamPort:           asyncCalloutUpstreamPort,
 		AdminPort:                          adminPort,
 	})
 
@@ -305,6 +312,22 @@ func startPlainUpstream() int {
 		w.Write([]byte("upstream ok"))
 	})
 	go http.Serve(l, mux)
+	return l.Addr().(*net.TCPAddr).Port
+}
+
+// startAsyncCalloutUpstream returns the final path segment for each request so
+// async callout tests can verify multiple responses were merged.
+func startAsyncCalloutUpstream() int {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic("startAsyncCalloutUpstream: " + err.Error())
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(strings.TrimPrefix(r.URL.Path, "/")))
+	})
+	go http.Serve(l, mux) //nolint:errcheck
 	return l.Addr().(*net.TCPAddr).Port
 }
 
@@ -518,6 +541,8 @@ type envoyPorts struct {
 	ClusterExtensionMTLSClientCertPath string
 	ClusterExtensionMTLSClientKeyPath  string
 	ClusterSchedulerPort               int
+	AsyncCalloutPort                   int
+	AsyncCalloutUpstreamPort           int
 	AdminPort                          int
 }
 

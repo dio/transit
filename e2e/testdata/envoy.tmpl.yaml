@@ -525,6 +525,35 @@ static_resources:
                             status: 200
                             body: { inline_string: "scheduler-state" }
 
+    - name: async-callout-e2e
+      address:
+        socket_address: { address: 0.0.0.0, port_value: {{.AsyncCalloutPort}} }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: async_callout_e2e
+                http_filters:
+                  - name: e2e-async-callout
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: e2e
+                      filter_name: e2e-async-callout
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: async_callout_e2e
+                  virtual_hosts:
+                    - name: local
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          direct_response:
+                            status: 204
+
   clusters:
     - name: compress-upstream
       connect_timeout: 5s
@@ -536,6 +565,17 @@ static_resources:
               - endpoint:
                   address:
                     socket_address: { address: 127.0.0.1, port_value: {{.CompressUpstreamPort}} }
+
+    - name: async-callout-upstream
+      connect_timeout: 5s
+      type: STATIC
+      load_assignment:
+        cluster_name: async-callout-upstream
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: 127.0.0.1, port_value: {{.AsyncCalloutUpstreamPort}} }
 
     - name: upstream-filter-upstream
       connect_timeout: 5s

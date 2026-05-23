@@ -3,7 +3,7 @@ REPO_ROOT := $(abspath ..)
 ENVOY_BIN ?= $(REPO_ROOT)/.bin/envoy
 GO_TEST_ARGS ?= ./...
 RUN ?=
-TIMEOUT ?= 90s
+TIMEOUT ?= 30s
 COUNT ?= 1
 
 .PHONY: test
