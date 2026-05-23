@@ -1005,6 +1005,63 @@ func TestGateway_unknownCatalogServer(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
+func TestGateway_dumpRedactsCredentialsAndShowsBooleans(t *testing.T) {
+	gateway := New(Config{
+		CatalogServers: map[string]CatalogServer{
+			"aws-knowledge": {URL: "http://l2-a.local"},
+			"github":        {URL: "http://l2-b.local"},
+		},
+		Profiles: map[string]Profile{
+			"profile": {
+				Name:   "profile",
+				APIKey: "secret-key",
+				Servers: map[string]ProfileServer{
+					"aws-knowledge": {
+						URL:           "http://l2-a.local",
+						Prefix:        "aws",
+						CredentialRef: "profile/aws/user-123",
+						EnabledTools:  map[string]bool{"read": true, "search": true, "delete": false},
+					},
+					"github": {
+						URL:                "http://l2-b.local",
+						Prefix:             "github",
+						CredentialEnvelope: "opaque-envelope",
+					},
+				},
+			},
+		},
+	})
+
+	dump := gateway.Dump()
+
+	require.Equal(t, "http://l2-a.local", dump.CatalogServers["aws-knowledge"].Target)
+	require.Equal(t, "http://l2-b.local", dump.CatalogServers["github"].Target)
+
+	pd := dump.Profiles["profile"]
+	require.Equal(t, "profile", pd.Name)
+	require.True(t, pd.AuthConfigured)
+
+	aws := pd.Servers["aws-knowledge"]
+	require.Equal(t, "aws", aws.Prefix)
+	require.True(t, aws.CredentialRefConfigured)
+	require.False(t, aws.CredentialEnvelopeConfigured)
+	require.NotNil(t, aws.EnabledToolsCount)
+	require.Equal(t, 2, *aws.EnabledToolsCount) // read + search; delete=false excluded
+
+	gh := pd.Servers["github"]
+	require.Equal(t, "github", gh.Prefix)
+	require.False(t, gh.CredentialRefConfigured)
+	require.True(t, gh.CredentialEnvelopeConfigured)
+	require.Nil(t, gh.EnabledToolsCount) // nil map = all enabled
+
+	// verify raw values are absent from JSON
+	raw, err := json.Marshal(dump)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "secret-key")
+	require.NotContains(t, string(raw), "profile/aws/user-123")
+	require.NotContains(t, string(raw), "opaque-envelope")
+}
+
 func TestValidateConfig(t *testing.T) {
 	require.NoError(t, ValidateConfig(Config{
 		CatalogServers: map[string]CatalogServer{

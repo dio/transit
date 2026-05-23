@@ -54,9 +54,29 @@ type Gateway struct {
 	servers map[string]CatalogDump
 }
 
+// GatewayDump is the redacted view returned by GET /dump. It never includes
+// raw credential values, session IDs, or API keys.
+type GatewayDump struct {
+	CatalogServers map[string]CatalogDump  `json:"catalog_servers"`
+	Profiles       map[string]ProfileDump  `json:"profiles,omitempty"`
+}
+
 type CatalogDump struct {
 	Target      string `json:"target"`
 	LastRequest string `json:"last_request,omitempty"`
+}
+
+type ProfileDump struct {
+	Name           string                      `json:"name"`
+	AuthConfigured bool                        `json:"auth_configured"`
+	Servers        map[string]ProfileServerDump `json:"servers"`
+}
+
+type ProfileServerDump struct {
+	Prefix                      string `json:"prefix"`
+	EnabledToolsCount           *int   `json:"enabled_tools_count,omitempty"`
+	CredentialRefConfigured     bool   `json:"credential_ref_configured,omitempty"`
+	CredentialEnvelopeConfigured bool  `json:"credential_envelope_configured,omitempty"`
 }
 
 type profileSession struct {
@@ -140,14 +160,57 @@ func New(config Config) *Gateway {
 	}
 }
 
-func (g *Gateway) Dump() map[string]CatalogDump {
+func (g *Gateway) Dump() GatewayDump {
 	g.mu.Lock()
-	defer g.mu.Unlock()
-	out := make(map[string]CatalogDump, len(g.servers))
+	runtimeState := make(map[string]CatalogDump, len(g.servers))
 	for k, v := range g.servers {
-		out[k] = v
+		runtimeState[k] = v
 	}
-	return out
+	g.mu.Unlock()
+
+	catalogServers := make(map[string]CatalogDump, len(g.config.CatalogServers))
+	for serverID, server := range g.config.CatalogServers {
+		d := CatalogDump{Target: server.URL}
+		if state, ok := runtimeState[serverID]; ok {
+			d.LastRequest = state.LastRequest
+		}
+		catalogServers[serverID] = d
+	}
+
+	var profiles map[string]ProfileDump
+	if len(g.config.Profiles) > 0 {
+		profiles = make(map[string]ProfileDump, len(g.config.Profiles))
+		for profileID, profile := range g.config.Profiles {
+			servers := make(map[string]ProfileServerDump, len(profile.Servers))
+			for serverID, server := range profile.Servers {
+				var enabledCount *int
+				if server.EnabledTools != nil {
+					n := 0
+					for _, v := range server.EnabledTools {
+						if v {
+							n++
+						}
+					}
+					enabledCount = &n
+				}
+				servers[serverID] = ProfileServerDump{
+					Prefix:                      serverPrefix(serverID, server),
+					EnabledToolsCount:            enabledCount,
+					CredentialRefConfigured:      server.CredentialRef != "",
+					CredentialEnvelopeConfigured: server.CredentialEnvelope != "",
+				}
+			}
+			profiles[profileID] = ProfileDump{
+				Name:           profile.Name,
+				AuthConfigured: profile.APIKey != "",
+				Servers:        servers,
+			}
+		}
+	}
+	return GatewayDump{
+		CatalogServers: catalogServers,
+		Profiles:       profiles,
+	}
 }
 
 func (g *Gateway) record(id string, server CatalogServer, state string) {
@@ -159,6 +222,12 @@ func (g *Gateway) record(id string, server CatalogServer, state string) {
 	}
 }
 
+// encodeProfileSession encodes the L1 profile session as a prefixed base64url
+// JSON value. This format is intentionally readable for the example. Production
+// must replace it with an authenticated and encrypted envelope (e.g. AEAD or
+// signed JWT) that binds profile ID, server IDs, audience, subject, and expiry,
+// and never exposes backend session IDs as client-visible plaintext. A forged
+// or replayed envelope allows impersonation of any backend session.
 func encodeProfileSession(profileID string, backends map[string]string) (string, error) {
 	raw, err := json.Marshal(profileSession{
 		ProfileID: profileID,
