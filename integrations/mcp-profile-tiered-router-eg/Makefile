@@ -7,13 +7,23 @@ K3D_AGENTS ?= 0
 .PHONY: test e2e eg-install clean
 
 test:
-	@echo "mcp-profile-tiered-router-eg is a skeleton integration; no tests yet"
+	cd $(ROOT)/integrations && go test ./mcp-profile-tiered-router-eg/...
 
 eg-install:
-	@echo "mcp-profile-tiered-router-eg has no Envoy Gateway install test yet"
+	cd $(ROOT)/integrations && \
+	  RUN_MCP_PROFILE_TIERED_ROUTER_EG_INSTALL=1 \
+	  ENVOY_GATEWAY_VERSION=$(ENVOY_GATEWAY_VERSION) \
+	  K3S_TAG=$(K3S_TAG) \
+	  K3D_AGENTS=$(K3D_AGENTS) \
+	  go test -v -count=1 -timeout=10m ./mcp-profile-tiered-router-eg/e2e/
 
 e2e:
-	@echo "mcp-profile-tiered-router-eg has no e2e suite yet"
+	cd $(ROOT)/integrations && \
+	  RUN_MCP_PROFILE_TIERED_ROUTER_EG_E2E=1 \
+	  ENVOY_GATEWAY_VERSION=$(ENVOY_GATEWAY_VERSION) \
+	  K3S_TAG=$(K3S_TAG) \
+	  K3D_AGENTS=$(K3D_AGENTS) \
+	  go test -v -count=1 -timeout=25m ./mcp-profile-tiered-router-eg/e2e/
 
 clean:
 	@true

@@ -3,8 +3,9 @@
 Status: skeleton integration. The topology contract and placeholder Kubernetes
 resource shape exist; images and integration e2e assertions are not implemented
 yet. The L1 example module now exists and covers catalog forwarding, profile
-`initialize` session fan-out, and profile `tools/list` fan-out, but this
-integration has not wired it into runnable Envoy Gateway images.
+`initialize` session fan-out, profile `tools/list` fan-out, profile
+`tools/call` routing, and redacted dump surfaces, but this integration has not
+wired it into runnable Envoy Gateway images.
 
 This integration should take the proven local MCP routing semantics and make the
 L1/L2 product topology explicit under Envoy Gateway.
@@ -76,6 +77,49 @@ one or more calls to the L2 clusters that front those servers.
   material L2 resolved for the request.
 - The same cataloged server key can resolve to different concrete hosts in
   different L2 clusters if placement requires it.
+
+## MCPProxy Parity
+
+The behavioral target is Envoy AI Gateway MCPProxy. This integration should
+stay close to that method-level behavior unless a difference is explicitly
+called out.
+
+Admission behavior:
+
+- `initialize` may omit downstream `mcp-session-id`.
+- Non-`initialize` profile requests require a valid profile session.
+- Invalid profile sessions fail before any L2 request.
+- Unsupported methods and malformed JSON-RPC requests fail before any L2
+  request.
+- `notifications/initialized` should be accepted locally when implemented, not
+  fanned out as a tool operation.
+
+Aggregate behavior:
+
+- `initialize` fans out to all configured profile member servers. Backend
+  initialize failures are recorded and omitted from the composite session.
+  Downstream initialize succeeds if at least one backend initializes
+  successfully and fails if all backend initializations fail.
+- `tools/list` fans out only to backends present in the composite session.
+  Backend JSON-RPC errors, malformed results, HTTP failures, and collection
+  failures are recorded and omitted. Partial success returns merged healthy
+  tools. If every backend fails, contributes no result, or all tools are
+  filtered out, return a successful empty `{"tools":[]}` result.
+- `tools/call` never fans out. It resolves one profile-visible tool to one
+  backend, verifies that the backend is enabled and present in the composite
+  session, rewrites the public tool name to the backend tool name, and forwards
+  one request. Backend 2xx JSON-RPC error responses are proxied; unknown
+  backend, disabled/invalid tool, missing backend session, transport failure,
+  and non-2xx backend response become immediate downstream errors.
+
+Known differences from AI Gateway MCPProxy for this first integration:
+
+- AI Gateway uses `{backend}__{tool}` tool names. The current example uses
+  `{prefix}.{tool}`. Switch to a double-underscore separator before treating the
+  integration API as product-stable.
+- AI Gateway aggregate responses are SSE. The current example returns ordinary
+  JSON for the first topology pass. Add buffered final-event SSE parity before
+  claiming close MCPProxy compatibility or testing real Streamable HTTP clients.
 
 ## Initial Scenario
 
@@ -207,10 +251,10 @@ not log, dump, or persist raw user-provided tokens.
 ## Profile Configuration
 
 For the skeleton, L1 gets static profile JSON through a placeholder
-`MCP_PROFILE_GATEWAY_PROFILE` environment value. The `mcp-profile-gateway`
+`MCP_PROFILE_GATEWAY_CONFIG` environment value. The `mcp-profile-gateway`
 module now exists. The current example implements public catalog forwarding,
-profile `initialize` session fan-out, and profile `tools/list` fan-out;
-profile `tools/call` is still planned.
+profile `initialize` session fan-out, profile `tools/list` fan-out, profile
+`tools/call` routing, and redacted dump surfaces.
 The Envoy Gateway templates reserve the `libmcp-profile-gateway.so` module name
 and path so the integration contract does not drift back into the older local
 example naming.
@@ -221,7 +265,9 @@ an L1-owned profile service:
 - L1 fetches and validates `/mcp/{profile-id}` profile configuration.
 - L1 caches profile data with explicit TTL, stale-if-error, and auth failure
   behavior.
-- L1 debug and dump surfaces must redact profile API keys.
+- L1 debug and dump surfaces must redact profile API keys, credential refs and
+  envelopes, session values, catalog URL userinfo, and catalog URL query
+  strings.
 - L1 profile data points at cataloged server keys and owning L2 clusters, not
   concrete backend hosts. It may include credential references or encrypted
   credential envelopes needed for L2 execution.
@@ -303,9 +349,16 @@ using `x-model` while MCP paths use `x-mcp-server`.
 Required e2e cases:
 
 - L1 profile auth failure reaches no L2 and no backend.
+- profile `initialize` partial backend failure succeeds and the returned
+  composite session contains only successful backends.
+- profile `initialize` all-backend failure returns an error.
 - L1 `tools/list` returns Kiwi, AWS, Microsoft, and GitHub tools from one
   profile response.
 - L1 `tools/list` preserves enabled-tool filtering.
+- L1 `tools/list` with one failing backend returns healthy tools from the other
+  backends.
+- L1 `tools/list` with all failing or filtered backends returns successful
+  `{"tools":[]}`.
 - L1 public `/mcp/s/aws-knowledge` reaches L2-A and the AWS Knowledge backend
   only.
 - L1 public `/mcp/s/github` reaches L2-B and the GitHub backend only.
@@ -313,6 +366,11 @@ Required e2e cases:
 - L1 `tools/call kiwi.search-flight` reaches L2-A and the Kiwi backend only.
 - L1 `tools/call` for a disabled or unknown tool returns a controlled JSON-RPC
   error.
+- L1 `tools/call` for a backend omitted from the partial-initialize session
+  reaches no L2.
+- L1 `tools/call` proxies backend 2xx JSON-RPC error responses.
+- L1 `tools/call` converts backend transport or non-2xx failures to downstream
+  errors.
 - L2-A direct `/mcp/s/github` is unknown or unavailable.
 - L2-B direct `/mcp/s/kiwi` is unknown or unavailable.
 - cluster-router debug dump shows `route_header: x-mcp-server`.
@@ -320,17 +378,15 @@ Required e2e cases:
 
 Nice-to-have later cases:
 
-- one backend unavailable during `tools/list` exercises partial failure policy.
 - omitted catalog server prefix falls back to server ID in the egress routing
   header.
-- all tools disabled returns `{"tools":[]}` instead of a JSON-RPC error.
 - same server key can resolve to different concrete hosts in L2-A and L2-B.
 
 ## Non-Goals For First Pass
 
 - No real MCP servers in CI.
 - No streaming MCP transport.
-- No encrypted composite session token yet.
+- No encrypted/authenticated composite session token yet.
 - No public internet provider egress.
 - No shared global profile store.
 - No L2 curated profile fetching.
@@ -344,8 +400,8 @@ Nice-to-have later cases:
 3. Wire the existing `examples/mcp-profile-gateway` L1 front end into the
    integration image/resource shape. Its current implemented behavior is public
    `/mcp/s/{server-slug}` catalog forwarding, profile `initialize` session
-   fan-out, and profile `tools/list` fan-out; `tools/call` routing remains a
-   later example slice.
+   fan-out, profile `tools/list` fan-out, profile `tools/call` routing, and
+   redacted dumps.
 4. Use `examples/mcp-catalog-router` as the L2 server-cluster front end for
    `/mcp/s/{server-slug}`. It sets `x-mcp-server` and calls a separate
    cluster-router-patched egress cluster.

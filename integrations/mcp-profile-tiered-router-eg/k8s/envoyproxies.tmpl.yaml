@@ -23,10 +23,9 @@ spec:
             value: "cgocheck=0"
           - name: ENVOY_DYNAMIC_MODULES_SEARCH_PATH
             value: "/etc/envoy/dynamic-modules"
-          - name: MCP_PROFILE_GATEWAY_PROFILE
-            value: '{{.L1ProfileJSON}}'
+          - name: MCP_PROFILE_GATEWAY_CONFIG
+            value: '{{.L1ConfigJSON}}'
   dynamicModules:
-  # Placeholder for the future examples/mcp-profile-gateway module.
   - name: mcp-profile-gateway
     source:
       type: Local

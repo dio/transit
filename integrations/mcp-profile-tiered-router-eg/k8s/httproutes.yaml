@@ -18,6 +18,46 @@ spec:
     - name: l1-placeholder-backend
       port: 8080
 ---
+# L1 catalog egress routes create backend clusters on L1 Envoy so that the
+# mcp-profile-gateway callout can route to L2-A and L2-B services. These routes
+# are never matched by public traffic; they exist solely to register the backend
+# clusters that the L1 module uses for its outbound HTTPCallout requests.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: l1-l2a-catalog
+  namespace: transit-dataplane
+spec:
+  parentRefs:
+  - name: l1
+    sectionName: http
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /internal/l2a-callout
+    backendRefs:
+    - name: l2-a
+      port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: l1-l2b-catalog
+  namespace: transit-dataplane
+spec:
+  parentRefs:
+  - name: l1
+    sectionName: http
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /internal/l2b-callout
+    backendRefs:
+    - name: l2-b
+      port: 80
+---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
