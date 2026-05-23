@@ -15,9 +15,9 @@ import (
 )
 
 const (
-	modelHeader  = "x-model"
-	tenantHeader = "x-tenant"
-	debugPath    = "/__cluster-router/config"
+	defaultRouteHeader = "x-model"
+	tenantHeader       = "x-tenant"
+	debugPath          = "/__cluster-router/config"
 
 	defaultScope       = "default"
 	httpsProviderScope = "https-provider"
@@ -48,6 +48,7 @@ func init() {
 
 type routerConfig struct {
 	Scope         string         `json:"scope,omitempty"`
+	RouteHeader   string         `json:"route_header,omitempty"`
 	ConfigURL     string         `json:"config_url,omitempty"`
 	RefreshMillis int            `json:"refresh_millis,omitempty"`
 	TimeoutMillis int            `json:"timeout_millis,omitempty"`
@@ -75,6 +76,13 @@ func (c routerConfig) timeout() time.Duration {
 	return time.Duration(c.TimeoutMillis) * time.Millisecond
 }
 
+func (c routerConfig) routeHeader() string {
+	if c.RouteHeader == "" {
+		return defaultRouteHeader
+	}
+	return c.RouteHeader
+}
+
 type configSnapshot struct {
 	Version string                       `json:"version"`
 	Models  map[string]modelConfig       `json:"models,omitempty"`
@@ -98,10 +106,11 @@ type authConfig struct {
 }
 
 type routeSnapshot struct {
-	Version string
-	Models  map[string]modelRoute
-	Auth    map[string]authPolicy
-	BYOK    map[string]map[string]string
+	Version     string
+	RouteHeader string
+	Models      map[string]modelRoute
+	Auth        map[string]authPolicy
+	BYOK        map[string]map[string]string
 }
 
 type modelRoute struct {
@@ -134,9 +143,10 @@ type routeStore struct {
 func newRouteStore() *routeStore {
 	s := &routeStore{hosts: make(map[string]up.HostPtr)}
 	s.current.Store(routeSnapshot{
-		Models: make(map[string]modelRoute),
-		Auth:   make(map[string]authPolicy),
-		BYOK:   make(map[string]map[string]string),
+		RouteHeader: defaultRouteHeader,
+		Models:      make(map[string]modelRoute),
+		Auth:        make(map[string]authPolicy),
+		BYOK:        make(map[string]map[string]string),
 	})
 	return s
 }
@@ -161,7 +171,7 @@ func (s *routeStore) Current() routeSnapshot {
 			return snap
 		}
 	}
-	return routeSnapshot{Models: make(map[string]modelRoute)}
+	return routeSnapshot{RouteHeader: defaultRouteHeader, Models: make(map[string]modelRoute)}
 }
 
 func (s *routeStore) LookupModel(model string) (modelRoute, bool) {
@@ -199,14 +209,18 @@ func parseRouterConfig(config []byte) (routerConfig, error) {
 	return cfg, nil
 }
 
-func resolveConfigSnapshot(parent context.Context, cfg configSnapshot, timeout time.Duration) (routeSnapshot, error) {
+func resolveConfigSnapshot(parent context.Context, cfg configSnapshot, timeout time.Duration, routeHeader string) (routeSnapshot, error) {
 	// Resolve everything before the caller publishes. If one target is bad, keep
 	// serving the previous config instead of publishing a broken partial one.
+	if routeHeader == "" {
+		routeHeader = defaultRouteHeader
+	}
 	out := routeSnapshot{
-		Version: cfg.Version,
-		Models:  make(map[string]modelRoute, len(cfg.Models)),
-		Auth:    make(map[string]authPolicy, len(cfg.Auth)),
-		BYOK:    cloneBYOK(cfg.BYOK),
+		Version:     cfg.Version,
+		RouteHeader: routeHeader,
+		Models:      make(map[string]modelRoute, len(cfg.Models)),
+		Auth:        make(map[string]authPolicy, len(cfg.Auth)),
+		BYOK:        cloneBYOK(cfg.BYOK),
 	}
 	for name, auth := range cfg.Auth {
 		out.Auth[name] = authPolicy(auth)
@@ -260,10 +274,11 @@ func resolveTarget(parent context.Context, target string, timeout time.Duration)
 
 func cloneRouteSnapshot(in routeSnapshot) routeSnapshot {
 	out := routeSnapshot{
-		Version: in.Version,
-		Models:  make(map[string]modelRoute, len(in.Models)),
-		Auth:    make(map[string]authPolicy, len(in.Auth)),
-		BYOK:    cloneBYOK(in.BYOK),
+		Version:     in.Version,
+		RouteHeader: in.RouteHeader,
+		Models:      make(map[string]modelRoute, len(in.Models)),
+		Auth:        make(map[string]authPolicy, len(in.Auth)),
+		BYOK:        cloneBYOK(in.BYOK),
 	}
 	for k, v := range in.Models {
 		out.Models[k] = v

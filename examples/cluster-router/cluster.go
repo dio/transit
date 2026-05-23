@@ -51,7 +51,7 @@ func (c *routerCluster) Init(h up.ClusterHandle) {
 	if len(c.cfg.Initial.Models) > 0 {
 		// Bootstrap hosts synchronously so Envoy can mark the cluster ready with
 		// a usable route table. Later refreshes use the background group below.
-		if snap, err := resolveConfigSnapshot(context.Background(), c.cfg.Initial, c.timeout); err == nil {
+		if snap, err := resolveConfigSnapshot(context.Background(), c.cfg.Initial, c.timeout, c.cfg.routeHeader()); err == nil {
 			c.applySnapshot(snap)
 		}
 	}
@@ -132,7 +132,7 @@ func (c *routerCluster) fetchOnce(ctx context.Context) {
 	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
 		return
 	}
-	snap, err := resolveConfigSnapshot(ctx, cfg, c.timeout)
+	snap, err := resolveConfigSnapshot(ctx, cfg, c.timeout, c.cfg.routeHeader())
 	if err != nil {
 		return
 	}
@@ -168,12 +168,18 @@ type routerLB struct {
 
 func (lb *routerLB) ChooseHost(h up.ClusterLBHandle, ctx up.ClusterLBContext) (up.HostPtr, *up.ClusterLBCompletion) {
 	// This is the whole point of the example: no route rewrite, no cluster per
-	// model. The request says the model, and Go returns the matching host.
-	model, ok := ctx.GetHeader(modelHeader)
+	// model. The configured route header says the model/server, and Go returns
+	// the matching host.
+	snap := lb.store.Current()
+	routeHeader := snap.RouteHeader
+	if routeHeader == "" {
+		routeHeader = defaultRouteHeader
+	}
+	model, ok := ctx.GetHeader(routeHeader)
 	if !ok || model == "" {
 		return nil, nil
 	}
-	route, ok := lb.store.LookupModel(model)
+	route, ok := snap.Models[model]
 	if !ok {
 		return nil, nil
 	}

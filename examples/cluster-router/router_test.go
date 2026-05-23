@@ -46,7 +46,7 @@ func TestResolveConfigSnapshot(t *testing.T) {
 		Auth: map[string]authConfig{
 			"openai-default": {Type: "static", Header: "Bearer platform-key"},
 		},
-	}, time.Second)
+	}, time.Second, defaultRouteHeader)
 	require.NoError(t, err)
 
 	route := snap.Models["gpt-fast"]
@@ -62,7 +62,7 @@ func TestResolveConfigSnapshot(t *testing.T) {
 func TestResolveConfigSnapshotRejectsMissingTarget(t *testing.T) {
 	_, err := resolveConfigSnapshot(context.Background(), configSnapshot{
 		Models: map[string]modelConfig{"gpt-fast": {Provider: "openai"}},
-	}, time.Second)
+	}, time.Second, defaultRouteHeader)
 	require.Error(t, err)
 }
 

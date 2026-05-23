@@ -25,11 +25,8 @@ func LoadProfileFromEnv() (Profile, error) {
 	if err := json.Unmarshal([]byte(raw), &profile); err != nil {
 		return Profile{}, fmt.Errorf("parse %s: %w", ProfileEnv, err)
 	}
-	if profile.Name == "" {
-		return Profile{}, fmt.Errorf("%s: profile name is required", ProfileEnv)
-	}
-	if len(profile.Servers) == 0 {
-		return Profile{}, fmt.Errorf("%s: at least one server is required", ProfileEnv)
+	if err := ValidateProfile(profile); err != nil {
+		return Profile{}, fmt.Errorf("%s: %w", ProfileEnv, err)
 	}
 	return profile, nil
 }
@@ -51,7 +48,7 @@ func NewTransitFilter(aggregator *Aggregator) (up.HandlerFunc, up.RequestBodyHan
 		case path == "/healthz" || path == "/dump":
 			// Body callbacks are invoked synthetically for bodyless requests, so
 			// keep the same response path for GET and POST.
-		case strings.HasPrefix(path, "/mcp/profiles/"):
+		case strings.HasPrefix(path, "/mcp/"):
 			// The body callback will replay this request into the aggregator.
 		default:
 			// Egress requests must pass through untouched so Envoy's router can

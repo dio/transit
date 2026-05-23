@@ -65,9 +65,11 @@ func runBackend(ctx context.Context, args []string) error {
 func runAggregator(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("aggregator", flag.ExitOnError)
 	addr := fs.String("addr", ":8080", "listen address")
-	profile := fs.String("profile", "engineering", "profile name")
+	profileID := fs.String("profile-id", "9b3f7d0a80c4aa6d-67261ca9ea3dadb2", "profile ID")
+	profileName := fs.String("profile-name", "kiwi", "profile name")
 	apiKey := fs.String("api-key", "profile-key", "profile API key")
-	servers := fs.String("server", "", "server specs: id=url=prefix=credential,id=url=prefix=credential")
+	routeHeader := fs.String("route-header", "", "backend routing header for cluster-router egress; defaults to x-mcp-server")
+	servers := fs.String("server", "", "server specs: slug=url=prefix=credential[;tools=tool_a|tool_b],slug=url=prefix=credential")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -75,26 +77,32 @@ func runAggregator(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	return serve(ctx, *addr, mcpprofilerouter.NewAggregator(mcpprofilerouter.Profile{
-		Name:          *profile,
+	profile := mcpprofilerouter.Profile{
+		ID:            *profileID,
+		Name:          *profileName,
 		APIKey:        *apiKey,
+		RouteHeader:   *routeHeader,
 		TimeoutMillis: 800,
 		Servers:       parsed,
-	}).Handler())
+	}
+	if err := mcpprofilerouter.ValidateProfile(profile); err != nil {
+		return err
+	}
+	return serve(ctx, *addr, mcpprofilerouter.NewAggregator(profile).Handler())
 }
 
 func runToolsList(ctx context.Context, out io.Writer, args []string) error {
 	fs := flag.NewFlagSet("tools-list", flag.ExitOnError)
-	profileURL := fs.String("profile-url", "http://127.0.0.1:8080/mcp/profiles/engineering", "profile URL")
-	apiKey := fs.String("api-key", "profile-key", "profile API key")
+	url := fs.String("url", "http://127.0.0.1:8080/mcp/9b3f7d0a80c4aa6d-67261ca9ea3dadb2", "MCP profile or catalog URL")
+	apiKey := fs.String("api-key", "profile-key", "profile API key; leave empty for catalog endpoints without auth")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	sessionID, err := initialize(ctx, *profileURL, *apiKey)
+	sessionID, err := initialize(ctx, *url, *apiKey)
 	if err != nil {
 		return err
 	}
-	return callAndPrint(ctx, out, *profileURL, *apiKey, sessionID, mcpprofilerouter.JSONRPCRequest{
+	return callAndPrint(ctx, out, *url, *apiKey, sessionID, mcpprofilerouter.JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      json.RawMessage(`2`),
 		Method:  mcpprofilerouter.MethodToolsList,
@@ -103,8 +111,8 @@ func runToolsList(ctx context.Context, out io.Writer, args []string) error {
 
 func runToolsCall(ctx context.Context, out io.Writer, args []string) error {
 	fs := flag.NewFlagSet("tools-call", flag.ExitOnError)
-	profileURL := fs.String("profile-url", "http://127.0.0.1:8080/mcp/profiles/engineering", "profile URL")
-	apiKey := fs.String("api-key", "profile-key", "profile API key")
+	url := fs.String("url", "http://127.0.0.1:8080/mcp/9b3f7d0a80c4aa6d-67261ca9ea3dadb2", "MCP profile or catalog URL")
+	apiKey := fs.String("api-key", "profile-key", "profile API key; leave empty for catalog endpoints without auth")
 	arguments := fs.String("arguments", `{}`, "JSON object arguments")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -116,11 +124,11 @@ func runToolsCall(ctx context.Context, out io.Writer, args []string) error {
 	if err := json.Unmarshal([]byte(*arguments), &argsMap); err != nil {
 		return fmt.Errorf("parse arguments: %w", err)
 	}
-	sessionID, err := initialize(ctx, *profileURL, *apiKey)
+	sessionID, err := initialize(ctx, *url, *apiKey)
 	if err != nil {
 		return err
 	}
-	return callAndPrint(ctx, out, *profileURL, *apiKey, sessionID, mcpprofilerouter.JSONRPCRequest{
+	return callAndPrint(ctx, out, *url, *apiKey, sessionID, mcpprofilerouter.JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      json.RawMessage(`2`),
 		Method:  mcpprofilerouter.MethodToolsCall,
@@ -222,15 +230,36 @@ func parseServers(value string) (map[string]mcpprofilerouter.Server, error) {
 		}
 		server := mcpprofilerouter.Server{URL: parts[1], Prefix: parts[2]}
 		if len(parts) == 4 {
-			server.Credential = parts[3]
+			credential, enabledTools := parseCredentialOptions(parts[3])
+			server.Credential = credential
+			server.EnabledTools = enabledTools
 		}
 		out[parts[0]] = server
 	}
 	return out, nil
 }
 
+func parseCredentialOptions(value string) (string, map[string]bool) {
+	credential, toolsRaw, ok := strings.Cut(value, ";tools=")
+	if !ok {
+		return value, nil
+	}
+	enabledTools := map[string]bool{}
+	for _, tool := range splitList(toolsRaw, "|") {
+		enabledTools[tool] = true
+	}
+	return credential, enabledTools
+}
+
 func splitCSV(value string) []string {
+	return splitList(value, ",")
+}
+
+func splitList(value, sep string) []string {
 	parts := strings.Split(value, ",")
+	if sep != "," {
+		parts = strings.Split(value, sep)
+	}
 	out := make([]string, 0, len(parts))
 	for _, part := range parts {
 		part = strings.TrimSpace(part)

@@ -14,12 +14,13 @@ import (
 )
 
 type Aggregator struct {
-	profile Profile
-	client  *http.Client
+	profile         Profile
+	client          *http.Client
+	configErr       error
+	serverForPrefix map[string]string
 
-	mu       sync.Mutex
-	servers  map[string]ServerDump
-	sessions map[string]compositeSession
+	mu      sync.Mutex
+	servers map[string]ServerDump
 }
 
 func NewAggregator(profile Profile) *Aggregator {
@@ -27,11 +28,13 @@ func NewAggregator(profile Profile) *Aggregator {
 	if timeout <= 0 {
 		timeout = 800 * time.Millisecond
 	}
+	serverForPrefix, err := profileServerPrefixes(profile)
 	return &Aggregator{
-		profile:  profile,
-		client:   &http.Client{Timeout: timeout},
-		servers:  make(map[string]ServerDump),
-		sessions: make(map[string]compositeSession),
+		profile:         profile,
+		client:          &http.Client{Timeout: timeout},
+		configErr:       err,
+		serverForPrefix: serverForPrefix,
+		servers:         make(map[string]ServerDump),
 	}
 }
 
@@ -43,7 +46,8 @@ func (a *Aggregator) Handler() http.Handler {
 	mux.HandleFunc("GET /dump", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, a.Dump())
 	})
-	mux.HandleFunc("POST /mcp/profiles/{profile}", a.handleProfile)
+	mux.HandleFunc("POST /mcp/s/{server}", a.handleCatalogServer)
+	mux.HandleFunc("POST /mcp/{profile}", a.handleProfile)
 	return mux
 }
 
@@ -51,7 +55,8 @@ func (a *Aggregator) Dump() AggregatorDump {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return AggregatorDump{
-		Profile: a.profile.Name,
+		ProfileID:   a.profileID(),
+		ProfileName: a.profile.Name,
 		PublicAuth: PublicAuthDump{
 			Type:       publicAuthType(a.profile.APIKey),
 			Configured: a.profile.APIKey != "",
@@ -63,7 +68,11 @@ func (a *Aggregator) Dump() AggregatorDump {
 
 func (a *Aggregator) handleProfile(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = r.Body.Close() }()
-	if r.PathValue("profile") != a.profile.Name {
+	if a.configErr != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse(nil, -32012, "invalid profile config: %s", a.configErr))
+		return
+	}
+	if r.PathValue("profile") != a.profileID() {
 		writeJSON(w, http.StatusNotFound, errorResponse(nil, -32004, "unknown profile"))
 		return
 	}
@@ -115,12 +124,76 @@ func (a *Aggregator) handleProfile(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (a *Aggregator) handleCatalogServer(w http.ResponseWriter, r *http.Request) {
+	defer func() { _ = r.Body.Close() }()
+	if a.configErr != nil {
+		writeJSON(w, http.StatusInternalServerError, errorResponse(nil, -32012, "invalid profile config: %s", a.configErr))
+		return
+	}
+	serverID := r.PathValue("server")
+	server, ok := a.profile.Servers[serverID]
+	if !ok {
+		writeJSON(w, http.StatusNotFound, errorResponse(nil, -32004, "unknown catalog server"))
+		return
+	}
+
+	var req JSONRPCRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse(nil, -32700, "invalid JSON-RPC request"))
+		return
+	}
+
+	switch req.Method {
+	case MethodInitialize:
+		var out InitializeResult
+		sessionID, err := a.callServer(r.Context(), serverID, server, "", req.ID, MethodInitialize, req.Params, &out)
+		if err != nil {
+			writeJSON(w, http.StatusOK, errorResponse(req.ID, -32011, "initialize failed: %s", err))
+			return
+		}
+		a.recordServer(serverID, server, "initialized")
+		w.Header().Set(SessionIDHeader, sessionID)
+		w.Header().Set(ProtocolVersionHeader, ProtocolVersion)
+		writeJSON(w, http.StatusOK, response(req.ID, out))
+	case MethodToolsList:
+		sessionID := r.Header.Get(SessionIDHeader)
+		if sessionID == "" {
+			writeJSON(w, http.StatusBadRequest, errorResponse(req.ID, -32010, "missing MCP session ID"))
+			return
+		}
+		var out ListToolsResult
+		if err := a.callServerNoSessionResult(r.Context(), serverID, server, sessionID, req.ID, MethodToolsList, nil, &out); err != nil {
+			a.recordServer(serverID, server, "error: "+err.Error())
+			writeJSON(w, http.StatusOK, errorResponse(req.ID, -32002, "tools/list failed: %s", serverID))
+			return
+		}
+		a.recordServer(serverID, server, "ok")
+		writeJSON(w, http.StatusOK, response(req.ID, out))
+	case MethodToolsCall:
+		sessionID := r.Header.Get(SessionIDHeader)
+		if sessionID == "" {
+			writeJSON(w, http.StatusBadRequest, errorResponse(req.ID, -32010, "missing MCP session ID"))
+			return
+		}
+		var out CallToolResult
+		if err := a.callServerNoSessionResult(r.Context(), serverID, server, sessionID, req.ID, MethodToolsCall, req.Params, &out); err != nil {
+			a.recordServer(serverID, server, "error: "+err.Error())
+			writeJSON(w, http.StatusOK, errorResponse(req.ID, -32003, "tool backend failed: %s", serverID))
+			return
+		}
+		a.recordServer(serverID, server, "ok")
+		writeJSON(w, http.StatusOK, response(req.ID, out))
+	default:
+		writeJSON(w, http.StatusOK, errorResponse(req.ID, -32601, "unsupported method: %s", req.Method))
+	}
+}
+
 func (a *Aggregator) initializeBackends(ctx context.Context, id json.RawMessage) (string, InitializeResult, error) {
 	backends := make(map[string]string, len(a.profile.Servers))
 	for _, serverID := range sortedServerIDs(a.profile.Servers) {
 		server := a.profile.Servers[serverID]
 		var out InitializeResult
-		sessionID, err := a.callServer(ctx, server, "", id, MethodInitialize, InitializeParams{
+		sessionID, err := a.callServer(ctx, serverID, server, "", id, MethodInitialize, InitializeParams{
 			ProtocolVersion: ProtocolVersion,
 			Capabilities:    map[string]any{},
 			ClientInfo:      Implementation{Name: "mcp-profile-router-aggregator", Version: "dev"},
@@ -131,15 +204,7 @@ func (a *Aggregator) initializeBackends(ctx context.Context, id json.RawMessage)
 		backends[serverID] = sessionID
 		a.recordServer(serverID, server, "initialized")
 	}
-	sessionID := encodeCompositeSession("mcp-profile-router", a.profile.Name, "", backends)
-	session := compositeSession{
-		Route:    "mcp-profile-router",
-		Profile:  a.profile.Name,
-		Backends: backends,
-	}
-	a.mu.Lock()
-	a.sessions[sessionID] = session
-	a.mu.Unlock()
+	sessionID := encodeCompositeSession("mcp-profile-router", a.profileID(), "", backends)
 	return sessionID, InitializeResult{
 		ProtocolVersion: ProtocolVersion,
 		Capabilities: map[string]any{
@@ -164,30 +229,35 @@ func (a *Aggregator) listTools(ctx context.Context, id json.RawMessage, session 
 		go func() {
 			defer wg.Done()
 			var out ListToolsResult
-			err := a.callServerNoSessionResult(ctx, server, session.Backends[serverID], id, MethodToolsList, nil, &out)
+			err := a.callServerNoSessionResult(ctx, serverID, server, session.Backends[serverID], id, MethodToolsList, nil, &out)
 			results <- result{serverID: serverID, tools: out.Tools, err: err}
 		}()
 	}
 	wg.Wait()
 	close(results)
 
-	var merged []Tool
+	merged := make([]Tool, 0)
+	healthyBackend := false
 	for res := range results {
 		server := a.profile.Servers[res.serverID]
 		if res.err != nil {
 			a.recordServer(res.serverID, server, "error: "+res.err.Error())
 			continue
 		}
+		healthyBackend = true
 		a.recordServer(res.serverID, server, "ok")
 		for _, tool := range res.tools {
-			tool.Name = server.Prefix + "." + tool.Name
+			if !serverToolEnabled(server, tool.Name) {
+				continue
+			}
+			tool.Name = serverPrefix(res.serverID, server) + "." + tool.Name
 			merged = append(merged, tool)
 		}
 	}
 	sort.Slice(merged, func(i, j int) bool {
 		return merged[i].Name < merged[j].Name
 	})
-	return ListToolsResult{Tools: merged}, len(merged) > 0
+	return ListToolsResult{Tools: merged}, healthyBackend
 }
 
 func (a *Aggregator) callTool(ctx context.Context, id json.RawMessage, paramsRaw json.RawMessage, session compositeSession) (CallToolResult, *JSONRPCResponse) {
@@ -196,19 +266,23 @@ func (a *Aggregator) callTool(ctx context.Context, id json.RawMessage, paramsRaw
 		resp := errorResponse(id, -32602, "invalid tools/call params")
 		return CallToolResult{}, &resp
 	}
-	serverID, backendTool, ok := strings.Cut(params.Name, ".")
+	prefix, backendTool, ok := strings.Cut(params.Name, ".")
 	if !ok || backendTool == "" {
 		resp := errorResponse(id, -32602, "tool name must be namespaced")
 		return CallToolResult{}, &resp
 	}
-	server, ok := a.profile.Servers[serverID]
+	serverID, server, ok := a.serverByPrefix(prefix)
 	if !ok {
 		resp := errorResponse(id, -32602, "unknown tool: %s", params.Name)
 		return CallToolResult{}, &resp
 	}
+	if !serverToolEnabled(server, backendTool) {
+		resp := errorResponse(id, -32602, "disabled tool: %s", params.Name)
+		return CallToolResult{}, &resp
+	}
 	params.Name = backendTool
 	var out CallToolResult
-	if err := a.callServerNoSessionResult(ctx, server, session.Backends[serverID], id, MethodToolsCall, params, &out); err != nil {
+	if err := a.callServerNoSessionResult(ctx, serverID, server, session.Backends[serverID], id, MethodToolsCall, params, &out); err != nil {
 		a.recordServer(serverID, server, "error: "+err.Error())
 		resp := errorResponse(id, -32003, "tool backend failed: %s", serverID)
 		return CallToolResult{}, &resp
@@ -217,12 +291,12 @@ func (a *Aggregator) callTool(ctx context.Context, id json.RawMessage, paramsRaw
 	return out, nil
 }
 
-func (a *Aggregator) callServerNoSessionResult(ctx context.Context, server Server, sessionID string, id json.RawMessage, method string, params any, out any) error {
-	_, err := a.callServer(ctx, server, sessionID, id, method, params, out)
+func (a *Aggregator) callServerNoSessionResult(ctx context.Context, serverID string, server Server, sessionID string, id json.RawMessage, method string, params any, out any) error {
+	_, err := a.callServer(ctx, serverID, server, sessionID, id, method, params, out)
 	return err
 }
 
-func (a *Aggregator) callServer(ctx context.Context, server Server, sessionID string, id json.RawMessage, method string, params any, out any) (string, error) {
+func (a *Aggregator) callServer(ctx context.Context, serverID string, server Server, sessionID string, id json.RawMessage, method string, params any, out any) (string, error) {
 	body, err := json.Marshal(JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      cloneRaw(id),
@@ -238,6 +312,7 @@ func (a *Aggregator) callServer(ctx context.Context, server Server, sessionID st
 	}
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("accept", "application/json")
+	req.Header.Set(a.routeHeader(), serverPrefix(serverID, server))
 	if server.Credential != "" {
 		req.Header.Set("authorization", server.Credential)
 	}
@@ -282,7 +357,7 @@ func (a *Aggregator) recordServer(id string, server Server, state string) {
 	defer a.mu.Unlock()
 	a.servers[id] = ServerDump{
 		Target:               server.URL,
-		Prefix:               server.Prefix,
+		Prefix:               serverPrefix(id, server),
 		CredentialConfigured: server.Credential != "",
 		LastToolsList:        state,
 	}
@@ -293,14 +368,8 @@ func (a *Aggregator) sessionFromRequest(r *http.Request) (compositeSession, bool
 	if sessionID == "" {
 		return compositeSession{}, false
 	}
-	a.mu.Lock()
-	session, ok := a.sessions[sessionID]
-	a.mu.Unlock()
-	if ok {
-		return session, true
-	}
 	session, err := decodeCompositeSession(sessionID)
-	if err != nil || session.Profile != a.profile.Name {
+	if err != nil || session.Profile != a.profileID() {
 		return compositeSession{}, false
 	}
 	return session, true
@@ -313,8 +382,16 @@ func (a *Aggregator) timeoutMillis() int {
 	return 800
 }
 
+func (a *Aggregator) routeHeader() string {
+	if a.profile.RouteHeader != "" {
+		return a.profile.RouteHeader
+	}
+	return "x-mcp-server"
+}
+
 type AggregatorDump struct {
-	Profile       string                `json:"profile"`
+	ProfileID     string                `json:"profile_id"`
+	ProfileName   string                `json:"profile_name"`
 	PublicAuth    PublicAuthDump        `json:"public_auth"`
 	TimeoutMillis int                   `json:"timeout_millis"`
 	Servers       map[string]ServerDump `json:"servers"`
@@ -330,6 +407,59 @@ type ServerDump struct {
 	Prefix               string `json:"prefix"`
 	CredentialConfigured bool   `json:"credential_configured"`
 	LastToolsList        string `json:"last_tools_list,omitempty"`
+}
+
+func (a *Aggregator) profileID() string {
+	if a.profile.ID != "" {
+		return a.profile.ID
+	}
+	return a.profile.Name
+}
+
+func (a *Aggregator) serverByPrefix(prefix string) (string, Server, bool) {
+	serverID, ok := a.serverForPrefix[prefix]
+	if !ok {
+		return "", Server{}, false
+	}
+	server, ok := a.profile.Servers[serverID]
+	return serverID, server, ok
+}
+
+func serverPrefix(serverID string, server Server) string {
+	if server.Prefix != "" {
+		return server.Prefix
+	}
+	return serverID
+}
+
+func serverToolEnabled(server Server, name string) bool {
+	if server.EnabledTools == nil {
+		return true
+	}
+	return server.EnabledTools[name]
+}
+
+func ValidateProfile(profile Profile) error {
+	if profile.ID == "" && profile.Name == "" {
+		return fmt.Errorf("profile id or name is required")
+	}
+	if len(profile.Servers) == 0 {
+		return fmt.Errorf("at least one server is required")
+	}
+	_, err := profileServerPrefixes(profile)
+	return err
+}
+
+func profileServerPrefixes(profile Profile) (map[string]string, error) {
+	out := make(map[string]string, len(profile.Servers))
+	for _, serverID := range sortedServerIDs(profile.Servers) {
+		prefix := serverPrefix(serverID, profile.Servers[serverID])
+		if existing, ok := out[prefix]; ok {
+			return out, fmt.Errorf("duplicate server prefix %q for %q and %q", prefix, existing, serverID)
+		}
+		out[prefix] = serverID
+	}
+	return out, nil
 }
 
 func publicAuthType(apiKey string) string {

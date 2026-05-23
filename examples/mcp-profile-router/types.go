@@ -16,16 +16,19 @@ const (
 )
 
 type Profile struct {
+	ID            string            `json:"id,omitempty"`
 	Name          string            `json:"name"`
 	APIKey        string            `json:"api_key,omitempty"`
+	RouteHeader   string            `json:"route_header,omitempty"`
 	TimeoutMillis int               `json:"timeout_millis,omitempty"`
 	Servers       map[string]Server `json:"servers"`
 }
 
 type Server struct {
-	URL        string `json:"url"`
-	Prefix     string `json:"prefix"`
-	Credential string `json:"credential,omitempty"`
+	URL          string          `json:"url"`
+	Prefix       string          `json:"prefix"`
+	Credential   string          `json:"credential,omitempty"`
+	EnabledTools map[string]bool `json:"enabled_tools,omitempty"`
 }
 
 type JSONRPCRequest struct {

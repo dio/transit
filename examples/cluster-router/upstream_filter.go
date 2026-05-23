@@ -10,11 +10,15 @@ func upstreamHeaderFilterForStore(store *routeStore) func(*up.Writer, *up.Reques
 	return func(w *up.Writer, r *up.Request) {
 		// Upstream filters run after host selection. Keep this filter focused on
 		// request shaping: provider headers, auth, and traceable router version.
-		model := r.Header(modelHeader)
+		snap := store.Current()
+		routeHeader := snap.RouteHeader
+		if routeHeader == "" {
+			routeHeader = defaultRouteHeader
+		}
+		model := r.Header(routeHeader)
 		if model == "" {
 			return
 		}
-		snap := store.Current()
 		route, ok := snap.Models[model]
 		if !ok {
 			return
@@ -80,9 +84,10 @@ func resolveAuthHeader(snap routeSnapshot, route modelRoute, tenant string) stri
 }
 
 type debugSnapshot struct {
-	Version string                `json:"version"`
-	Models  map[string]debugModel `json:"models"`
-	Auth    map[string]debugAuth  `json:"auth,omitempty"`
+	Version     string                `json:"version"`
+	RouteHeader string                `json:"route_header"`
+	Models      map[string]debugModel `json:"models"`
+	Auth        map[string]debugAuth  `json:"auth,omitempty"`
 }
 
 type debugModel struct {
@@ -102,9 +107,13 @@ type debugAuth struct {
 func (s *routeStore) DebugSnapshot() debugSnapshot {
 	snap := s.Current()
 	out := debugSnapshot{
-		Version: snap.Version,
-		Models:  make(map[string]debugModel, len(snap.Models)),
-		Auth:    make(map[string]debugAuth, len(snap.Auth)),
+		Version:     snap.Version,
+		RouteHeader: snap.RouteHeader,
+		Models:      make(map[string]debugModel, len(snap.Models)),
+		Auth:        make(map[string]debugAuth, len(snap.Auth)),
+	}
+	if out.RouteHeader == "" {
+		out.RouteHeader = defaultRouteHeader
 	}
 	for name, route := range snap.Models {
 		out.Models[name] = debugModel{
