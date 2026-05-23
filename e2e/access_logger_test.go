@@ -103,3 +103,19 @@ func (s *AccessLoggerSuite) TestDownstreamEnd_flagsField() {
 	// A clean direct_response 200 should have no error flags set.
 	s.Empty(entries[0].Flags, "expected no error flags for a clean 200 direct_response")
 }
+
+// TestDownstreamEnd_flagsNonEmptyOnUpstreamError verifies that GetResponseFlags
+// returns a non-empty string when the upstream is unreachable. The dead-upstream
+// cluster points to a port with nothing listening; Envoy gets ECONNREFUSED and
+// sets the UF (upstream connection failure) flag.
+func (s *AccessLoggerSuite) TestDownstreamEnd_flagsNonEmptyOnUpstreamError() {
+	req, _ := http.NewRequest(http.MethodGet, accessLoggerFlagsAddr+"/", nil)
+	resp := mustDo(s.T(), req)
+	readBody(s.T(), resp)
+	// Envoy returns 503 when it cannot connect to the upstream cluster.
+	s.Equal(http.StatusServiceUnavailable, resp.StatusCode)
+
+	entries := accessloggersink.Drain(5 * time.Second)
+	s.Require().Len(entries, 1)
+	s.NotEmpty(entries[0].Flags, "expected non-empty flags for an upstream connection failure")
+}

@@ -76,6 +76,7 @@ var (
 	mutableBodyUpstreamAddr           string
 	lbPolicySelectionAddr             string
 	accessLoggerLocalReplyAddr        string
+	accessLoggerFlagsAddr             string
 	adminAddr                         string
 )
 
@@ -136,6 +137,9 @@ func TestMain(m *testing.M) {
 	lbPolicyHost0Port := startIdentifiedUpstream("lb-host-0")
 	lbPolicyHost1Port := startIdentifiedUpstream("lb-host-1")
 	accessLoggerLocalReplyPort := freePort()
+	accessLoggerFlagsPort := freePort()
+	// deadUpstreamPort: nothing listens here; Envoy gets ECONNREFUSED, setting UF flag.
+	deadUpstreamPort := freePort()
 	adminPort := freePort()
 
 	echoAddr = fmt.Sprintf("http://localhost:%d", echoPort)
@@ -162,6 +166,7 @@ func TestMain(m *testing.M) {
 	asyncCalloutLocalResponseAddr = fmt.Sprintf("http://localhost:%d", asyncCalloutLocalResponsePort)
 	lbPolicySelectionAddr = fmt.Sprintf("http://localhost:%d", lbPolicySelectionPort)
 	accessLoggerLocalReplyAddr = fmt.Sprintf("http://localhost:%d", accessLoggerLocalReplyPort)
+	accessLoggerFlagsAddr = fmt.Sprintf("http://localhost:%d", accessLoggerFlagsPort)
 	adminAddr = fmt.Sprintf("http://localhost:%d", adminPort)
 
 	otelSink = otelsink.New()
@@ -242,6 +247,8 @@ func TestMain(m *testing.M) {
 		LbPolicyHost0Port:                  lbPolicyHost0Port,
 		LbPolicyHost1Port:                  lbPolicyHost1Port,
 		AccessLoggerLocalReplyPort:         accessLoggerLocalReplyPort,
+		AccessLoggerFlagsPort:              accessLoggerFlagsPort,
+		DeadUpstreamPort:                   deadUpstreamPort,
 		AdminPort:                          adminPort,
 	})
 
@@ -728,6 +735,8 @@ type envoyPorts struct {
 	LbPolicyHost0Port                  int
 	LbPolicyHost1Port                  int
 	AccessLoggerLocalReplyPort         int
+	AccessLoggerFlagsPort              int
+	DeadUpstreamPort                   int
 	AdminPort                          int
 }
 

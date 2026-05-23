@@ -94,6 +94,41 @@ static_resources:
                             status: 200
                             body: { inline_string: "access-logger-ok" }
 
+    # access-logger-flags-e2e: e2e-logger access logger routed to dead-upstream so
+    # Envoy emits a UF (upstream connection failure) flag, verifying GetResponseFlags
+    # returns a non-empty string on error paths.
+    - name: access-logger-flags-e2e
+      address:
+        socket_address: { address: 0.0.0.0, port_value: {{.AccessLoggerFlagsPort}} }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: access_logger_flags_e2e
+                access_log:
+                  - name: envoy.access_loggers.dynamic_modules
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.access_loggers.dynamic_modules.v3.DynamicModuleAccessLog
+                      dynamic_module_config:
+                        name: e2e
+                      logger_name: e2e-logger
+                      logger_config:
+                        "@type": type.googleapis.com/google.protobuf.StringValue
+                        value: '{"sink_url":"{{.SinkURL}}"}'
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: access_logger_flags_e2e
+                  virtual_hosts:
+                    - name: local
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          route: { cluster: dead-upstream }
+
     # access-logger-local-reply-e2e: same e2e-logger access logger as
     # access-logger-e2e, but adds the guard filter. Requests missing x-api-key
     # receive a 401 local reply; the access logger must fire for that path.
@@ -753,6 +788,19 @@ static_resources:
               - endpoint:
                   address:
                     socket_address: { address: 127.0.0.1, port_value: {{.MutableBodyRecorderPort}} }
+
+    # dead-upstream: nothing listens on DeadUpstreamPort. Envoy gets ECONNREFUSED
+    # and sets UF (upstream connection failure) response flags.
+    - name: dead-upstream
+      connect_timeout: 1s
+      type: STATIC
+      load_assignment:
+        cluster_name: dead-upstream
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: 127.0.0.1, port_value: {{.DeadUpstreamPort}} }
 
     - name: upstream-filter-upstream
       connect_timeout: 5s
