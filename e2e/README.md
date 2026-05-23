@@ -78,7 +78,7 @@ All three sinks live under [`sinks/`](sinks/) and expose a consistent pattern:
 | `startPlainUpstream()` | `int` port | Plain HTTP upstream; echoes `Authorization` header |
 | `startForwardEchoUpstream()` | `int` port | Echoes every request header as `x-received-<name>` and reflects the request body |
 | `startAsyncCalloutUpstream()` | `int` port | Returns the last path segment as body; used by callout filters |
-| `startGzipUpstream()` | `int` port | Always returns `"hello codec"` gzip-compressed |
+| `startGzipUpstream()` | `int` port | Always returns `"hello compression"` gzip-compressed |
 | `startIdentifiedUpstream(body)` | `int` port | Returns a fixed body string; used for LB policy host-selection assertions |
 | `startRecorderUpstream()` | `*recorderUpstream` | Records every inbound request (method, path, headers, body, `ContentLength`); exposes `WaitFor`, `Len`, `Requests`, `Reset` |
 

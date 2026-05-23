@@ -312,7 +312,7 @@ func freePort() int {
 }
 
 // startGzipUpstream starts a minimal HTTP server that always returns the text
-// "hello codec" compressed with gzip, regardless of Accept-Encoding. Returns
+// "hello compression" compressed with gzip, regardless of Accept-Encoding. Returns
 // the port it is listening on.
 func startGzipUpstream() int {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -323,7 +323,7 @@ func startGzipUpstream() int {
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		var buf bytes.Buffer
 		gz := gzip.NewWriter(&buf)
-		gz.Write([]byte("hello codec"))
+		gz.Write([]byte("hello compression"))
 		gz.Close()
 		w.Header().Set("Content-Encoding", "gzip")
 		w.Header().Set("Content-Type", "text/plain")

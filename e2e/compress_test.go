@@ -9,7 +9,7 @@ import (
 
 // CompressSuite tests the e2e-compress filter.
 //
-// The upstream always returns "hello codec" compressed with gzip, regardless
+// The upstream always returns "hello compression" compressed with gzip, regardless
 // of Accept-Encoding. The filter calls RequestIdentity (which the upstream
 // ignores), then decodes the gzip response body with compress.Decode and replaces
 // it with the plain text via SetResponseBody. The test client therefore sees
@@ -29,7 +29,7 @@ func (s *CompressSuite) TestGet_decodesGzipResponse() {
 	resp := mustDo(s.T(), req)
 	body := readBody(s.T(), resp)
 	s.Equal(http.StatusOK, resp.StatusCode)
-	s.Equal("hello codec", body)
+	s.Equal("hello compression", body)
 }
 
 // TestPost_decodesGzipResponse verifies that POST requests also go through
@@ -39,7 +39,7 @@ func (s *CompressSuite) TestPost_decodesGzipResponse() {
 	resp := mustDo(s.T(), req)
 	body := readBody(s.T(), resp)
 	s.Equal(http.StatusOK, resp.StatusCode)
-	s.Equal("hello codec", body)
+	s.Equal("hello compression", body)
 }
 
 // TestGet_contentEncodingStripped verifies that the filter removes the
