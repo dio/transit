@@ -41,7 +41,7 @@ var (
 func TestMain(m *testing.M) {
 	_, file, _, _ := runtime.Caller(0)
 	// ws-proxy/e2e/e2e_test.go -> examples/
-	examplesRoot = filepath.Join(filepath.Dir(file), "../../..")
+	examplesRoot = filepath.Join(filepath.Dir(file), "../..")
 
 	bin := e2etest.EnvoyBin(examplesRoot)
 	if _, err := os.Stat(bin); err != nil {
@@ -80,7 +80,7 @@ func TestMain(m *testing.M) {
 		"ENVOY_DYNAMIC_MODULES_SEARCH_PATH="+wsProxyDir,
 		"OPENAI_API_KEY=test-key",
 		fmt.Sprintf("WSPROXY_LOOPBACK_ADDR=127.0.0.1:%d", loopbackPort),
-		fmt.Sprintf("WSPROXY_UPSTREAM_URL=ws://127.0.0.1:%d", mockPort),
+		fmt.Sprintf("WSPROXY_UPSTREAM_URL=ws://127.0.0.1:%d/v1/responses", mockPort),
 	)
 	envoyCmd.Stdout = os.Stderr
 	envoyCmd.Stderr = os.Stderr
@@ -169,7 +169,11 @@ func TestWsProxy_MissingAuth_401(t *testing.T) {
 }
 
 func TestWsProxy_NonWsRequest_Returns400(t *testing.T) {
-	resp, err := http.Get("http://" + proxyURL[len("ws://"):] + "/v1/responses")
+	httpURL := "http://" + proxyURL[len("ws://"):] + "/v1/responses"
+	req, err := http.NewRequest(http.MethodGet, httpURL, nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer sk-test")
+	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)

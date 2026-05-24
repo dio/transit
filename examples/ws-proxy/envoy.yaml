@@ -16,7 +16,7 @@ static_resources:
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
                       dynamic_module_config:
-                        name: wsproxy
+                        name: ws-proxy
                       filter_name: wsproxy-auth
                   - name: envoy.filters.http.router
                     typed_config:
