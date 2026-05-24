@@ -1,0 +1,56 @@
+static_resources:
+  listeners:
+    - name: wsproxy
+      address:
+        socket_address: { address: 127.0.0.1, port_value: {{.ProxyPort}} }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: wsproxy
+                upgrade_configs:
+                  - upgrade_type: websocket
+                http_filters:
+                  - name: wsproxy-auth
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: wsproxy
+                      filter_name: wsproxy-auth
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: wsproxy
+                  virtual_hosts:
+                    - name: wsproxy
+                      domains: ["*"]
+                      routes:
+                        - match:
+                            prefix: /v1/responses
+                          route:
+                            cluster: wsproxy-loopback
+                            upgrade_configs:
+                              - upgrade_type: websocket
+                            timeout: 0s
+                        - match:
+                            prefix: /
+                          direct_response:
+                            status: 404
+
+  clusters:
+    - name: wsproxy-loopback
+      connect_timeout: 5s
+      type: STATIC
+      load_assignment:
+        cluster_name: wsproxy-loopback
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: 127.0.0.1, port_value: {{.LoopbackPort}} }
+
+admin:
+  address:
+    socket_address: { address: 127.0.0.1, port_value: {{.AdminPort}} }
