@@ -1,6 +1,10 @@
+admin:
+  address:
+    socket_address: { address: 127.0.0.1, port_value: {{.AdminPort}} }
+
 static_resources:
   listeners:
-    - name: wsproxy
+    - name: main
       address:
         socket_address: { address: 127.0.0.1, port_value: {{.ProxyPort}} }
       filter_chains:
@@ -8,49 +12,64 @@ static_resources:
             - name: envoy.filters.network.http_connection_manager
               typed_config:
                 "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
-                stat_prefix: wsproxy
+                stat_prefix: ingress
                 upgrade_configs:
                   - upgrade_type: websocket
                 http_filters:
-                  - name: wsproxy-auth
+                  - name: ws-proxy
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
                       dynamic_module_config:
                         name: ws-proxy
-                      filter_name: wsproxy-auth
+                      filter_name: ws-proxy
+                      filter_config:
+                        "@type": type.googleapis.com/google.protobuf.StringValue
+                        value: '{"listen_addr":"127.0.0.1:{{.LoopbackPort}}"}'
                   - name: envoy.filters.http.router
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
                 route_config:
-                  name: wsproxy
+                  name: main
                   virtual_hosts:
-                    - name: wsproxy
+                    - name: services
                       domains: ["*"]
                       routes:
                         - match:
-                            prefix: /v1/responses
+                            prefix: "/"
+                            headers:
+                              - name: upgrade
+                                string_match:
+                                  exact: websocket
+                                  ignore_case: true
                           route:
-                            cluster: wsproxy-loopback
+                            cluster: ws-proxy-local
                             upgrade_configs:
                               - upgrade_type: websocket
                             timeout: 0s
-                        - match:
-                            prefix: /
-                          direct_response:
-                            status: 404
+                        - match: { prefix: "/" }
+                          route:
+                            cluster: mock-upstream
+                            timeout: 5s
 
   clusters:
-    - name: wsproxy-loopback
-      connect_timeout: 5s
+    - name: ws-proxy-local
       type: STATIC
       load_assignment:
-        cluster_name: wsproxy-loopback
+        cluster_name: ws-proxy-local
         endpoints:
           - lb_endpoints:
               - endpoint:
                   address:
                     socket_address: { address: 127.0.0.1, port_value: {{.LoopbackPort}} }
 
-admin:
-  address:
-    socket_address: { address: 127.0.0.1, port_value: {{.AdminPort}} }
+    # In e2e the mock upstream handles all non-WS HTTP and WS connections directly.
+    # ws-auth upstream filter is omitted here — credentials are not needed against the mock.
+    - name: mock-upstream
+      type: STATIC
+      load_assignment:
+        cluster_name: mock-upstream
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: 127.0.0.1, port_value: {{.MockPort}} }
