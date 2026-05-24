@@ -302,7 +302,7 @@ WebSocket handshake.
 ## Files
 
 ```
-examples/wsproxy/
+examples/ws-proxy/
   README.md               this file -- implementation spec
   wsproxy.go              WSProxy, SessionTap, frame pump, session lifecycle
   auth.go                 wsproxy-auth HTTP filter (pre-upgrade auth gate)
@@ -428,7 +428,7 @@ package main
 
 import (
     _ "github.com/dio/transit/down/abi_impl"
-    "github.com/dio/transit/examples/wsproxy"
+    "github.com/dio/transit/examples/ws-proxy"
 )
 
 func init() { wsproxy.Register() }
@@ -496,20 +496,20 @@ Tests:
 
 ```sh
 # Build the shared library
-make -C examples/wsproxy build
+make -C examples/ws-proxy build
 
 # Start Envoy (OPENAI_API_KEY must be set for real upstream)
-OPENAI_API_KEY=sk-... make -C examples/wsproxy run
+OPENAI_API_KEY=sk-... make -C examples/ws-proxy run
 
 # Connect with any WS client
 wscat -c 'ws://localhost:10443/v1/responses' -H 'Authorization: Bearer sk-test'
 # then type: {"type":"response.create","model":"gpt-4.1","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}
 
 # Unit tests (no Envoy needed)
-make -C examples/wsproxy test
+make -C examples/ws-proxy test
 
 # End-to-end tests (mock upstream, no real API key needed)
-make -C examples/wsproxy e2e
+make -C examples/ws-proxy e2e
 ```
 
 ---

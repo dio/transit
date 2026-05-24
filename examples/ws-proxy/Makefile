@@ -1,7 +1,7 @@
-## examples/wsproxy/Makefile
+## examples/ws-proxy/Makefile
 
-EXAMPLE := wsproxy
-OUTPUT  := libwsproxy.so
+EXAMPLE := ws-proxy
+OUTPUT  := libws-proxy.so
 
 ROOT     := $(abspath $(CURDIR)/../..)
 ENVOY_BIN ?= $(ROOT)/.bin/envoy

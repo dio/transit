@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	wsproxy "github.com/dio/transit/examples/wsproxy"
+	wsproxy "github.com/dio/transit/examples/ws-proxy"
 )
 
 func makeResponseCompleted(inputTokens, outputTokens int64) []byte {

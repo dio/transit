@@ -28,7 +28,7 @@ transit/                     root Go module: github.com/dio/transit
     mcp-profile-router/      MCP fan-out aggregator
     request-ui/              Filter with embedded UI served via access logger
     spa/                     Static asset serving filter
-    wsproxy/                 WebSocket proxy with embedded upstream dial (see README.md)
+    ws-proxy/                WebSocket proxy with embedded upstream dial (see README.md)
   integrations/              K8s / Envoy Gateway integration tests (separate module)
     cluster-router-eg/
     tiered-router-eg/
@@ -204,7 +204,7 @@ Do not add per-example targets to the root Makefile.
 
 The wsproxy example has a design doc and a README spec:
 - Design doc: `.hermes/plans/2025-05-25-openai-realtime-ws-proxy.md`
-- Spec (source of truth for implementation): `examples/wsproxy/README.md`
+- Spec (source of truth for implementation): `examples/ws-proxy/README.md`
 
 Key constraints from the design:
 - The HTTP filter (`wsproxy-auth`) handles auth and sets internal headers.

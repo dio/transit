@@ -1,9 +1,9 @@
-// Package e2e runs integration tests for the wsproxy example against a real
+// Package e2e runs integration tests for the ws-proxy example against a real
 // Envoy instance using a mock OpenAI upstream.
 //
 // Run:
 //
-//	make -C examples/wsproxy e2e
+//	make -C examples/ws-proxy e2e
 package e2e
 
 import (
@@ -40,7 +40,7 @@ var (
 
 func TestMain(m *testing.M) {
 	_, file, _, _ := runtime.Caller(0)
-	// wsproxy/e2e/e2e_test.go -> examples/
+	// ws-proxy/e2e/e2e_test.go -> examples/
 	examplesRoot = filepath.Join(filepath.Dir(file), "../../..")
 
 	bin := e2etest.EnvoyBin(examplesRoot)
@@ -48,7 +48,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "SKIP: envoy not found at %s (run: make download-envoy)\n", bin)
 		os.Exit(0)
 	}
-	if err := e2etest.CheckSharedLibrary(examplesRoot, "wsproxy", "libwsproxy.so"); err != nil {
+	if err := e2etest.CheckSharedLibrary(examplesRoot, "ws-proxy", "libws-proxy.so"); err != nil {
 		fmt.Fprintf(os.Stderr, "e2e: %v\n", err)
 		os.Exit(1)
 	}
@@ -64,23 +64,20 @@ func TestMain(m *testing.M) {
 	proxyURL = fmt.Sprintf("ws://127.0.0.1:%d", proxyPort)
 	adminURL = fmt.Sprintf("http://127.0.0.1:%d", adminPort)
 
-	_ = mockPort // mock upstream is used by the embedded proxy in wsproxy.go,
-	// but in tests we override OPENAI_API_KEY and the embedded proxy's upstreamURL
-	// via env. For simplicity in this bootstrap: the mock runs on mockPort but
-	// wsproxy.go dials DefaultUpstreamURL. Override via WSPROXY_UPSTREAM_URL.
+	_ = mockPort // mock upstream is used by the embedded proxy via WSPROXY_UPSTREAM_URL env var.
 
-	cfgPath := e2etest.WriteEnvoyConfig("wsproxy", envoyConfigTmpl, map[string]int{
+	cfgPath := e2etest.WriteEnvoyConfig("ws-proxy", envoyConfigTmpl, map[string]int{
 		"ProxyPort":    proxyPort,
 		"LoopbackPort": loopbackPort,
 		"AdminPort":    adminPort,
 	})
 
-	wsproxyDir := filepath.Join(examplesRoot, "wsproxy")
+	wsProxyDir := filepath.Join(examplesRoot, "ws-proxy")
 	envoyCmd = exec.Command(bin, "-c", cfgPath, "--log-level", "warning",
 		"--component-log-level", "dynamic_modules:info")
 	envoyCmd.Env = append(os.Environ(),
 		"GODEBUG=cgocheck=0",
-		"ENVOY_DYNAMIC_MODULES_SEARCH_PATH="+wsproxyDir,
+		"ENVOY_DYNAMIC_MODULES_SEARCH_PATH="+wsProxyDir,
 		"OPENAI_API_KEY=test-key",
 		fmt.Sprintf("WSPROXY_LOOPBACK_ADDR=127.0.0.1:%d", loopbackPort),
 		fmt.Sprintf("WSPROXY_UPSTREAM_URL=ws://127.0.0.1:%d", mockPort),
