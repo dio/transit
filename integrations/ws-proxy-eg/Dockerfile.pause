@@ -1,0 +1,12 @@
+ARG TARGETARCH
+
+FROM scratch
+
+ARG TARGETARCH
+
+# pause is a static binary that blocks forever. Its only role is to give Envoy
+# Gateway a ready endpoint so it generates the CDS cluster that the
+# EnvoyPatchPolicy replaces. No traffic reaches this container.
+COPY dist/pause-linux-${TARGETARCH} /pause
+
+ENTRYPOINT ["/pause"]

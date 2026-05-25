@@ -240,6 +240,79 @@ only on `ServerInitialized`. The cluster may be created after Envoy has already
 started. Start refresh work from `Cluster.Init` and keep `ServerInitialized` as
 a guarded second entry point.
 
+## Backend clusters and EPP
+
+EG v1.8 does **not** create a CDS cluster for an HTTPRoute backend when there
+are no ready endpoints. This makes EPP `replace` patches fail with
+`ResourceNotFound`. The fix is to give EG a ready endpoint so it generates the
+cluster, which the EPP can then replace.
+
+**Correct pattern**: use a `registry.k8s.io/pause:3.9` placeholder Deployment.
+The pause container starts in < 1 s, has no readiness probe (ready immediately),
+and is selected by the backend Service. EG generates the cluster from the pause
+pod's endpoint; the EPP replaces the entire cluster with whatever the integration
+needs (e.g. a STATIC loopback). No real traffic ever reaches the placeholder.
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ws-proxy-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ws-proxy-backend
+  template:
+    metadata:
+      labels:
+        app: ws-proxy-backend
+    spec:
+      containers:
+      - name: pause
+        image: registry.k8s.io/pause:3.9
+        ports:
+        - containerPort: 8080
+```
+
+Always `waitDeployment` on the placeholder before calling
+`waitEnvoyPatchPolicyProgrammed`. If the EPP is applied before the pause pod is
+ready, EG has not yet generated the cluster and the patch will fail with
+`ResourceNotFound`, then never recover without a re-apply.
+
+**Static EndpointSlices do not work**: manually created EndpointSlices with
+`conditions.ready: true` are not sufficient — EG v1.8 still reports "no ready
+endpoints" and generates a `direct_response: 503` route instead of a cluster.
+A real running pod is required.
+
+**Loopback addresses are rejected**: Kubernetes rejects `127.0.0.0/8` and
+`::1/128` in EndpointSlice addresses. RFC 5737 test addresses (`192.0.2.x`)
+are valid syntactically, but still will not satisfy EG's endpoint readiness
+check. Use a real pod.
+
+## WebSocket dials in Go test code
+
+When dialing a WebSocket through a port-forward (URL host is `127.0.0.1:<port>`)
+but the virtual host in Envoy is a hostname (e.g. `ws-proxy.example.com`), use
+`DialOptions.Host` — not `HTTPHeader: http.Header{"Host": {...}}`. Go's
+`net/http` ignores `Header["Host"]`; the correct override path is `req.Host`,
+which the `coder/websocket` library maps from `DialOptions.Host`.
+
+```go
+// Wrong — Host header silently ignored by net/http
+conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+    HTTPHeader: http.Header{"Host": {gatewayHost}},
+})
+
+// Correct
+conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+    Host: gatewayHost,
+})
+```
+
+The same applies to `http.NewRequest`: set `req.Host = hostname` (not
+`req.Header.Set("Host", ...)`).
+
 ## Assertions
 
 Prefer black-box assertions through the Gateway listener. Use admin
@@ -273,16 +346,116 @@ When the suite fails after Envoy Gateway is installed:
 
 1. Check Gateway and HTTPRoute status.
 2. Check EnvoyProxy and EnvoyPatchPolicy status.
-3. Port-forward Envoy admin and inspect `/config_dump`.
-4. Confirm the generated cluster name targeted by EnvoyPatchPolicy.
-5. Check the custom Envoy pod logs for dynamic module load errors.
+3. If EPP reports `Programmed=False:ResourceNotFound` for a cluster type, EG
+   has not generated that cluster. Check `kubectl get httproute -o yaml` for
+   `BackendsAvailable=False:EndpointsNotFound`. If so, the backend has no ready
+   endpoints — add a `pause` placeholder Deployment (see Backend clusters section).
+4. Port-forward Envoy admin and inspect `/config_dump`.
+5. Confirm the generated cluster name targeted by EnvoyPatchPolicy.
+6. Check the custom Envoy pod logs for dynamic module load errors.
    EnvoyPatchPolicy can report `Programmed=True` even when Envoy later rejects
    a dynamic-module cluster update. Look for messages such as
    `Failed to create in-module cluster configuration` or module-specific parse
    errors.
-6. If Envoy pods are created but not Ready, inspect Envoy Gateway logs for xDS
+7. If Envoy pods are created but not Ready, inspect Envoy Gateway logs for xDS
    authentication errors such as missing `tokenreviews` permission.
-7. Keep the cluster with `KEEP_CLUSTER=1` only for interactive debugging.
+8. Keep the cluster with `KEEP_CLUSTER=1` only for interactive debugging. Run
+   `make -C integrations/<name> eg-install KEEP_CLUSTER=1` to get a stable
+   base cluster without the image import, then apply resources manually.
+
+## WebSocket tiered proxy debugging
+
+This section covers failure patterns specific to integrations that use
+`ws-proxy-eg` or `tiered-ws-proxy-eg` shapes (embedded ws-proxy server,
+two-listener L2, `WSPROXY_EGRESS_URL`).
+
+### accept-before-dial: Gate 1 passes but Gate 2 fails on first Read
+
+`WSProxy.ServeHTTP` calls `websocket.Accept` (sends `101`) **before** dialing
+the egress URL. A Gate that only checks the WS dial will pass even when the
+egress dial fails.
+
+```
+Gate 1: conn, _, err := websocket.Dial(...)  ← returns nil (101 received)
+Gate 2: _, _, err = conn.Read(...)           ← returns StatusInternalError "upstream unavailable"
+```
+
+If Gate 2 fails immediately on the **first** `Read` before any frame was
+written, the egress URL is wrong — not the L1→L2 inbound path. Common causes:
+
+| Symptom at Gate 2 | Root cause |
+|-------------------|-----------|
+| `StatusInternalError / upstream unavailable` | Egress dial failed: wrong URL, 426 from Envoy (missing `upgrade_configs` on egress listener), or egress cluster has no endpoints |
+| `StatusInternalError / upstream unavailable` immediately after 101 | `WSPROXY_EGRESS_URL` includes path → double-path URL → Envoy has no route |
+| 426 on Gate 1 | `upgrade_configs` missing on L1 inbound listener or L2 inbound listener |
+| 503 on Gate 1 | EDS cluster has no endpoints; EPP applied before pause placeholder was ready |
+
+### WSPROXY_EGRESS_URL must be a base URL
+
+`ws_proxy.go` constructs the upstream URL as `egressURL + r.URL.Path`. Set:
+
+```yaml
+# Correct
+- name: WSPROXY_EGRESS_URL
+  value: "ws://127.0.0.1:10002"
+
+# Wrong — causes double-path ws://127.0.0.1:10002/v1/responses/v1/responses
+- name: WSPROXY_EGRESS_URL
+  value: "ws://127.0.0.1:10002/v1/responses"
+```
+
+### SKIP_IMAGE_BUILD timestamp mismatch
+
+`IMAGE_TAG := $(shell date +%s)` in the integration Makefile is evaluated at
+`make` start time. `SKIP_IMAGE_BUILD=1` skips the build but does **not** freeze
+the tag — a fresh timestamp is generated. The resulting image names do not exist
+in Docker; `k3d image import` fails.
+
+Always pass explicit image names when reusing a previous build:
+
+```sh
+make -C integrations/tiered-ws-proxy-eg e2e SKIP_IMAGE_BUILD=1 \
+  L1_IMAGE=transit-tiered-ws-proxy-l1:<tag> \
+  L2_IMAGE=transit-tiered-ws-proxy-l2:<tag> \
+  MOCK_IMAGE=transit-tiered-ws-proxy-mock:<tag>
+```
+
+### Two-listener Gateway for WS egress
+
+After `101 Switching Protocols` Envoy becomes a transparent TCP tunnel — EPP
+patches and upstream filters cannot touch WS frames. To keep Envoy ownership
+of TLS and credentials on the upstream hop, add a second HTTP listener to
+the L2 Gateway:
+
+```yaml
+listeners:
+- name: inbound   # receives WS from L1
+  protocol: HTTP
+  port: 80
+- name: egress    # receives WS from embedded server
+  protocol: HTTP
+  port: 10002
+```
+
+EG generates `tcp-80` and `tcp-10002` from the same pod. EPP patches both.
+The embedded server dials `ws://127.0.0.1:10002` (base URL only). This is the
+only pattern that restores Envoy ownership of the upstream WS connection without
+patching Envoy core.
+
+### config_dump verification for L2 patches
+
+Poll `/config_dump` on the L2 Envoy admin port after EPP is applied. A
+fully-patched L2 must show all of:
+
+- `DynamicModuleFilter` with `filter_name: ws-proxy` in `tcp-80` filter chain
+- `127.0.0.1:10001` in a STATIC cluster (inbound → embedded server)
+- `10002` bound as a listener port (egress listener present)
+- `upgrade_type: websocket` in both `tcp-80` and `tcp-10002`
+
+The `waitL2ConfigApplied` helper in `tiered-ws-proxy-eg/e2e/e2e_test.go` checks
+these conditions (60s deadline, 500ms poll). If it times out, one of the six L2
+EPP patches did not land — inspect the patch paths against the running Envoy
+version's xDS schema.
 
 ## Make targets
 

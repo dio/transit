@@ -267,3 +267,4 @@ The `integrations/` module runs Kubernetes demos with Envoy Gateway and k3d:
 | --- | --- |
 | `cluster-router-eg` | Envoy Gateway with a custom Envoy image, EnvoyPatchPolicy, Transit Cluster Extension routing, upstream provider header injection, live model updates, and a redacted config CLI. |
 | `tiered-router-eg` | Planned two-stage Gateway shape: L1 shard placement first, L2 model/provider routing inside the selected shard. |
+| `tiered-ws-proxy-eg` | Two-stage WS pipeline: L1 shard-routes the upgrade, L2 runs the embedded ws-proxy server and egresses via a second EG-managed listener. |

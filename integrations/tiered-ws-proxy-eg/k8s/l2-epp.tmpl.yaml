@@ -1,0 +1,112 @@
+# L2 EPP: six patches that wire the ws-proxy embedded server into the L2 Envoy.
+#
+# Patch 1  – DynamicModuleFilter on tcp-80: starts the embedded ws-proxy server
+#             (RegisterWithGroup fires on filter creation).
+# Patch 2  – upgrade_configs on tcp-80: Gate 1 — allows WS upgrade from L1.
+# Patch 3  – route replace in http-80: upgrade_configs + timeout 0s on inbound.
+# Patch 4  – cluster replace L2InboundCluster → STATIC 127.0.0.1:10001 (embedded server).
+# Patch 5  – upgrade_configs on tcp-10002: allows WS upgrade from embedded server to mock.
+# Patch 6  – route replace in http-10002: upgrade_configs + timeout 0s on egress.
+#
+# Template variables (rendered by the e2e harness):
+#   L2InboundCluster  = httproute/default/l2-inbound/rule/0
+#   L2EgressCluster   = httproute/default/l2-egress/rule/0
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyPatchPolicy
+metadata:
+  name: l2
+  namespace: default
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: l2
+  type: JSONPatch
+  jsonPatches:
+  # Patch 1: Instantiate the ws-proxy module so RegisterWithGroup starts the
+  # embedded server on WSPROXY_LISTEN_ADDR (127.0.0.1:10001).
+  - type: "type.googleapis.com/envoy.config.listener.v3.Listener"
+    name: tcp-80
+    operation:
+      op: add
+      path: "/default_filter_chain/filters/0/typed_config/http_filters/0"
+      value:
+        name: ws-proxy
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+          dynamic_module_config:
+            name: ws-proxy
+          filter_name: ws-proxy
+
+  # Patch 2: Gate 1 — inject upgrade_configs on the inbound listener so Envoy
+  # forwards the WS 101 from L1 (without this Envoy returns 426).
+  - type: "type.googleapis.com/envoy.config.listener.v3.Listener"
+    name: tcp-80
+    operation:
+      op: add
+      path: "/default_filter_chain/filters/0/typed_config/upgrade_configs"
+      value:
+        - upgrade_type: websocket
+
+  # Patch 3: Route inbound /v1/responses to the cluster with upgrade_configs
+  # and an infinite timeout so the WS tunnel is not killed by EG's default.
+  - type: "type.googleapis.com/envoy.config.route.v3.RouteConfiguration"
+    name: http-80
+    operation:
+      op: replace
+      path: "/virtual_hosts/0/routes/0"
+      value:
+        match:
+          prefix: /v1/responses
+        route:
+          cluster: "{{.L2InboundCluster}}"
+          timeout: 0s
+          upgrade_configs:
+            - upgrade_type: websocket
+
+  # Patch 4: Gate 2 — replace the EG-generated inbound cluster with a STATIC
+  # loopback pointing at the embedded ws-proxy server inside this pod.
+  - type: "type.googleapis.com/envoy.config.cluster.v3.Cluster"
+    name: "{{.L2InboundCluster}}"
+    operation:
+      op: replace
+      path: ""
+      value:
+        name: "{{.L2InboundCluster}}"
+        type: STATIC
+        connect_timeout: 5s
+        load_assignment:
+          cluster_name: "{{.L2InboundCluster}}"
+          endpoints:
+            - lb_endpoints:
+                - endpoint:
+                    address:
+                      socket_address:
+                        address: 127.0.0.1
+                        port_value: 10001
+
+  # Patch 5: inject upgrade_configs on the egress listener so the embedded
+  # server's outbound WS dial (ws://127.0.0.1:10002) is forwarded to mock-upstream.
+  - type: "type.googleapis.com/envoy.config.listener.v3.Listener"
+    name: tcp-10002
+    operation:
+      op: add
+      path: "/default_filter_chain/filters/0/typed_config/upgrade_configs"
+      value:
+        - upgrade_type: websocket
+
+  # Patch 6: Route egress /v1/responses to mock-upstream with upgrade_configs
+  # and an infinite timeout.
+  - type: "type.googleapis.com/envoy.config.route.v3.RouteConfiguration"
+    name: http-10002
+    operation:
+      op: replace
+      path: "/virtual_hosts/0/routes/0"
+      value:
+        match:
+          prefix: /v1/responses
+        route:
+          cluster: "{{.L2EgressCluster}}"
+          timeout: 0s
+          upgrade_configs:
+            - upgrade_type: websocket

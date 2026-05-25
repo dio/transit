@@ -1,0 +1,25 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: l2
+  namespace: default
+spec:
+  gatewayClassName: tiered-ws-proxy-eg
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: l2
+  listeners:
+  # Inbound: receives WS connections from L1 (forwarded by cluster-shard-router).
+  # EPP adds the ws-proxy DynamicModuleFilter and replaces the inbound cluster
+  # with a STATIC loopback pointing at the embedded ws-proxy server (:10001).
+  - name: inbound
+    protocol: HTTP
+    port: 80
+  # Egress: the embedded ws-proxy server dials ws://127.0.0.1:10002/v1/responses
+  # per session. EPP adds upgrade_configs so Envoy forwards the WS upgrade to
+  # mock-upstream, completing the L2→upstream hop.
+  - name: egress
+    protocol: HTTP
+    port: 10002

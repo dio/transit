@@ -1,0 +1,33 @@
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: l1
+  namespace: default
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        name: l1
+        type: ClusterIP
+        labels:
+          transit.dio/proxy: l1
+      envoyDeployment:
+        pod:
+          labels:
+            transit.dio/proxy: l1
+        container:
+          image: "{{.L1Image}}"
+          env:
+          - name: GODEBUG
+            value: "cgocheck=0"
+          - name: ENVOY_DYNAMIC_MODULES_SEARCH_PATH
+            value: "/etc/envoy/dynamic-modules"
+  dynamicModules:
+  - name: cluster-shard-router
+    source:
+      type: Local
+      local:
+        path: /etc/envoy/dynamic-modules/libcluster-shard-router.so
+    doNotClose: true
+    loadGlobally: false

@@ -1,0 +1,12 @@
+ARG TARGETARCH
+
+FROM gcr.io/distroless/static-debian12:nonroot
+
+ARG TARGETARCH
+
+# mock-upstream: accepts WS upgrades on /v1/responses, echoes frames, and
+# replies to response.create with a synthetic response.completed containing
+# fixed usage fields so Gate 3 can assert exact token counts.
+COPY dist/tiered-ws-proxy-mock.linux-${TARGETARCH} /mock
+
+ENTRYPOINT ["/mock"]

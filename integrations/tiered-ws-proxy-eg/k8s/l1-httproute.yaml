@@ -1,0 +1,60 @@
+# HTTPRoute for /v1/responses via the L1 Gateway.
+# The EPP replaces the generated cluster with CLUSTER_PROVIDED + cluster-shard-router,
+# which selects L2 at WS upgrade time. The placeholder backend exists only to give
+# EG a ready endpoint so it generates the CDS cluster that the EPP can then replace.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: l1
+  namespace: default
+spec:
+  parentRefs:
+  - name: l1
+  hostnames:
+  - l1.ws-proxy.example.com
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /v1/responses
+    backendRefs:
+    - name: l1-backend
+      port: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: l1-backend
+  namespace: default
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+  selector:
+    app: l1-backend
+---
+# Structural placeholder: pause container gives EG a ready endpoint so it
+# generates the CDS cluster. EPP replaces the cluster with CLUSTER_PROVIDED
+# (cluster-shard-router → l2.envoy-gateway-system.svc.cluster.local:80).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: l1-backend
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: l1-backend
+  template:
+    metadata:
+      labels:
+        app: l1-backend
+    spec:
+      containers:
+      - name: pause
+        image: registry.k8s.io/pause:3.9
+        ports:
+        - containerPort: 8080

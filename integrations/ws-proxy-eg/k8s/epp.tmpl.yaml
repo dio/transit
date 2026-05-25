@@ -1,0 +1,84 @@
+# EPP: instantiate the ws-proxy module, inject upgrade_configs on the listener,
+# replace EG's no-endpoints route action, and replace the EG-generated backend
+# cluster with a STATIC loopback pointing at the embedded ws-proxy server.
+#
+# The DynamicModuleFilter is required because RegisterWithGroup starts the
+# embedded server when Envoy creates the filter config.
+# Gate 1: upgrade_configs injection via EPP.
+# Gate 2: STATIC loopback cluster replacement.
+#
+# ClusterName is the XDSNameSchemeV2 HTTPRoute backend cluster name rendered by
+# the e2e harness.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyPatchPolicy
+metadata:
+  name: ws-proxy
+  namespace: default
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: ws-proxy
+  type: JSONPatch
+  jsonPatches:
+  # Instantiate the module so RegisterWithGroup starts the embedded echo server.
+  - type: "type.googleapis.com/envoy.config.listener.v3.Listener"
+    name: tcp-80
+    operation:
+      op: add
+      path: "/default_filter_chain/filters/0/typed_config/http_filters/0"
+      value:
+        name: ws-proxy
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+          dynamic_module_config:
+            name: ws-proxy
+          filter_name: ws-proxy
+
+  # Gate 1: inject upgrade_configs to allow WebSocket upgrades on the listener.
+  # Without this Envoy returns 426 Upgrade Required.
+  - type: "type.googleapis.com/envoy.config.listener.v3.Listener"
+    name: tcp-80
+    operation:
+      op: add
+      path: "/default_filter_chain/filters/0/typed_config/upgrade_configs"
+      value:
+        - upgrade_type: websocket
+
+  # Route /v1/responses to the generated backend cluster. When the backend
+  # Service has no endpoints, EG can generate a direct_response route; this
+  # replaces it with the route shape this integration needs.
+  - type: "type.googleapis.com/envoy.config.route.v3.RouteConfiguration"
+    name: http-80
+    operation:
+      op: replace
+      path: "/virtual_hosts/0/routes/0"
+      value:
+        match:
+          prefix: /v1/responses
+        route:
+          cluster: "{{.ClusterName}}"
+          timeout: 0s
+          upgrade_configs:
+            - upgrade_type: websocket
+
+  # Gate 2: replace the EG-generated backend cluster with a STATIC loopback.
+  # The embedded ws-proxy server listens on 127.0.0.1:10001 inside the Envoy pod.
+  - type: "type.googleapis.com/envoy.config.cluster.v3.Cluster"
+    name: "{{.ClusterName}}"
+    operation:
+      op: replace
+      path: ""
+      value:
+        name: "{{.ClusterName}}"
+        type: STATIC
+        connect_timeout: 5s
+        load_assignment:
+          cluster_name: "{{.ClusterName}}"
+          endpoints:
+            - lb_endpoints:
+                - endpoint:
+                    address:
+                      socket_address:
+                        address: 127.0.0.1
+                        port_value: 10001

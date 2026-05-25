@@ -1,0 +1,94 @@
+# L1 EPP: inject upgrade_configs on the listener and route so WS upgrades
+# propagate L1 → L2, then replace the EG-generated cluster with
+# CLUSTER_PROVIDED + cluster-shard-router, which selects L2 at the 101
+# upgrade phase via ChooseHost.
+#
+# L1ClusterName is the XDSNameSchemeV2 cluster name rendered by the e2e harness
+# (httproute/default/l1/rule/0).
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyPatchPolicy
+metadata:
+  name: l1
+  namespace: default
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: l1
+  type: JSONPatch
+  jsonPatches:
+  # Instantiate cluster-shard-router as an HTTP filter so the LB extension is
+  # loaded when the filter chain is created.
+  - type: "type.googleapis.com/envoy.config.listener.v3.Listener"
+    name: tcp-80
+    operation:
+      op: add
+      path: "/default_filter_chain/filters/0/typed_config/http_filters/0"
+      value:
+        name: cluster-shard-router-debug
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+          dynamic_module_config:
+            name: cluster-shard-router
+          filter_name: cluster-shard-router-debug
+
+  # Allow WS upgrades on the L1 inbound listener so clients can connect.
+  - type: "type.googleapis.com/envoy.config.listener.v3.Listener"
+    name: tcp-80
+    operation:
+      op: add
+      path: "/default_filter_chain/filters/0/typed_config/upgrade_configs"
+      value:
+        - upgrade_type: websocket
+
+  # Ensure the route forwards WS upgrades and does not time out the tunnel.
+  - type: "type.googleapis.com/envoy.config.route.v3.RouteConfiguration"
+    name: http-80
+    operation:
+      op: replace
+      path: "/virtual_hosts/0/routes/0"
+      value:
+        match:
+          prefix: /v1/responses
+        route:
+          cluster: "{{.L1ClusterName}}"
+          timeout: 0s
+          upgrade_configs:
+            - upgrade_type: websocket
+
+  # Replace the EG-generated backend cluster with CLUSTER_PROVIDED so the
+  # cluster-shard-router LB extension selects L2 at WS upgrade time.
+  - type: "type.googleapis.com/envoy.config.cluster.v3.Cluster"
+    name: "{{.L1ClusterName}}"
+    operation:
+      op: replace
+      path: ""
+      value:
+        name: "{{.L1ClusterName}}"
+        connect_timeout: 5s
+        lb_policy: CLUSTER_PROVIDED
+        typed_extension_protocol_options:
+          envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+            "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+            explicit_http_config:
+              http_protocol_options: {}
+            http_filters:
+            - name: cluster-shard-router-upstream
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                dynamic_module_config:
+                  name: cluster-shard-router
+                filter_name: cluster-shard-router-upstream
+            - name: envoy.filters.http.upstream_codec
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.upstream_codec.v3.UpstreamCodec
+        cluster_type:
+          name: envoy.clusters.dynamic_modules
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_modules.v3.ClusterConfig
+            dynamic_module_config:
+              name: cluster-shard-router
+            cluster_name: cluster-shard-router
+            cluster_config:
+              "@type": type.googleapis.com/google.protobuf.StringValue
+              value: '{"initial":{"version":"l1-to-l2","default_shard":"l2","shards":{"l2":{"target":"l2.envoy-gateway-system.svc.cluster.local:80","prefixes":[""],"shard":"l2","status":"active"}}}}'

@@ -1,0 +1,178 @@
+admin:
+  address:
+    socket_address: { address: 127.0.0.1, port_value: 9901 }
+
+static_resources:
+  listeners:
+    # Port 10000 — all traffic through the filter chain.
+    # WebSocket upgrades are routed to the ws-proxy-local cluster (embedded server).
+    # Normal HTTP/HTTPS traffic is routed to the upstream cluster.
+    - name: main
+      address:
+        socket_address: { address: 0.0.0.0, port_value: 10000 }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: ingress
+                upgrade_configs:
+                  - upgrade_type: websocket
+                http_filters:
+                  # ws-proxy filter is a no-op for normal HTTP.
+                  # Its Create() starts the embedded WS proxy server on the loopback.
+                  - name: ws-proxy
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: ws-proxy
+                      filter_name: ws-proxy
+                      filter_config:
+                        "@type": type.googleapis.com/google.protobuf.StringValue
+                        value: '{"listen_addr":"127.0.0.1:10001"}'
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: main
+                  virtual_hosts:
+                    - name: services
+                      domains: ["*"]
+                      routes:
+                        # WebSocket upgrades → embedded WS proxy server.
+                        # Port matches listen_addr in filter_config above.
+                        - match:
+                            prefix: "/"
+                            headers:
+                              - name: upgrade
+                                string_match:
+                                  exact: websocket
+                                  ignore_case: true
+                          route:
+                            cluster: ws-proxy-local
+                            upgrade_configs:
+                              - upgrade_type: websocket
+                            timeout: 0s
+
+                        # All other HTTP traffic → real upstream.
+                        - match: { prefix: "/" }
+                          route: { cluster: upstream }
+
+    # Egress listener — embedded WSProxy dials here when WSPROXY_EGRESS_URL=ws://127.0.0.1:10002.
+    # Accepts plain WS from the loopback; ws-auth on ws-proxy-egress cluster injects
+    # the provider Bearer token before dialing api.openai.com over TLS.
+    - name: egress
+      address:
+        socket_address: { address: 127.0.0.1, port_value: 10002 }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: egress
+                upgrade_configs:
+                  - upgrade_type: websocket
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: egress
+                  virtual_hosts:
+                    - name: egress
+                      domains: ["*"]
+                      routes:
+                        - match:
+                            prefix: "/"
+                            headers:
+                              - name: upgrade
+                                string_match:
+                                  exact: websocket
+                                  ignore_case: true
+                          route:
+                            cluster: ws-proxy-egress
+                            upgrade_configs:
+                              - upgrade_type: websocket
+                            timeout: 0s
+
+  clusters:
+    # The embedded WS proxy server running inside the .so.
+    # Port must match listen_addr in the ws-proxy filter_config above.
+    - name: ws-proxy-local
+      type: STATIC
+      load_assignment:
+        cluster_name: ws-proxy-local
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: 127.0.0.1, port_value: 10001 }
+
+    # Real upstream for non-WS traffic.
+    # ws-auth runs as an upstream HTTP filter — it strips the client's auth
+    # headers and injects the provider's credentials (Bearer token, x-api-key).
+    # This is the correct placement: upstream filters run on the connection to
+    # the upstream cluster, not on the downstream request.
+    - name: upstream
+      type: STRICT_DNS
+      load_assignment:
+        cluster_name: upstream
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: api.openai.com, port_value: 443 }
+      transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+          sni: api.openai.com
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http_protocol_options: {}
+          http_filters:
+            # ws-auth strips client credentials and injects provider credentials.
+            # Reads OPENAI_API_KEY from environment at startup.
+            - name: ws-auth
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                dynamic_module_config:
+                  name: ws-proxy
+                filter_name: ws-auth
+            - name: envoy.filters.http.upstream_codec
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.upstream_codec.v3.UpstreamCodec
+
+    # WS egress cluster — used by the egress listener when WSPROXY_EGRESS_URL is set.
+    # ws-auth injects the provider Bearer token; Envoy handles TLS to api.openai.com.
+    - name: ws-proxy-egress
+      type: STRICT_DNS
+      load_assignment:
+        cluster_name: ws-proxy-egress
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: api.openai.com, port_value: 443 }
+      transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+          sni: api.openai.com
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http_protocol_options: {}
+          http_filters:
+            - name: ws-auth
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                dynamic_module_config:
+                  name: ws-proxy
+                filter_name: ws-auth
+            - name: envoy.filters.http.upstream_codec
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.upstream_codec.v3.UpstreamCodec

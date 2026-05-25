@@ -1,0 +1,42 @@
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: l2
+  namespace: default
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        name: l2
+        type: ClusterIP
+        labels:
+          transit.dio/proxy: l2
+      envoyDeployment:
+        pod:
+          labels:
+            transit.dio/proxy: l2
+        container:
+          image: "{{.L2Image}}"
+          env:
+          - name: GODEBUG
+            value: "cgocheck=0"
+          - name: ENVOY_DYNAMIC_MODULES_SEARCH_PATH
+            value: "/etc/envoy/dynamic-modules"
+          # Embedded ws-proxy server address (EPP points inbound cluster here).
+          - name: WSPROXY_LISTEN_ADDR
+            value: "127.0.0.1:10001"
+          # Egress listener address: the embedded server dials this per session.
+          - name: WSPROXY_EGRESS_URL
+            value: "ws://127.0.0.1:10002"
+          # Gate 3: session records written here after each WS session closes.
+          - name: WSPROXY_SESSION_LOG
+            value: "/tmp/ws-sessions.jsonl"
+  dynamicModules:
+  - name: ws-proxy
+    source:
+      type: Local
+      local:
+        path: /etc/envoy/dynamic-modules/libws-proxy.so
+    doNotClose: true
+    loadGlobally: false

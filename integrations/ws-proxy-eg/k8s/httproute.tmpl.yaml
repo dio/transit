@@ -1,0 +1,61 @@
+# HTTPRoute for /v1/responses pointing at a structural backend Service.
+# The EPP replaces the generated backend cluster with a STATIC loopback cluster
+# pointing at the embedded ws-proxy server on 127.0.0.1:10001 inside the Envoy
+# pod. The backend Deployment is a pause container whose only role is to give EG
+# a ready endpoint so it generates the CDS cluster resource that the EPP can
+# then replace. No real traffic ever reaches it.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: ws-proxy
+  namespace: default
+spec:
+  parentRefs:
+  - name: ws-proxy
+  hostnames:
+  - ws-proxy.example.com
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /v1/responses
+    backendRefs:
+    - name: ws-proxy-backend
+      port: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ws-proxy-backend
+  namespace: default
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+  selector:
+    app: ws-proxy-backend
+---
+# Structural placeholder: pause container gives EG a ready endpoint so it
+# generates the CDS cluster. EPP replaces the cluster with STATIC 127.0.0.1:10001.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ws-proxy-backend
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ws-proxy-backend
+  template:
+    metadata:
+      labels:
+        app: ws-proxy-backend
+    spec:
+      containers:
+      - name: pause
+        image: "{{.PauseImage}}"
+        ports:
+        - containerPort: 8080

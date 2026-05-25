@@ -1,0 +1,396 @@
+// Package e2e runs integration tests for the ws-proxy example against a real
+// Envoy instance using a mock upstream.
+//
+// Run:
+//
+//	make -C examples/ws-proxy e2e
+package e2e
+
+import (
+	"bufio"
+	_ "embed"
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"testing"
+	"time"
+
+	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/net/context"
+
+	"github.com/dio/transit/examples/internal/e2etest"
+	wsproxy "github.com/dio/transit/examples/ws-proxy"
+)
+
+//go:embed testdata/envoy.tmpl.yaml
+var envoyConfigTmpl string
+
+var (
+	proxyURL       string
+	adminURL       string
+	loopbackPort   int
+	egressPort     int
+	mockPort       int
+	sessionLogFile string
+	envoyCmd       *exec.Cmd
+	examplesRoot   string
+)
+
+func TestMain(m *testing.M) {
+	_, file, _, _ := runtime.Caller(0)
+	// ws-proxy/e2e/e2e_test.go -> examples/
+	examplesRoot = filepath.Join(filepath.Dir(file), "../..")
+
+	bin := e2etest.EnvoyBin(examplesRoot)
+	if _, err := os.Stat(bin); err != nil {
+		fmt.Fprintf(os.Stderr, "SKIP: envoy not found at %s (run: make download-envoy)\n", bin)
+		os.Exit(0)
+	}
+	if err := e2etest.CheckSharedLibrary(examplesRoot, "ws-proxy", "libws-proxy.so"); err != nil {
+		fmt.Fprintf(os.Stderr, "e2e: %v\n", err)
+		os.Exit(1)
+	}
+
+	mockPort = startMockUpstream()
+	proxyPort := e2etest.FreePort()
+	loopbackPort = e2etest.FreePort()
+	egressPort = e2etest.FreePort()
+	adminPort := e2etest.FreePort()
+
+	// Temp file for structured session log assertions.
+	f, err := os.CreateTemp("", "ws-proxy-sessions-*.jsonl")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "e2e: create session log: %v\n", err)
+		os.Exit(1)
+	}
+	sessionLogFile = f.Name()
+	f.Close()
+
+	proxyURL = fmt.Sprintf("ws://127.0.0.1:%d", proxyPort)
+	adminURL = fmt.Sprintf("http://127.0.0.1:%d", adminPort)
+
+	cfgPath := e2etest.WriteEnvoyConfig("ws-proxy", envoyConfigTmpl, map[string]int{
+		"ProxyPort":    proxyPort,
+		"LoopbackPort": loopbackPort,
+		"EgressPort":   egressPort,
+		"AdminPort":    adminPort,
+		"MockPort":     mockPort,
+	})
+
+	wsProxyDir := filepath.Join(examplesRoot, "ws-proxy")
+	envoyCmd = exec.Command(bin, "-c", cfgPath, "--log-level", "warning",
+		"--component-log-level", "dynamic_modules:info")
+	envoyCmd.Env = append(os.Environ(),
+		"GODEBUG=cgocheck=0",
+		"ENVOY_DYNAMIC_MODULES_SEARCH_PATH="+wsProxyDir,
+		"WSPROXY_LISTEN_ADDR="+fmt.Sprintf("127.0.0.1:%d", loopbackPort),
+		// Egress via Envoy: embedded server dials the local egress listener;
+		// Envoy routes the WS upgrade to mock-upstream. WSPROXY_UPSTREAM_URL
+		// is unused when WSPROXY_EGRESS_URL is set.
+		fmt.Sprintf("WSPROXY_EGRESS_URL=ws://127.0.0.1:%d", egressPort),
+		"WSPROXY_AUTH_VALUE=", // no auth against mock
+		"WSPROXY_SESSION_LOG="+sessionLogFile,
+	)
+	envoyCmd.Stdout = os.Stderr
+	envoyCmd.Stderr = os.Stderr
+	if err := envoyCmd.Start(); err != nil {
+		os.Remove(cfgPath)
+		fmt.Fprintf(os.Stderr, "e2e: envoy start failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "e2e: envoy pid=%d\n", envoyCmd.Process.Pid)
+
+	if !e2etest.WaitURL(adminURL+"/ready", 15*time.Second) {
+		envoyCmd.Process.Kill()
+		envoyCmd.Wait()
+		os.Remove(cfgPath)
+		fmt.Fprintln(os.Stderr, "e2e: envoy not ready in time")
+		os.Exit(1)
+	}
+	fmt.Fprintln(os.Stderr, "e2e: envoy ready")
+
+	code := m.Run()
+
+	envoyCmd.Process.Kill()
+	envoyCmd.Wait()
+	os.Remove(cfgPath)
+	os.Remove(sessionLogFile)
+	os.Exit(code)
+}
+
+// startMockUpstream starts an in-process server that:
+//   - Accepts WebSocket upgrades and acts as a mock OpenAI upstream.
+//   - On receiving a response.create frame, sends back a response.completed
+//     event with known token counts and then echoes all frames.
+//   - Returns the port it listens on.
+func startMockUpstream() int {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic("startMockUpstream: " + err.Error())
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// WebSocket upgrade.
+		if r.Header.Get("Upgrade") == "websocket" {
+			conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+			if err != nil {
+				return
+			}
+			defer conn.CloseNow()
+			ctx := r.Context()
+			for {
+				_, data, err := conn.Read(ctx)
+				if err != nil {
+					return
+				}
+				var ev struct {
+					Type string `json:"type"`
+				}
+				// On response.create: send response.completed with known token counts.
+				if json.Unmarshal(data, &ev) == nil && ev.Type == "response.create" {
+					resp := map[string]any{
+						"type": "response.completed",
+						"response": map[string]any{
+							"id": "resp_mock",
+							"usage": map[string]any{
+								"input_tokens":  100,
+								"output_tokens": 42,
+								"total_tokens":  142,
+							},
+						},
+					}
+					if err := wsjson.Write(ctx, conn, resp); err != nil {
+						return
+					}
+				}
+				// Echo all frames.
+				if err := conn.Write(ctx, websocket.MessageText, data); err != nil {
+					return
+				}
+			}
+		}
+		// Plain HTTP.
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, `{"ok":true}`)
+	})
+	go http.Serve(ln, mux) //nolint:errcheck
+	return port
+}
+
+// TestWsProxy_ValidAuth_ConnectsAndExchangesFrames verifies that a WebSocket
+// client can connect through Envoy to the embedded proxy and exchange frames
+// with the mock upstream.
+func TestWsProxy_ValidAuth_ConnectsAndExchangesFrames(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, proxyURL+"/v1/responses", &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": {"Bearer sk-test"}},
+	})
+	require.NoError(t, err)
+	defer conn.CloseNow()
+
+	// Send a response.create frame. Mock sends back response.completed + echo.
+	req := map[string]any{
+		"type":  "response.create",
+		"model": "gpt-4.1",
+		"input": []map[string]any{},
+	}
+	require.NoError(t, wsjson.Write(ctx, conn, req))
+
+	// Read response.completed from mock.
+	var ev map[string]any
+	require.NoError(t, wsjson.Read(ctx, conn, &ev))
+	require.Equal(t, "response.completed", ev["type"])
+}
+
+// TestWsProxy_FrameIntegrity verifies that frames pass through the proxy
+// intact and in order.
+func TestWsProxy_FrameIntegrity(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, proxyURL+"/v1/responses", &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": {"Bearer sk-test"}},
+	})
+	require.NoError(t, err)
+	defer conn.CloseNow()
+
+	for i := 0; i < 10; i++ {
+		payload := fmt.Sprintf(`{"type":"ping","seq":%d,"pad":"%s"}`, i, make([]byte, i*50))
+		require.NoError(t, conn.Write(ctx, websocket.MessageText, []byte(payload)))
+		// Mock echoes each frame after potentially sending response.completed for response.create.
+		// For ping frames there's only the echo.
+		_, data, err := conn.Read(ctx)
+		require.NoError(t, err)
+		require.Equal(t, payload, string(data))
+	}
+}
+
+// TestWsProxy_ObservabilitySessionRecord verifies that recordActorSession emits
+// a JSON session record with the correct model and token counts after a real
+// session through Envoy. This is the P0 observability gate: the slog + JSON
+// file path fires with the right values, not just noise on stderr.
+func TestWsProxy_ObservabilitySessionRecord(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Record file offset before the test so we only read records this session wrote.
+	fi, err := os.Stat(sessionLogFile)
+	require.NoError(t, err)
+	startOffset := fi.Size()
+
+	conn, _, err := websocket.Dial(ctx, proxyURL+"/v1/responses", &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": {"Bearer sk-test"}},
+	})
+	require.NoError(t, err)
+
+	// Send response.create — mock returns response.completed then echoes.
+	req := map[string]any{
+		"type":  "response.create",
+		"model": "gpt-4.1",
+		"input": []map[string]any{},
+	}
+	require.NoError(t, wsjson.Write(ctx, conn, req))
+
+	// Drain: response.completed + echo of response.create.
+	for i := 0; i < 2; i++ {
+		_, _, err := conn.Read(ctx)
+		require.NoError(t, err)
+	}
+
+	// Close the connection cleanly so recordActorSession fires.
+	conn.Close(websocket.StatusNormalClosure, "done")
+
+	// Poll the session log file until the record appears (up to 3s).
+	var rec wsproxy.SessionRecord
+	require.Eventually(t, func() bool {
+		recs := readSessionRecords(t, sessionLogFile, startOffset)
+		if len(recs) == 0 {
+			return false
+		}
+		rec = recs[len(recs)-1]
+		return true
+	}, 3*time.Second, 50*time.Millisecond, "session record not written in time")
+
+	require.Equal(t, "/v1/responses", rec.Path)
+	require.Equal(t, "gpt-4.1", rec.Model, "model must be extracted from response.create")
+	require.Equal(t, uint32(100), rec.InputTokens, "input_tokens from response.completed")
+	require.Equal(t, uint32(42), rec.OutputTokens, "output_tokens from response.completed")
+	require.GreaterOrEqual(t, rec.DurationMS, int64(0))
+	// result is "error" because CloseNow on the other pump sees an EOF — that's
+	// expected for a clean test close. What matters is the token/model fields.
+}
+
+// readSessionRecords reads JSON lines from path starting at byteOffset.
+func readSessionRecords(t *testing.T, path string, byteOffset int64) []wsproxy.SessionRecord {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	if _, err := f.Seek(byteOffset, 0); err != nil {
+		return nil
+	}
+	var recs []wsproxy.SessionRecord
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		var r wsproxy.SessionRecord
+		if json.Unmarshal(sc.Bytes(), &r) == nil {
+			recs = append(recs, r)
+		}
+	}
+	return recs
+}
+
+// TestWsProxy_EgressViaEnvoy is the double-loopback PoC gate.
+//
+// Full path under test:
+//
+//	client → Envoy :proxyPort (inbound)
+//	       → STATIC loopback → embedded WSProxy :loopbackPort
+//	       → ws://127.0.0.1:egressPort (Envoy egress listener)
+//	       → mock-upstream cluster → mock OpenAI server
+//
+// If model and token counts are extracted correctly, the SessionTap saw all
+// frames across both loopback hops — the double-loopback is transparent.
+func TestWsProxy_EgressViaEnvoy(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	fi, err := os.Stat(sessionLogFile)
+	require.NoError(t, err)
+	startOffset := fi.Size()
+
+	conn, _, err := websocket.Dial(ctx, proxyURL+"/v1/responses", &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": {"Bearer sk-test"}},
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, wsjson.Write(ctx, conn, map[string]any{
+		"type":  "response.create",
+		"model": "gpt-4.1",
+		"input": []map[string]any{},
+	}))
+
+	// Drain: response.completed + echo.
+	for i := 0; i < 2; i++ {
+		_, _, err := conn.Read(ctx)
+		require.NoError(t, err)
+	}
+	conn.Close(websocket.StatusNormalClosure, "done")
+
+	var rec wsproxy.SessionRecord
+	require.Eventually(t, func() bool {
+		recs := readSessionRecords(t, sessionLogFile, startOffset)
+		if len(recs) == 0 {
+			return false
+		}
+		rec = recs[len(recs)-1]
+		return true
+	}, 3*time.Second, 50*time.Millisecond, "session record not written in time")
+
+	require.Equal(t, "/v1/responses", rec.Path)
+	require.Equal(t, "gpt-4.1", rec.Model)
+	require.Equal(t, uint32(100), rec.InputTokens)
+	require.Equal(t, uint32(42), rec.OutputTokens)
+}
+
+func TestWsProxy_TokenUsageExtracted(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, proxyURL+"/v1/responses", &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": {"Bearer sk-test"}},
+	})
+	require.NoError(t, err)
+	defer conn.CloseNow()
+
+	req := map[string]any{
+		"type":  "response.create",
+		"model": "gpt-4.1",
+		"input": []map[string]any{},
+	}
+	require.NoError(t, wsjson.Write(ctx, conn, req))
+
+	// Expect response.completed (mock sends it first).
+	var completed map[string]any
+	require.NoError(t, wsjson.Read(ctx, conn, &completed))
+	require.Equal(t, "response.completed", completed["type"])
+
+	// The session log (stderr) will show: input=100 output=42 turns=1.
+	// We verify the completed event itself has the right shape.
+	resp := completed["response"].(map[string]any)
+	usage := resp["usage"].(map[string]any)
+	require.Equal(t, float64(100), usage["input_tokens"])
+	require.Equal(t, float64(42), usage["output_tokens"])
+}
