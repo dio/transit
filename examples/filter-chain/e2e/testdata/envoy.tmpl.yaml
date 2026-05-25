@@ -1,0 +1,47 @@
+static_resources:
+  listeners:
+    - name: filter-chain
+      address:
+        socket_address: { address: 127.0.0.1, port_value: {{.ProxyPort}} }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: filter_chain
+                http_filters:
+                  - name: filter-chain
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: filter-chain
+                      filter_name: filter-chain
+                      filter_config:
+                        "@type": type.googleapis.com/google.protobuf.StringValue
+                        value: '{}'
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: filter_chain
+                  virtual_hosts:
+                    - name: local
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          route:
+                            cluster: upstream
+  clusters:
+    - name: upstream
+      connect_timeout: 1s
+      type: STATIC
+      load_assignment:
+        cluster_name: upstream
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: 127.0.0.1, port_value: {{.UpstreamPort}} }
+admin:
+  address:
+    socket_address: { address: 127.0.0.1, port_value: {{.AdminPort}} }

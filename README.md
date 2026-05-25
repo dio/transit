@@ -250,8 +250,10 @@ state lives before an L2 `cluster-router` applies provider/model routing.
 | `hello` | Minimal downstream HTTP filter. |
 | `body-transform` | `RegisterWithMutableBody`: rename a JSON field before forwarding. |
 | `header-router` | `SetUpstreamOverrideHost`: route to one of two backends based on a request header. |
+| `jwt-callout` | `w.HTTPCallout` for JWT validation: introspect a Bearer token and inject `x-jwt-sub` on pass. |
 | `request-ui` | Request capture with a small UI. |
 | `sse-tap` | Observing server-sent events. |
+| `filter-chain` | `up.Chain` and `up.Middleware`: compose logging, header enforcement, and request stamping. |
 | `spa` | Serving embedded static assets from a module. |
 
 ### Envoy Extension Points

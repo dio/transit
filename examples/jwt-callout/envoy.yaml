@@ -1,0 +1,57 @@
+static_resources:
+  listeners:
+    - name: jwt-callout
+      address:
+        socket_address: { address: 0.0.0.0, port_value: 10000 }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: jwt_callout
+                http_filters:
+                  - name: jwt-callout
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: jwt-callout
+                      filter_name: jwt-callout
+                      filter_config:
+                        "@type": type.googleapis.com/google.protobuf.StringValue
+                        value: '{}'
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: jwt_callout
+                  virtual_hosts:
+                    - name: local
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          route:
+                            cluster: upstream
+  clusters:
+    - name: token-introspection
+      connect_timeout: 1s
+      type: STATIC
+      load_assignment:
+        cluster_name: token-introspection
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: 127.0.0.1, port_value: 9001 }
+    - name: upstream
+      connect_timeout: 1s
+      type: STATIC
+      load_assignment:
+        cluster_name: upstream
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: 127.0.0.1, port_value: 9000 }
+admin:
+  address:
+    socket_address: { address: 127.0.0.1, port_value: 9901 }
