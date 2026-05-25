@@ -1,0 +1,117 @@
+# Inbound HTTPRoute: receives WS connections that L1's cluster-shard-router
+# forwarded. The EPP replaces the generated cluster with STATIC 127.0.0.1:10001
+# (the embedded ws-proxy server inside the L2 Envoy pod). The pause placeholder
+# exists only to give EG a ready endpoint so it generates the CDS cluster that
+# the EPP can then replace.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: l2-inbound
+  namespace: default
+spec:
+  parentRefs:
+  - name: l2
+    sectionName: inbound
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /v1/responses
+    backendRefs:
+    - name: l2-inbound-backend
+      port: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: l2-inbound-backend
+  namespace: default
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+  selector:
+    app: l2-inbound-backend
+---
+# Structural placeholder: EPP replaces the cluster with STATIC 127.0.0.1:10001.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: l2-inbound-backend
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: l2-inbound-backend
+  template:
+    metadata:
+      labels:
+        app: l2-inbound-backend
+    spec:
+      containers:
+      - name: pause
+        image: registry.k8s.io/pause:3.9
+        ports:
+        - containerPort: 8080
+---
+# Egress HTTPRoute: the embedded ws-proxy server dials ws://127.0.0.1:10002
+# per session, which enters this listener. Envoy routes to mock-upstream using
+# the EG-generated cluster (no cluster replacement needed).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: l2-egress
+  namespace: default
+spec:
+  parentRefs:
+  - name: l2
+    sectionName: egress
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /v1/responses
+    backendRefs:
+    - name: mock-upstream
+      port: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-upstream
+  namespace: default
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+  selector:
+    app: mock-upstream
+---
+# Mock WS upstream: replies to response.create with response.completed
+# (fixed usage: 100 input tokens, 42 output tokens) so Gates 2 and 3 can
+# assert on exact token counts without a real API key.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-upstream
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mock-upstream
+  template:
+    metadata:
+      labels:
+        app: mock-upstream
+    spec:
+      containers:
+      - name: mock
+        image: "{{.MockImage}}"
+        ports:
+        - containerPort: 8080
