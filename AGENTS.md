@@ -33,6 +33,8 @@ transit/                     root Go module: github.com/dio/transit
     mcp-catalog-router/      MCP catalog router
     mcp-profile-gateway/     MCP profile gateway (HTTPCallout keeps catalog traffic on Envoy egress)
     mcp-profile-router/      MCP fan-out aggregator
+    metadata/                Metadata-driven routing: static route metadata → filter state → Cluster Extension
+    observability/           Observability: active span tagging (OTEL), dynamic metadata for access log, counters
     request-ui/              Filter with embedded UI served via access logger
     spa/                     Static asset serving filter
     sse-tap/                 SSE response body tap, token usage extraction

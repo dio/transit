@@ -1,0 +1,68 @@
+static_resources:
+  listeners:
+    - name: metadata
+      address:
+        socket_address: { address: 127.0.0.1, port_value: {{.ProxyPort}} }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: metadata
+                access_log:
+                  - name: envoy.access_loggers.stdout
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                      log_format:
+                        text_format_source:
+                          inline_string: "[access] tier=%DYNAMIC_METADATA(example.routing:tier)% status=%RESPONSE_CODE%\n"
+                http_filters:
+                  - name: metadata-router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: metadata
+                      filter_name: metadata-router
+                      filter_config:
+                        "@type": type.googleapis.com/google.protobuf.StringValue
+                        value: '{}'
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: metadata
+                  virtual_hosts:
+                    - name: local
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: /premium }
+                          route: { cluster: metadata-upstream }
+                          metadata:
+                            filter_metadata:
+                              example.routing:
+                                tier: premium
+                        - match: { prefix: /standard }
+                          route: { cluster: metadata-upstream }
+                          metadata:
+                            filter_metadata:
+                              example.routing:
+                                tier: standard
+
+  clusters:
+    - name: metadata-upstream
+      connect_timeout: 5s
+      lb_policy: CLUSTER_PROVIDED
+      cluster_type:
+        name: envoy.clusters.dynamic_modules
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_modules.v3.ClusterConfig
+          dynamic_module_config:
+            name: metadata
+          cluster_name: metadata-hosts
+          cluster_config:
+            "@type": type.googleapis.com/google.protobuf.StringValue
+            value: '{"hosts":[{"address":"127.0.0.1:{{.StandardPort}}"},{"address":"127.0.0.1:{{.PremiumPort}}"}]}'
+
+admin:
+  address:
+    socket_address: { address: 127.0.0.1, port_value: {{.AdminPort}} }
