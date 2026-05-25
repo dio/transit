@@ -523,6 +523,8 @@ func (f *filter) OnResponseHeaders(headers shared.HeaderMap, endOfStream bool) s
 	// Response-phase Writers use directWrite=true: counter/histogram mutations
 	// must apply inline via CGO because there is no flush() call on the response
 	// path (flush is request-only, tied to ContinueRequest).
+	// directWrite=true means no mutations are queued between calls, so the same
+	// Writer is safe to reuse for the synthetic EndStream=true body call below.
 	w := &Writer{f: f, directWrite: true}
 	f.responseHandler(w, &ResponseChunk{
 		StatusCode:      statusCode,

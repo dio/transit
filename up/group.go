@@ -65,7 +65,9 @@ func (g *Group) AddGoroutine(fn func(ctx context.Context)) {
 }
 
 // Start launches all registered goroutines. Call exactly once after all
-// actors are registered. If any actor finishes, Stop is called automatically.
+// actors are registered. If any actor finishes for any reason (including normal return),
+// Stop is called on the whole group. Actors that must survive transient errors should
+// loop internally rather than returning.
 func (g *Group) Start() {
 	if len(g.actors) == 0 {
 		return

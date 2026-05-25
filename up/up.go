@@ -48,6 +48,9 @@ const (
 	LogCritical LogLevel = LogLevel(shared.LogLevelCritical)
 )
 
+// registry is a duplicate-name sentinel for up.Register variants.
+// The canonical runtime registry lives in down; this catches name collisions
+// at init() time with a clear "up: filter already registered" message.
 var registry = map[string]HandlerFunc{}
 
 // Register registers a named HTTP filter handler and wires it into the Envoy
@@ -65,6 +68,8 @@ func Register(name string, h HandlerFunc) {
 // (via [Group.Stop]) when Envoy destroys the filter factory. The handler and the
 // goroutines in g share state via closure — no package-level variables needed.
 // Must be called from an init() function. Panics on duplicate names.
+// Note: if any goroutine in the group exits for any reason — including a normal return — the entire group is
+// stopped via Group.Stop. Goroutines that must survive transient errors should loop and retry internally.
 func RegisterWithGroup(name string, g *Group, h HandlerFunc) {
 	if _, ok := registry[name]; ok {
 		panic("up: filter already registered: " + name)

@@ -66,6 +66,7 @@ const (
 // A Writer must not be retained beyond the handler call. On the HTTPCallout
 // path the same Writer is reused across the initial handler call and the callout
 // callback; both run sequentially within one stream operation so this is safe.
+// See Do for goroutine-safety rules when using w.Go and fan-out.
 //
 // directWrite mode (set only by NewWriter):
 //
@@ -359,7 +360,7 @@ func (w *Writer) HTTPCalloutAllSettled(reqs []HTTPCalloutRequest, fn HTTPCallout
 	w.calloutStarted = true
 	w.f.calloutState.Store(calloutStateActive)
 
-	b := &calloutBatch{
+	b := &allSettledBatch{
 		f:         w.f,
 		fn:        fn,
 		responses: make([]HTTPCalloutAllSettledResponse, len(reqs)),
@@ -391,7 +392,7 @@ func (w *Writer) HTTPCalloutAllSettled(reqs []HTTPCalloutRequest, fn HTTPCallout
 	return nil
 }
 
-type calloutBatch struct {
+type allSettledBatch struct {
 	f *filter
 
 	mu        sync.Mutex
@@ -401,7 +402,7 @@ type calloutBatch struct {
 	flushed   bool
 }
 
-func (b *calloutBatch) finish(i int, resp HTTPCalloutAllSettledResponse) {
+func (b *allSettledBatch) finish(i int, resp HTTPCalloutAllSettledResponse) {
 	b.mu.Lock()
 	if b.flushed {
 		b.mu.Unlock()
@@ -422,6 +423,9 @@ func (b *calloutBatch) finish(i int, resp HTTPCalloutAllSettledResponse) {
 		return
 	}
 	fn(responses)
+	if b.f.streamDone.Load() {
+		return
+	}
 	if b.f.calloutState.CompareAndSwap(calloutStatePaused, calloutStateFlushed) {
 		b.f.flush(true)
 		return
@@ -432,8 +436,10 @@ func (b *calloutBatch) finish(i int, resp HTTPCalloutAllSettledResponse) {
 // Do performs an Envoy HTTP callout from inside a Go goroutine and blocks
 // until the callout completes or ctx is cancelled.
 //
-// Multiple Do calls may be in flight concurrently. Writer mutation methods are
-// NOT goroutine-safe; call them only after all fan-out goroutines have joined.
+// Multiple Do calls may be in flight concurrently. Writer mutation methods
+// (SetRequestHeader, SetFilterState, etc.) are NOT goroutine-safe and must not be
+// called while any Do goroutine is still running. Join all fan-out goroutines before
+// issuing any mutations; the race detector will catch violations if this rule is broken.
 //
 // Panics if called outside a Go goroutine.
 //
