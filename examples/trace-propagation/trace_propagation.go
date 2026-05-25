@@ -1,34 +1,48 @@
 // Package tracepropagation is a Transit Envoy dynamic module example that
-// demonstrates W3C trace context propagation through a two-leg Envoy path.
+// demonstrates W3C trace context propagation through a full four-hop path.
 //
 // Architecture:
 //
-//	Client ──► Envoy:ProxyPort ──► trace-propagation-local:ServerPort
-//	                               ↓ (embedded HTTP server copies trace headers)
-//	                               Envoy:EgressPort ──► Backend sink
-//
-// The filter registers an embedded HTTP server via up.RegisterWithGroup.
-// The server forwards every request to the configured egress URL, copying
-// traceparent, tracestate, and x-request-id headers verbatim.
+//	Client ──► Envoy:ProxyPort [trace-propagation filter — ingress span + tags]
+//	               ↓ routes to trace-propagation-local:ServerPort
+//	           Embedded Go HTTP server  [Go OTLP SDK — embedded span, child of ingress]
+//	               ↓ injects updated traceparent, calls Envoy:EgressPort
+//	           Envoy:EgressPort [trace-propagation-egress filter — egress span + tags]
+//	               ↓ routes to backend:BackendPort
+//	           Backend sink
 //
 // Runtime overrides (for e2e):
 //
-//	TRACE_PROPAGATION_LISTEN_ADDR — address for the embedded server (default: 127.0.0.1:9192)
-//	TRACE_PROPAGATION_EGRESS_URL  — egress base URL (default: http://127.0.0.1:9193)
+//	TRACE_PROPAGATION_LISTEN_ADDR  — embedded server address (default: 127.0.0.1:9192)
+//	TRACE_PROPAGATION_EGRESS_URL   — egress base URL (default: http://127.0.0.1:9193)
+//	TRACE_PROPAGATION_OTEL_ENDPOINT — OTLP gRPC endpoint for embedded server spans
+//	                                  (default: 127.0.0.1:4317)
 package tracepropagation
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
 
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	oteltrace "go.opentelemetry.io/otel/trace"
+
 	"github.com/dio/transit/up"
 )
 
-// ExtensionName is the Envoy filter name used in envoy.yaml.
+// ExtensionName is the Envoy filter name for the inbound hop.
 const ExtensionName = "trace-propagation"
+
+// EgressExtensionName is the Envoy filter name for the egress hop.
+const EgressExtensionName = "trace-propagation-egress"
+
+// UpstreamExtensionName is the Envoy filter name for the upstream (cluster) hop.
+const UpstreamExtensionName = "trace-propagation-upstream"
 
 var traceHeaders = []string{
 	"traceparent",
@@ -47,18 +61,33 @@ func CopyTraceHeaders(dst, src http.Header) {
 }
 
 type proxyServer struct {
-	egressURL string
+	egressURL  string
+	tracer     oteltrace.Tracer
+	propagator propagation.TextMapPropagator
 }
 
 func (s *proxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Extract W3C trace context from inbound headers and create child span.
+	ctx = s.propagator.Extract(ctx, propagation.HeaderCarrier(r.Header))
+	ctx, span := s.tracer.Start(ctx, "trace-propagation.embedded")
+	defer span.End()
+
 	req, err := http.NewRequest(r.Method, s.egressURL+r.RequestURI, r.Body)
 	if err != nil {
+		span.RecordError(err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
+	// Copy then overwrite trace headers with the child span context so Envoy
+	// egress sees this span as the parent.
 	CopyTraceHeaders(req.Header, r.Header)
+	s.propagator.Inject(ctx, propagation.HeaderCarrier(req.Header))
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
+		span.RecordError(err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -74,8 +103,7 @@ func (s *proxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func init() { Register() }
 
-// Register wires the trace-propagation filter into Envoy via up.RegisterWithGroup.
-// The filter itself is a no-op for HTTP — it starts the embedded proxy server.
+// Register wires both filter names into Envoy and starts the embedded server.
 func Register() {
 	listenAddr := "127.0.0.1:9192"
 	if v := os.Getenv("TRACE_PROPAGATION_LISTEN_ADDR"); v != "" {
@@ -85,8 +113,17 @@ func Register() {
 	if v := os.Getenv("TRACE_PROPAGATION_EGRESS_URL"); v != "" {
 		egressURL = v
 	}
+	otelEndpoint := "127.0.0.1:4317"
+	if v := os.Getenv("TRACE_PROPAGATION_OTEL_ENDPOINT"); v != "" {
+		otelEndpoint = v
+	}
 
-	srv := &proxyServer{egressURL: egressURL}
+	tracer, prop := setupTracer(otelEndpoint)
+	srv := &proxyServer{
+		egressURL:  egressURL,
+		tracer:     tracer,
+		propagator: prop,
+	}
 
 	g := up.NewGroup()
 	g.Add(
@@ -103,6 +140,7 @@ func Register() {
 		func() {},
 	)
 
+	// Inbound filter: annotates the Envoy-created ingress span.
 	up.RegisterWithGroup(ExtensionName, g, func(w *up.Writer, r *up.Request) {
 		span := w.GetActiveSpan()
 		if span == nil {
@@ -112,4 +150,47 @@ func Register() {
 		span.SetTag("http.method", r.Method)
 		span.SetTag("http.path", r.Path)
 	})
+
+	// Egress filter: annotates the Envoy-created egress span.
+	up.Register(EgressExtensionName, func(w *up.Writer, r *up.Request) {
+		span := w.GetActiveSpan()
+		if span == nil {
+			return
+		}
+		span.SetOperation("trace-propagation.egress")
+		span.SetTag("http.method", r.Method)
+		span.SetTag("http.path", r.Path)
+	})
+
+	// Upstream filter: runs on the cluster side (backend connection).
+	// Stamps x-upstream-filter on every request so the sink can confirm it ran.
+	// Also tags the active span if one is available in upstream context.
+	up.Register(UpstreamExtensionName, func(w *up.Writer, r *up.Request) {
+		w.SetRequestHeader("x-upstream-filter", "ran")
+		span := w.GetActiveSpan()
+		if span == nil {
+			return
+		}
+		span.SetTag("upstream.filter", "ran")
+	})
+}
+
+// setupTracer creates an OTLP gRPC exporter pointing at endpoint and returns a
+// Tracer and W3C propagator. Falls back to a no-op tracer on error.
+func setupTracer(endpoint string) (oteltrace.Tracer, propagation.TextMapPropagator) {
+	prop := propagation.NewCompositeTextMapPropagator(propagation.TraceContext{})
+	exp, err := otlptracegrpc.New(
+		context.Background(),
+		otlptracegrpc.WithEndpoint(endpoint),
+		otlptracegrpc.WithInsecure(),
+	)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "trace-propagation: otel exporter: %v — embedded spans disabled\n", err)
+		return oteltrace.NewNoopTracerProvider().Tracer(""), prop
+	}
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(exp),
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+	)
+	return tp.Tracer("trace-propagation-embedded"), prop
 }

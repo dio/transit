@@ -91,6 +91,7 @@ func TestMain(m *testing.M) {
 	stop, ok := e2etest.StartEnvoy(bin, cfgPath, exampleDir, adminPort, []string{
 		fmt.Sprintf("TRACE_PROPAGATION_LISTEN_ADDR=127.0.0.1:%d", serverPort),
 		fmt.Sprintf("TRACE_PROPAGATION_EGRESS_URL=http://127.0.0.1:%d", egressPort),
+		fmt.Sprintf("TRACE_PROPAGATION_OTEL_ENDPOINT=127.0.0.1:%d", otelPort),
 	})
 	if !ok {
 		os.Exit(1)
@@ -231,6 +232,54 @@ func TestSpan_httpPathTag(t *testing.T) {
 		return spanHasAttr(sp, "http.path", "/probe")
 	}) {
 		t.Error("timed out waiting for span with http.path=/probe")
+	}
+}
+
+// TestSpan_embeddedServerSpan verifies that the embedded Go HTTP server creates
+// its own child span (via Go OTLP SDK) that reaches the sink.
+func TestSpan_embeddedServerSpan(t *testing.T) {
+	resp, err := http.Get(proxyURL + "/")
+	if err != nil {
+		t.Fatalf("GET /: %v", err)
+	}
+	resp.Body.Close()
+	if !waitForSpan(t, func(sp *otlptrace.Span) bool {
+		return sp.Name == "trace-propagation.embedded"
+	}) {
+		t.Error("timed out waiting for embedded server span")
+	}
+}
+
+// TestSpan_egressSpan verifies that the egress Envoy listener creates its own
+// span annotated by the trace-propagation-egress dynamic module filter.
+func TestSpan_egressSpan(t *testing.T) {
+	resp, err := http.Get(proxyURL + "/")
+	if err != nil {
+		t.Fatalf("GET /: %v", err)
+	}
+	resp.Body.Close()
+	if !waitForSpan(t, func(sp *otlptrace.Span) bool {
+		return sp.Name == "trace-propagation.egress"
+	}) {
+		t.Error("timed out waiting for egress span")
+	}
+}
+
+// TestUpstream_filterRan verifies that the trace-propagation-upstream filter
+// (wired on the backend cluster) stamps x-upstream-filter: ran on the request
+// before it reaches the backend sink.
+func TestUpstream_filterRan(t *testing.T) {
+	resp, err := http.Get(proxyURL + "/")
+	if err != nil {
+		t.Fatalf("GET /: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	h := getSinkHeaders()
+	if got := h.Get("x-upstream-filter"); got != "ran" {
+		t.Errorf("upstream filter did not run: x-upstream-filter=%q", got)
 	}
 }
 
