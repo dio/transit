@@ -46,26 +46,27 @@ set. Fixed in commit `7b96798`.
 
 ### Request headers (`OnRequestHeaders`)
 
-Full mutation surface: set/remove headers, send local response, set metadata,
-set filter state, set upstream override, annotate trace span, increment
-counters, record histograms. Changes are queued and applied before Envoy
-continues the request.
+Full mutation surface is available. Changes are queued and applied before Envoy
+continues the request. This is the right place to set filter state and upstream
+override host, because those values must be visible to the LB policy before the
+request is forwarded.
 
 ### Request body (`OnRequestBody` / `OnRequestMutableBody`)
 
-Same mutation surface. For mutable body, `w.GetBufferedBody()` and
-`w.SetBufferedBody()` are also available.
+Same mutation surface as request headers. Header mutations from a body callback
+can be too late to affect upstream routing if request headers already continued
+before the body callback ran — prefer setting routing-sensitive state in the
+headers callback.
 
 ### Response headers / body (`ResponseHandlerFunc`)
 
-Mutations apply inline (direct mode). Available: `w.Log`, `w.IncrementCounter`,
-`w.RecordHistogram`, `w.SetDynamicMetadata`, `w.SetFilterState`,
-`w.AddSpanTag`, `w.SetResponseHeader`, `w.RemoveResponseHeader`.
+Mutations apply inline (direct mode). The key constraints:
 
-`SendLocalResponse` is not meaningful here — Envoy has already committed to
-sending the upstream response.
-
-`SetRequestHeader` / `RemoveRequestHeader` are no-ops on the response path.
+- `SendLocalResponse` is not meaningful here — Envoy has already committed to
+  sending the upstream response.
+- `SetRequestHeader` / `RemoveRequestHeader` are no-ops on the response path.
+- Counter and histogram increments work correctly here only because Transit sets
+  `directWrite=true` for response-path Writers (see the response-path trap below).
 
 ### OnStreamComplete synthesis
 

@@ -17,10 +17,6 @@ SDK_COMMIT=0d6e3c60aa55
 
 ABI version: `v0.1.0`
 
-This document describes transit's Go wrapper APIs for Envoy dynamic module
-upstream selection. The interfaces below track the upstream host-selection ABI
-surface exposed by the Envoy commit listed above.
-
 ## Problem This Solves
 
 Request-aware upstream selection used to require one of:
@@ -41,21 +37,11 @@ hosts directly. Transit exposes both paths:
 ### Load Balancer Policy
 
 Use an LB policy when Envoy already knows the host set through static config,
-EDS, or CDS and Go only needs to choose among healthy hosts.
-
-```go
-type LBPolicy interface {
-    // ChooseHost writes the selected priority and healthy-host index into the
-    // output parameters and returns true. Return false for no host, which yields 503.
-    ChooseHost(lb LBHandle, ctx LBContext, priority *uint32, index *uint32) bool
-
-    // OnHostMembershipUpdate receives counts. Use lb.MemberUpdateHostAddress
-    // during this callback to inspect each added or removed address.
-    OnHostMembershipUpdate(lb LBHandle, numAdded, numRemoved int)
-
-    Close()
-}
-```
+EDS, or CDS and Go only needs to choose among healthy hosts. Your Go type
+implements `up.LBPolicy`: `ChooseHost` writes priority+index and returns
+`true`, or returns `false` to yield 503. `OnHostMembershipUpdate` notifies
+when the host set changes (use `lb.MemberUpdateHostAddress` to inspect
+addresses during this callback). `Close` releases per-worker resources.
 
 Lifecycle:
 
@@ -69,7 +55,7 @@ LBPolicy.Close()
 LBPolicyConfigFactory.Close()
 ```
 
-Example:
+Example — always pick the first healthy host:
 
 ```go
 type firstHostPolicy struct{ up.EmptyLBPolicy }
@@ -92,23 +78,13 @@ func (p *firstHostPolicy) ChooseHost(
 ### Cluster Extension
 
 Use a cluster extension when Go must discover, add, remove, or health-check
-hosts itself, such as DNS on demand, a model registry, or an MCP server catalog.
-
-```go
-type ClusterLB interface {
-    // Return (host, nil) for sync success, (nil, nil) for sync failure, or
-    // (nil, completion) to suspend the stream until completion.Complete is called.
-    ChooseHost(lb ClusterLBHandle, ctx ClusterLBContext) (HostPtr, *ClusterLBCompletion)
-
-    // Called if the stream is torn down before async selection completes.
-    CancelHostSelection(completion *ClusterLBCompletion)
-
-    // Receives counts. Use lb.MemberUpdateHostAddress during this callback.
-    OnHostMembershipUpdate(lb ClusterLBHandle, numAdded, numRemoved int)
-
-    Close()
-}
-```
+hosts itself, such as DNS on demand, a model registry, or an MCP server
+catalog. Your Go type implements `up.ClusterLB`: `ChooseHost` can return a
+host synchronously, return `nil, nil` for immediate failure, or return a
+`ClusterLBCompletion` to suspend the stream while a goroutine does async work.
+`CancelHostSelection` fires if the stream tears down before the goroutine
+finishes — call the stored `cancel` func there. `OnHostMembershipUpdate`
+mirrors the LB Policy callback.
 
 Cluster lifecycle:
 
@@ -148,144 +124,19 @@ target, ok := ctx.GetFilterState("llm.target")
 host, strict := ctx.GetOverrideHost()
 ```
 
-`LBContext` can read only the override host, downstream headers, hash key, and
-retry context. It cannot read filter state or downstream SNI in transit's
-current wrapper. If selection depends on arbitrary per-request state, use the
-Cluster Extension path.
-
-## Current Context APIs
-
-```go
-type LBContext interface {
-    GetAllHeaders() [][2]string
-    GetOverrideHost() (addr string, strict bool)
-    GetHeader(name string) (string, bool)
-    ComputeHashKey() (uint64, bool)
-    GetHostSelectionRetryCount() uint32
-    ShouldSelectAnotherHost(lb LBHandle, priority uint32, index int) bool
-}
-
-type ClusterLBContext interface {
-    GetAllHeaders() [][2]string
-    GetFilterState(key string) (string, bool)
-    GetFilterStateTyped(key string) (string, bool)
-    GetOverrideHost() (addr string, strict bool)
-    GetHeader(name string) (string, bool)
-    GetDownstreamSNI() (string, bool)
-    ComputeHashKey() (uint64, bool)
-    GetHostSelectionRetryCount() uint32
-    ShouldSelectAnotherHost(lb ClusterLBHandle, priority uint32, index int) bool
-    NewCompletion() *ClusterLBCompletion
-}
-```
-
-## Current Host-Set APIs
-
-```go
-type LBHandle interface {
-    ClusterName() string
-    PriorityCount() int
-    HostCount(priority uint32) int
-    HealthyHostCount(priority uint32) int
-    DegradedHostCount(priority uint32) int
-    HostAddress(priority uint32, index int) (string, bool)
-    HealthyHostAddress(priority uint32, index int) (string, bool)
-    HostWeight(priority uint32, index int) uint32
-    HealthyHostWeight(priority uint32, index int) uint32
-    HostHealth(priority uint32, index int) HostHealth
-    HostHealthByAddress(addr string) (HostHealth, bool)
-    HostStat(priority uint32, index int, stat HostStat) uint64
-    MemberUpdateHostAddress(index int, isAdded bool) (string, bool)
-    HostLocality(priority uint32, index int) (region, zone, subZone string, ok bool)
-    SetHostData(priority uint32, index int, data uintptr) bool
-    GetHostData(priority uint32, index int) (uintptr, bool)
-    HostMetadataString(priority uint32, index int, filterName, key string) (string, bool)
-    HostMetadataNumber(priority uint32, index int, filterName, key string) (float64, bool)
-    HostMetadataBool(priority uint32, index int, filterName, key string) (bool, bool)
-    LocalityCount(priority uint32) int
-    LocalityHostCount(priority uint32, localityIndex int) int
-    LocalityHostAddress(priority uint32, localityIndex, hostIndex int) (string, bool)
-    LocalityWeight(priority uint32, localityIndex int) uint32
-}
-
-type ClusterLBHandle interface {
-    ClusterName() string
-    PriorityCount() int
-    HostCount(priority uint32) int
-    HealthyHostCount(priority uint32) int
-    DegradedHostCount(priority uint32) int
-    Host(priority uint32, index int) HostPtr
-    HealthyHost(priority uint32, index int) HostPtr
-    HostAddress(priority uint32, index int) (string, bool)
-    HealthyHostAddress(priority uint32, index int) (string, bool)
-    HostWeight(priority uint32, index int) uint32
-    HealthyHostWeight(priority uint32, index int) uint32
-    HostHealth(priority uint32, index int) HostHealth
-    HostHealthByAddress(addr string) (HostHealth, bool)
-    HostStat(priority uint32, index int, stat HostStat) uint64
-    FindHostByAddress(addr string) HostPtr
-    MemberUpdateHostAddress(index int, isAdded bool) (string, bool)
-    HostLocality(priority uint32, index int) (region, zone, subZone string, ok bool)
-    SetHostData(priority uint32, index int, data uintptr) bool
-    GetHostData(priority uint32, index int) (uintptr, bool)
-    HostMetadataString(priority uint32, index int, filterName, key string) (string, bool)
-    HostMetadataNumber(priority uint32, index int, filterName, key string) (float64, bool)
-    HostMetadataBool(priority uint32, index int, filterName, key string) (bool, bool)
-    LocalityCount(priority uint32) int
-    LocalityHostCount(priority uint32, localityIndex int) int
-    LocalityHostAddress(priority uint32, localityIndex, hostIndex int) (string, bool)
-    LocalityWeight(priority uint32, localityIndex int) uint32
-}
-```
-
-Host health values:
-
-```go
-up.HostUnhealthy
-up.HostDegraded
-up.HostHealthy
-```
-
-Host stat values:
-
-```go
-up.HostStatCxConnectFail
-up.HostStatCxTotal
-up.HostStatRqError
-up.HostStatRqSuccess
-up.HostStatRqTimeout
-up.HostStatRqTotal
-up.HostStatCxActive
-up.HostStatRqActive
-```
-
-`HostStat`, `HostHealth`, `HostAddress`, `HostWeight`, `HostLocality`,
-`HostMetadata*`, and `HostData` methods use indexes in the all-host list.
-`HealthyHost*` methods use indexes in the healthy-host list. `ShouldSelectAnotherHost`
-also takes the candidate index that the load balancer is considering; in normal
-healthy-host iteration, pass the healthy-host index.
+**LB Policy vs Cluster Extension for per-request state**: `LBContext` can read
+the override host, downstream headers, and hash key, but it cannot read filter
+state or downstream SNI. If selection depends on arbitrary per-request state
+(e.g. a model ID written by an earlier filter), use the Cluster Extension path
+and read it via `ctx.GetFilterState`.
 
 ## Cluster Host Lifecycle
 
-The `ClusterHandle` is passed to `NewCluster`, `Init`, `ServerInitialized`,
-`DrainStarted`, and `Shutdown`.
-
-```go
-type ClusterHandle interface {
-    AddHosts(hosts []HostSpec) []HostPtr
-    RemoveHosts(hosts []HostPtr)
-    UpdateHostHealth(host HostPtr, health HostHealth)
-    FindHostByAddress(addr string) HostPtr
-    PreInitComplete()
-
-    // Schedules fn on Envoy's cluster main thread.
-    Schedule(fn func())
-}
-```
-
-`AddHosts`, `RemoveHosts`, `UpdateHostHealth`, `FindHostByAddress`, and
-`PreInitComplete` are main-thread cluster operations. Use `Schedule` from
-goroutines or worker callbacks:
+`ClusterHandle` is the write side for host management (passed to `NewCluster`,
+`Init`, `ServerInitialized`, `DrainStarted`, and `Shutdown`). The key rule:
+`AddHosts`, `RemoveHosts`, `UpdateHostHealth`, and `PreInitComplete` are
+main-thread cluster operations. Always use `Schedule` when calling them from a
+goroutine or worker callback:
 
 ```go
 handle.Schedule(func() {
@@ -297,7 +148,8 @@ handle.Schedule(func() {
 ```
 
 `RemoveHosts` takes the `HostPtr` values returned from `AddHosts` or
-`FindHostByAddress`, not `HostSpec` values.
+`FindHostByAddress`, not `HostSpec` values — keep the pointers from `AddHosts`
+if you need to remove hosts later.
 
 ## Async Cluster Selection
 
@@ -459,7 +311,7 @@ cluster shutdown. Schedule the Envoy host update onto the cluster main thread:
 
 ```go
 g := up.NewGroup()
-g.AddGoroutine(func(ctx context.Context) {
+g.Go(func(ctx context.Context) {
     ticker := time.NewTicker(30 * time.Second)
     defer ticker.Stop()
 
@@ -474,10 +326,12 @@ g.AddGoroutine(func(ctx context.Context) {
         }
     }
 })
-g.Start()
 ```
 
-## Current Go Method To ABI Mapping
+## Go Method To ABI Mapping
+
+Cross-reference for contributors modifying `down/` or debugging ABI drift.
+These tables map each transit Go call to the underlying C ABI symbol.
 
 HTTP filter routing intent:
 

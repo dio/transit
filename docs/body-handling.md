@@ -2,8 +2,6 @@
 
 ## Architecture
 
-Two layers:
-
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  up/compress  — content-encoding decode/encode               │
@@ -34,23 +32,9 @@ called exactly once with `EndStream: true`, whether or not a body exists. For
 bodyless streams the call is issued synthetically from the headers callback
 with `Data: nil`.
 
-### Types
-
-```go
-type BodyChunk struct {
-    Data            []byte
-    EndStream       bool
-    ContentEncoding string // from Content-Encoding header; "" = identity
-    ContentType     string // from Content-Type header; "" = unknown
-    Context         *any   // same per-stream slot as ResponseChunk.Context
-}
-
-type RequestBodyHandlerFunc func(w *Writer, chunk *BodyChunk)
-```
-
-`ResponseChunk` carries `ContentEncoding` and `ContentType` (populated from
-response headers) alongside the existing `Data`, `EndStream`, and `Context`
-fields — no separate response-body type is needed.
+This means body-finalizing logic (emit metrics, flush state, release buffers)
+can always live in the body handler gated on `EndStream: true` — no need to
+duplicate it in the headers handler for the bodyless case.
 
 ### Operating modes
 
@@ -61,30 +45,12 @@ fields — no separate response-body type is needed.
 
 Mode is fixed at registration time, not per-request.
 
-### Registration
+Pick **streaming** when you only need to inspect or log body data without
+holding the full payload in memory (token counting, access logging, SSE tap).
 
-```go
-// RegisterWithBody — streaming request body inspection.
-// The body handler fires once per chunk; use for logging, forwarding to a
-// sink, or any read-only inspection that does not need the full body first.
-func RegisterWithBody(name string, h HandlerFunc, rb RequestBodyHandlerFunc, r ResponseHandlerFunc)
-
-// RegisterWithMutableBody — buffered request and response body mutation.
-// The body handler fires once with the full body. Use Writer.SetRequestBody
-// or Writer.SetResponseBody to replace the body content.
-func RegisterWithMutableBody(name string, h HandlerFunc, rb RequestBodyHandlerFunc, r ResponseHandlerFunc)
-```
-
-### `filter` struct (relevant fields)
-
-```go
-requestBodyHandler      RequestBodyHandlerFunc
-bufferBody              bool   // true for RegisterWithMutableBody
-requestContentType      string // captured in OnRequestHeaders
-requestContentEncoding  string // captured in OnRequestHeaders
-responseContentType     string // captured in OnResponseHeaders
-responseContentEncoding string // captured in OnResponseHeaders
-```
+Pick **buffered** when you need to replace or rewrite the body
+(`SetRequestBody` / `SetResponseBody`). Transit buffers the incoming chunks
+internally and delivers one synthetic call with the complete body.
 
 ### Request path
 
@@ -120,48 +86,21 @@ single completion point.
 in buffered mode, calls the response handler, and rewrites `content-length`
 if `SetResponseBody` was called.
 
-### `Writer` header methods
+### Body replacement gotcha: streaming mode is a no-op
 
-```go
-func (w *Writer) SetRequestHeader(name, value string)
-func (w *Writer) AddRequestHeader(name, value string)
-func (w *Writer) RemoveRequestHeader(name string)
-func (w *Writer) SetResponseHeader(name, value string)
-func (w *Writer) AddResponseHeader(name, value string)
-func (w *Writer) RemoveResponseHeader(name string)
-```
-
-### `Writer` body replacement methods
-
-```go
-// SetRequestBody replaces the request body. Buffered mode only; no-op otherwise.
-func (w *Writer) SetRequestBody(data []byte)
-
-// SetResponseBody replaces the response body. Buffered mode only; no-op otherwise.
-func (w *Writer) SetResponseBody(data []byte)
-```
+`SetRequestBody` and `SetResponseBody` are silently ignored outside buffered
+mode. If you call them from a handler registered with `RegisterWithBody`,
+nothing happens and no error is returned. Register with `RegisterWithMutableBody`
+whenever body replacement is needed.
 
 ---
 
 ## Layer 2: content encoding (`up/compress`)
 
-### API
-
-```go
-// Decode decompresses data according to Content-Encoding.
-// Supports: "gzip", "deflate", "zstd", "br", "identity", "".
-func Decode(encoding string, data []byte) ([]byte, error)
-
-// Encode compresses data with the given encoding.
-func Encode(encoding string, data []byte) ([]byte, error)
-
-// RequestIdentity rewrites Accept-Encoding to "identity" on the outgoing
-// request so the upstream is asked not to compress. Call from the request
-// handler; if the upstream ignores the hint, use Decode in the body handler.
-func RequestIdentity(h RequestHeaderSetter)
-```
-
-`RequestHeaderSetter` is satisfied by `*up.Writer`.
+The `up/compress` package exposes `Decode`, `Encode`, and `RequestIdentity`.
+Before inspecting a body, check `chunk.ContentEncoding` and call `Decode` if
+non-empty; the upstream may still compress even if you sent `Accept-Encoding:
+identity`, so always guard with a nil/error check.
 
 ### Encodings
 

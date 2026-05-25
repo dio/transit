@@ -19,15 +19,23 @@ transit/                     root Go module: github.com/dio/transit
     sinks/                   In-process assertion sinks (OTLP, ALS, access-logger)
   examples/                  Standalone Go module (GOWORK=off), one dir per example
     internal/e2etest/        Shared e2e harness helpers (examples module only)
-    hello/                   Minimal HTTP filter
-    sse-tap/                 SSE response body tap, token usage extraction
+    async-callout/           HTTP filter that calls an upstream cluster asynchronously
+    body-transform/          Request body transformation (JSON field rename)
+    cluster/                 Minimal Cluster Extension — owns host set, selects first healthy
     cluster-dfp/             Cluster Extension with DNS host resolution
     cluster-router/          Cluster Extension with live config refresh
     cluster-shard-router/    Cluster Extension with shard-based routing
+    filter-chain/            Middleware/filter-chain composition pattern
+    header-router/           Routes to backend A/B based on x-route-to header
+    hello/                   Minimal HTTP filter
+    jwt-callout/             JWT validation via upstream token-introspection endpoint
     lb-policy/               LB Policy host selection
+    mcp-catalog-router/      MCP catalog router
+    mcp-profile-gateway/     MCP profile gateway (HTTPCallout keeps catalog traffic on Envoy egress)
     mcp-profile-router/      MCP fan-out aggregator
     request-ui/              Filter with embedded UI served via access logger
     spa/                     Static asset serving filter
+    sse-tap/                 SSE response body tap, token usage extraction
     ws-proxy/                WebSocket proxy with embedded upstream dial (see README.md)
   integrations/              K8s / Envoy Gateway integration tests (separate module)
     cluster-router-eg/
@@ -53,6 +61,7 @@ writing code, not after.
 | Write unit tests, choose unit vs e2e | `transit-unit-testing` |
 | Work with Envoy dynamic module ABI (`down/`, `up/`) | `transit-envoy-dynamic-modules` |
 | Work with `down/abi_impl` CGO wrappers | `transit-envoy-abi-wrapper` |
+| Modify ABI bridge, registration API, filter lifecycle, async callouts, access loggers, cluster/LB extensions | `transit-core-api-patterns` |
 | Run e2e suites, debug Envoy startup | `transit-e2e-runner` |
 | Add or debug k3d / Envoy Gateway integrations | `transit-k3d-envoy-gateway-e2e` |
 | Design L1/L2 tiered router scenarios | `transit-tiered-router-design` |
