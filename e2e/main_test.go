@@ -77,6 +77,7 @@ var (
 	lbPolicySelectionAddr         string
 	accessLoggerLocalReplyAddr    string
 	accessLoggerFlagsAddr         string
+	embeddedServerAddr            string
 	adminAddr                     string
 )
 
@@ -138,6 +139,8 @@ func TestMain(m *testing.M) {
 	lbPolicyHost1Port := startIdentifiedUpstream("lb-host-1")
 	accessLoggerLocalReplyPort := freePort()
 	accessLoggerFlagsPort := freePort()
+	embeddedServerPort := freePort()
+	embeddedServerLoopbackPort := freePort()
 	// deadUpstreamPort: nothing listens here; Envoy gets ECONNREFUSED, setting UF flag.
 	deadUpstreamPort := freePort()
 	adminPort := freePort()
@@ -167,6 +170,7 @@ func TestMain(m *testing.M) {
 	lbPolicySelectionAddr = fmt.Sprintf("http://localhost:%d", lbPolicySelectionPort)
 	accessLoggerLocalReplyAddr = fmt.Sprintf("http://localhost:%d", accessLoggerLocalReplyPort)
 	accessLoggerFlagsAddr = fmt.Sprintf("http://localhost:%d", accessLoggerFlagsPort)
+	embeddedServerAddr = fmt.Sprintf("http://localhost:%d", embeddedServerPort)
 	adminAddr = fmt.Sprintf("http://localhost:%d", adminPort)
 
 	otelSink = otelsink.New()
@@ -248,6 +252,8 @@ func TestMain(m *testing.M) {
 		LbPolicyHost1Port:                  lbPolicyHost1Port,
 		AccessLoggerLocalReplyPort:         accessLoggerLocalReplyPort,
 		AccessLoggerFlagsPort:              accessLoggerFlagsPort,
+		EmbeddedServerPort:                 embeddedServerPort,
+		EmbeddedServerLoopbackPort:         embeddedServerLoopbackPort,
 		DeadUpstreamPort:                   deadUpstreamPort,
 		AdminPort:                          adminPort,
 	})
@@ -260,6 +266,7 @@ func TestMain(m *testing.M) {
 	envoyCmd.Env = append(os.Environ(),
 		"GODEBUG=cgocheck=0",
 		"ENVOY_DYNAMIC_MODULES_SEARCH_PATH="+projectRoot,
+		fmt.Sprintf("E2E_EMBEDDED_SERVER_ADDR=127.0.0.1:%d", embeddedServerLoopbackPort),
 	)
 	envoyCmd.Stdout = os.Stderr
 	envoyCmd.Stderr = os.Stderr
@@ -758,6 +765,8 @@ type envoyPorts struct {
 	LbPolicyHost1Port                  int
 	AccessLoggerLocalReplyPort         int
 	AccessLoggerFlagsPort              int
+	EmbeddedServerPort                 int
+	EmbeddedServerLoopbackPort         int
 	DeadUpstreamPort                   int
 	AdminPort                          int
 }
