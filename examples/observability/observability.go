@@ -11,7 +11,7 @@
 //
 // On response (EndStream), it:
 //   - Tags the span with the HTTP response code
-//   - Increments a response counter and records a response-size histogram
+//   - Increments a response counter
 //   - Writes the response code to dynamic metadata
 package observability
 
@@ -28,7 +28,6 @@ const ExtensionName = "observability"
 var (
 	requestsID  up.MetricID
 	responsesID up.MetricID
-	responseSzID up.MetricID
 )
 
 func init() {
@@ -41,10 +40,6 @@ func init() {
 				return err
 			}
 			responsesID, err = h.DefineCounter("observability_responses_total")
-			if err != nil {
-				return err
-			}
-			responseSzID, err = h.DefineHistogram("observability_response_size_bytes")
 			return err
 		},
 		onRequest,
@@ -95,9 +90,5 @@ func onResponse(w *up.Writer, chunk *up.ResponseChunk) {
 
 	if chunk.EndStream {
 		w.IncrementCounter(responsesID, 1)
-		size, ok := w.GetAttributeNumber(up.AttributeIDResponseTotalSize)
-		if ok {
-			w.RecordHistogram(responseSzID, uint64(size))
-		}
 	}
 }
