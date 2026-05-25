@@ -81,6 +81,46 @@ func asyncCallout(w *up.Writer, r *up.Request) {
 			}
 		})
 
+	case "/header-batch":
+		// Two concurrent HTTPCallout requests via HTTPCalloutAllSettled; the callback
+		// merges both bodies into x-header-batch-result and lets the request forward.
+		err := w.HTTPCalloutAllSettled([]up.HTTPCalloutRequest{
+			{
+				Cluster: "async-callout-upstream",
+				Headers: [][2]string{
+					{":method", "GET"},
+					{":path", "/a"},
+					{":scheme", "http"},
+					{"host", "async-callout.local"},
+				},
+				TimeoutMillis: 1000,
+			},
+			{
+				Cluster: "async-callout-upstream",
+				Headers: [][2]string{
+					{":method", "GET"},
+					{":path", "/b"},
+					{":scheme", "http"},
+					{"host", "async-callout.local"},
+				},
+				TimeoutMillis: 1000,
+			},
+		}, func(responses []up.HTTPCalloutAllSettledResponse) {
+			if len(responses) != 2 ||
+				responses[0].Result != up.HTTPCalloutSuccess ||
+				responses[1].Result != up.HTTPCalloutSuccess ||
+				len(responses[0].Body) == 0 ||
+				len(responses[1].Body) == 0 {
+				w.SendLocalResponse(503, []byte("header batch callout failed"), [2]string{"content-type", "text/plain"})
+				return
+			}
+			w.SetRequestHeader("x-header-batch-result",
+				responses[0].Body[0].ToString()+","+responses[1].Body[0].ToString())
+		})
+		if err != nil {
+			w.SendLocalResponse(503, []byte(err.Error()), [2]string{"content-type", "text/plain"})
+		}
+
 	case "/fanout":
 		// Two concurrent Do calls inside a single goroutine; results merged into one
 		// header so the forward-echo upstream can reflect the combined value.

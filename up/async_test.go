@@ -496,6 +496,41 @@ func TestWriterHTTPCalloutAllSettled_resumesAfterAllDoneWithoutLocalResponse(t *
 	require.Equal(t, "a,b", handle.RequestHeaders().GetOne("x-batch").ToString())
 }
 
+func TestWriterHTTPCalloutAllSettled_streamCompleteInsideCallback(t *testing.T) {
+	var callbacks []shared.HttpCalloutCallback
+	handle := testutil.NewFilterHandle(
+		testutil.WithHTTPCalloutFunc(func(_ string, _ [][2]string, _ []byte, _ uint64, cb shared.HttpCalloutCallback) (shared.HttpCalloutInitResult, uint64) {
+			callbacks = append(callbacks, cb)
+			return shared.HttpCalloutInitSuccess, uint64(len(callbacks))
+		}),
+	)
+	var f *filter
+	f = &filter{
+		handle:  handle,
+		handler: noopHandler,
+		requestBodyHandler: func(w *Writer, _ *BodyChunk) {
+			err := w.HTTPCalloutAllSettled([]HTTPCalloutRequest{{Cluster: "a"}, {Cluster: "b"}}, func(responses []HTTPCalloutAllSettledResponse) {
+				require.Len(t, responses, 2)
+				// Simulate OnStreamComplete firing inside the final fn(responses) callback.
+				// The second streamDone guard in finish() must prevent flush(true).
+				f.OnStreamComplete()
+			})
+			require.NoError(t, err)
+		},
+	}
+
+	status := f.OnRequestBody(fake.NewFakeBodyBuffer([]byte("hello")), true)
+	require.Equal(t, shared.BodyStatusStopAndBuffer, status)
+	require.Len(t, callbacks, 2)
+
+	callbacks[0].OnHttpCalloutDone(1, shared.HttpCalloutSuccess, nil, []shared.UnsafeEnvoyBuffer{unsafeBuffer("a")})
+	require.Equal(t, 0, handle.ContinuedReq)
+
+	callbacks[1].OnHttpCalloutDone(2, shared.HttpCalloutSuccess, nil, []shared.UnsafeEnvoyBuffer{unsafeBuffer("b")})
+	// fn ran, OnStreamComplete fired inside it; second streamDone guard must have blocked flush(true).
+	require.Equal(t, 0, handle.ContinuedReq)
+}
+
 func TestWriterHTTPCalloutAllSettled_synchronousCallbacksDoNotStop(t *testing.T) {
 	handle := testutil.NewFilterHandle(
 		testutil.WithHTTPCalloutFunc(func(cluster string, _ [][2]string, _ []byte, _ uint64, cb shared.HttpCalloutCallback) (shared.HttpCalloutInitResult, uint64) {
