@@ -8,7 +8,7 @@ OUTPUT := libspa.so
 ROOT := $(abspath $(CURDIR)/../..)
 ENVOY_BIN ?= $(ROOT)/.bin/envoy
 
-.PHONY: build test e2e clean download-envoy
+.PHONY: build test e2e e2e-js clean download-envoy
 
 ## build: compile libspa.so for the current host
 build:
@@ -20,8 +20,12 @@ build:
 test:
 	cd $(ROOT)/examples && go test ./spa/...
 
-## e2e: build .so, start Envoy, run Lightpanda browser tests
+## e2e: build .so and run Go HTTP-level e2e tests (no browser required)
 e2e: build
+	cd $(ROOT)/examples && ENVOY_BIN=$(ENVOY_BIN) go test ./spa/e2e/... -v -timeout=60s -count=1
+
+## e2e-js: build .so, start Envoy, run Lightpanda browser tests (requires Node 24)
+e2e-js: build
 	ENVOY_BIN=$(ENVOY_BIN) bash $(dir $(lastword $(MAKEFILE_LIST)))e2e/run.sh
 
 ## clean: remove compiled .so and header files
