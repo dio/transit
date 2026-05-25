@@ -36,6 +36,7 @@ var (
 	proxyURL       string
 	adminURL       string
 	loopbackPort   int
+	egressPort     int
 	mockPort       int
 	sessionLogFile string
 	envoyCmd       *exec.Cmd
@@ -60,6 +61,7 @@ func TestMain(m *testing.M) {
 	mockPort = startMockUpstream()
 	proxyPort := e2etest.FreePort()
 	loopbackPort = e2etest.FreePort()
+	egressPort = e2etest.FreePort()
 	adminPort := e2etest.FreePort()
 
 	// Temp file for structured session log assertions.
@@ -77,6 +79,7 @@ func TestMain(m *testing.M) {
 	cfgPath := e2etest.WriteEnvoyConfig("ws-proxy", envoyConfigTmpl, map[string]int{
 		"ProxyPort":    proxyPort,
 		"LoopbackPort": loopbackPort,
+		"EgressPort":   egressPort,
 		"AdminPort":    adminPort,
 		"MockPort":     mockPort,
 	})
@@ -87,10 +90,12 @@ func TestMain(m *testing.M) {
 	envoyCmd.Env = append(os.Environ(),
 		"GODEBUG=cgocheck=0",
 		"ENVOY_DYNAMIC_MODULES_SEARCH_PATH="+wsProxyDir,
-		// Proxy dials mock upstream, no real credentials needed.
 		"WSPROXY_LISTEN_ADDR="+fmt.Sprintf("127.0.0.1:%d", loopbackPort),
-		fmt.Sprintf("WSPROXY_UPSTREAM_URL=ws://127.0.0.1:%d", mockPort),
-		"WSPROXY_AUTH_VALUE=", // disable auth injection against mock
+		// Egress via Envoy: embedded server dials the local egress listener;
+		// Envoy routes the WS upgrade to mock-upstream. WSPROXY_UPSTREAM_URL
+		// is unused when WSPROXY_EGRESS_URL is set.
+		fmt.Sprintf("WSPROXY_EGRESS_URL=ws://127.0.0.1:%d", egressPort),
+		"WSPROXY_AUTH_VALUE=", // no auth against mock
 		"WSPROXY_SESSION_LOG="+sessionLogFile,
 	)
 	envoyCmd.Stdout = os.Stderr
@@ -305,6 +310,59 @@ func readSessionRecords(t *testing.T, path string, byteOffset int64) []wsproxy.S
 		}
 	}
 	return recs
+}
+
+// TestWsProxy_EgressViaEnvoy is the double-loopback PoC gate.
+//
+// Full path under test:
+//
+//	client → Envoy :proxyPort (inbound)
+//	       → STATIC loopback → embedded WSProxy :loopbackPort
+//	       → ws://127.0.0.1:egressPort (Envoy egress listener)
+//	       → mock-upstream cluster → mock OpenAI server
+//
+// If model and token counts are extracted correctly, the SessionTap saw all
+// frames across both loopback hops — the double-loopback is transparent.
+func TestWsProxy_EgressViaEnvoy(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	fi, err := os.Stat(sessionLogFile)
+	require.NoError(t, err)
+	startOffset := fi.Size()
+
+	conn, _, err := websocket.Dial(ctx, proxyURL+"/v1/responses", &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": {"Bearer sk-test"}},
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, wsjson.Write(ctx, conn, map[string]any{
+		"type":  "response.create",
+		"model": "gpt-4.1",
+		"input": []map[string]any{},
+	}))
+
+	// Drain: response.completed + echo.
+	for i := 0; i < 2; i++ {
+		_, _, err := conn.Read(ctx)
+		require.NoError(t, err)
+	}
+	conn.Close(websocket.StatusNormalClosure, "done")
+
+	var rec wsproxy.SessionRecord
+	require.Eventually(t, func() bool {
+		recs := readSessionRecords(t, sessionLogFile, startOffset)
+		if len(recs) == 0 {
+			return false
+		}
+		rec = recs[len(recs)-1]
+		return true
+	}, 3*time.Second, 50*time.Millisecond, "session record not written in time")
+
+	require.Equal(t, "/v1/responses", rec.Path)
+	require.Equal(t, "gpt-4.1", rec.Model)
+	require.Equal(t, uint32(100), rec.InputTokens)
+	require.Equal(t, uint32(42), rec.OutputTokens)
 }
 
 func TestWsProxy_TokenUsageExtracted(t *testing.T) {

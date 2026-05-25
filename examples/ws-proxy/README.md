@@ -1,11 +1,12 @@
-# wsproxy
+# ws-proxy
 
-This example proxies WebSocket connections to the OpenAI Responses API in
-WebSocket mode (`wss://api.openai.com/v1/responses`). It demonstrates how to
-use `up.RegisterWithGroup` to run an embedded `net/http` server as a background
-goroutine, accept a WebSocket connection from Envoy on the loopback, dial the
-upstream with injected credentials, and run a bidirectional frame pump with
-selective JSON tapping for usage metering.
+Proxies WebSocket connections to the OpenAI Responses API
+(`wss://api.openai.com/v1/responses`), injecting provider credentials at
+upstream dial time and tapping token usage from `response.completed` frames for
+billing.
+
+Demonstrates `up.RegisterWithGroup` — an embedded `net/http` server running as
+a background goroutine inside an Envoy dynamic module.
 
 Reference: https://openai.com/index/speeding-up-agentic-workflows-with-websockets/
 
@@ -13,39 +14,104 @@ Reference: https://openai.com/index/speeding-up-agentic-workflows-with-websocket
 
 ## What problem this solves
 
-The OpenAI Responses API (`POST /v1/responses`) normally requires a full HTTP
-round-trip per turn. For agentic workflows with many sequential tool calls this
-compounds: each turn pays connection overhead and re-sends enough context for
-the model to continue. OpenAI's WebSocket mode eliminates that:
+`POST /v1/responses` pays a full HTTP round-trip per turn. For agentic workflows
+with many sequential tool calls this compounds. OpenAI's WebSocket mode
+eliminates that:
 
 - One persistent WS connection handles multiple sequential `response.create`
   requests without reconnecting.
 - The server maintains a connection-local in-memory cache of the most recent
-  response. Continuation only needs `previous_response_id` + new input items
-  (not the full history). This is compatible with `store: false` and Zero Data
-  Retention.
+  response. Continuation only needs `previous_response_id` + new input items —
+  not the full history. Compatible with `store: false` and Zero Data Retention.
 - Result: ~40% latency reduction for workflows with 20+ tool calls.
 
 The proxy sits between the client and OpenAI, injecting the resolved credential
-at upstream dial time (the client presents a virtual key), and extracting token
-usage from `response.completed` events for billing.
+at upstream dial time and extracting token usage for billing.
 
-This is NOT the Realtime API (`/v1/realtime`). There is no audio, no VAD, no
-voice. This is the standard text/tool Responses API accessed over WebSocket
-transport instead of HTTP.
+This is **not** the Realtime API (`/v1/realtime`). No audio, no VAD, no voice.
+This is the standard text/tool Responses API over WebSocket transport.
 
 ---
 
-## What it shows
+## Architecture
 
-- `up.RegisterWithGroup` -- embedded server tied to filter config lifetime
-- `up.Register` -- pre-upgrade HTTP auth gate
-- WebSocket upgrade routing via a STATIC loopback cluster in Envoy config
-- Bidirectional frame pump with zero-copy forwarding
-- Selective JSON tap: only `response.completed` frames are parsed;
-  all other frames pass through unparsed (`bytes.Contains` fast-path)
-- Session lifecycle enforcement via `context.WithDeadline`
-- Envoy counters for session count, token usage, and errors
+### Direct-dial (default)
+
+The embedded server dials the upstream provider directly. Auth header injected
+in Go before `websocket.Dial`.
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant E as Envoy :10000
+    participant S as WSProxy :10001<br/>(embedded server)
+    participant U as api.openai.com
+
+    C->>E: WS upgrade /v1/responses<br/>Authorization: Bearer sk-virtual
+    Note over E: ws-proxy filter (no-op for HTTP)<br/>router → cluster ws-proxy-local
+    E->>S: WS upgrade (loopback)
+    S->>U: WS upgrade<br/>Authorization: Bearer $OPENAI_API_KEY
+    Note over S,U: TLS originated by Go websocket.Dial
+
+    loop session
+        C->>S: response.create {model, input}
+        Note over S: SessionTap.FeedClient → extracts model
+        S->>U: forward frame
+        U->>S: response.completed {usage}
+        Note over S: SessionTap.FeedUpstream → extracts tokens
+        S->>C: forward frame
+    end
+
+    C-->>S: WS close
+    Note over S: recordActorSession → slog + JSON session record
+```
+
+### Egress-via-Envoy (`WSPROXY_EGRESS_URL` set)
+
+The embedded server dials a local Envoy egress listener instead of the upstream
+directly. Envoy handles TLS origination and credential injection via the
+`ws-auth` upstream filter. This keeps auth and TLS management in Envoy,
+consistent with how the `upstream` cluster handles non-WS traffic.
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant EI as Envoy :10000<br/>(inbound)
+    participant S as WSProxy :10001<br/>(embedded server)
+    participant EE as Envoy :10002<br/>(egress listener)
+    participant U as api.openai.com
+
+    C->>EI: WS upgrade /v1/responses
+    EI->>S: WS upgrade (loopback #1)
+    S->>EE: WS upgrade ws://127.0.0.1:10002/v1/responses<br/>(loopback #2, plain — no auth)
+    Note over EE: ws-auth upstream filter<br/>injects Authorization: Bearer $OPENAI_API_KEY
+    EE->>U: WS upgrade wss://api.openai.com/v1/responses<br/>(TLS originated by Envoy)
+
+    loop session
+        C->>S: response.create
+        Note over S: SessionTap.FeedClient
+        S->>EE: forward
+        EE->>U: forward
+        U->>EE: response.completed
+        EE->>S: forward
+        Note over S: SessionTap.FeedUpstream
+        S->>C: forward
+    end
+
+    C-->>S: WS close
+    Note over S: recordActorSession
+```
+
+The two loopback connections are established **once per session**, not per
+frame. Per-frame overhead is two extra kernel copies (~microseconds) — negligible
+against OpenAI network RTT of 50–150 ms.
+
+### Why the loopback hop exists
+
+After `101 Switching Protocols`, Envoy handles WS frame forwarding as a
+transparent TCP tunnel. The dynamic module ABI has no per-frame callback. The
+embedded server is the only way to intercept frames from a dynamic module
+without modifying Envoy.
 
 ---
 
@@ -61,9 +127,7 @@ Authorization: Bearer {OPENAI_API_KEY}
 Standard WebSocket upgrade. Auth is in the HTTP header at upgrade time. All
 subsequent frames on the connection inherit that auth. No model in the URL.
 
-### Client-to-server frames
-
-Only one event type:
+### Client → server
 
 ```json
 {
@@ -72,37 +136,27 @@ Only one event type:
   "store": false,
   "previous_response_id": "resp_abc123",
   "input": [
-    {
-      "type": "message",
-      "role": "user",
-      "content": [{"type": "input_text", "text": "next step"}]
-    }
-  ],
-  "tools": []
+    {"type": "message", "role": "user",
+     "content": [{"type": "input_text", "text": "next step"}]}
+  ]
 }
 ```
 
-`previous_response_id` is omitted on the first request. On subsequent requests
-within the same session it references the immediately preceding response. The
-server's connection-local cache makes this fast; full history is NOT resent.
+`previous_response_id` omitted on the first request. Subsequent requests within
+the same session reference the immediately preceding response — full history is
+not resent.
 
-Optional warmup (pre-warm the connection cache without generating output):
+### Server → client
 
-```json
-{"type": "response.create", "model": "gpt-4.1", "generate": false, ...}
-```
-
-### Server-to-client frames
-
-Same streaming events as the HTTP Responses API:
-
-- `response.created` -- response started
-- `response.output_item.added` -- output item started
-- `response.output_item.delta` -- streaming content chunk
-- `response.output_item.done` -- output item complete
-- `response.completed` -- response done; **contains usage** (tap target)
-- `response.failed` -- response errored
-- `error` -- connection-level error (does not close WS)
+| Event | Notes |
+|---|---|
+| `response.created` | response started |
+| `response.output_item.added` | output item started |
+| `response.output_item.delta` | streaming content chunk |
+| `response.output_item.done` | output item complete |
+| `response.completed` | **tap target** — contains usage |
+| `response.failed` | response errored |
+| `error` | connection-level error (does not close WS) |
 
 Usage is in `response.completed`:
 
@@ -111,191 +165,92 @@ Usage is in `response.completed`:
   "type": "response.completed",
   "response": {
     "id": "resp_abc123",
-    "usage": {
-      "input_tokens": 210,
-      "output_tokens": 48,
-      "total_tokens": 258
-    }
+    "usage": {"input_tokens": 210, "output_tokens": 48, "total_tokens": 258}
   }
 }
 ```
 
 ### Session semantics
 
-- One in-flight `response.create` at a time per connection (sequential, not
-  multiplexed). For parallel requests, use separate WS connections.
-- Connection limit: 60 minutes. After that the server sends:
+- One in-flight `response.create` per connection (sequential, not multiplexed).
+  For parallel requests use separate WS connections.
+- Server enforces a 60-minute connection limit, then sends:
   ```json
   {"type":"error","error":{"code":"websocket_connection_limit_reached"}}
   ```
   Client must reconnect and continue with `previous_response_id`.
-- If `store: false` and the previous response has been evicted from the
-  connection cache (e.g., after reconnect), the server returns
-  `previous_response_not_found`. Client must re-send full context.
 
 ---
 
-## Architecture
+## Frame tapping
 
-```
-Client
-  |
-  | wss://proxy/v1/responses
-  | Authorization: Bearer sk-<virtual-key>
-  v
-Envoy listener :10443
-  |
-  +-- HTTP filter: wsproxy-auth       [transit dynamic module]
-  |     reads Authorization header
-  |     resolves credential (stub: env OPENAI_API_KEY)
-  |     sets x-wsproxy-cred: <resolved-key>
-  |     on failure: 401 before upgrade
-  |
-  +-- router
-        Upgrade: websocket + /v1/responses -> cluster: wsproxy-loopback
-  |
-  | Envoy dials 127.0.0.1:19002 (STATIC cluster)
-  v
-Embedded net/http server (started by Group goroutine)
-  |
-  v
-WSProxy.ServeHTTP
-  reject non-WS with 400
-  websocket.Accept(w, r)               downstream WS from Envoy
-  read x-wsproxy-cred from r.Header
-  websocket.Dial("wss://api.openai.com/v1/responses", ...)
-    + Authorization: Bearer <cred>
-  SessionTap.Start()
-  goroutine: downstream -> tap.FeedDownstream -> upstream
-  goroutine: upstream   -> tap.FeedUpstream   -> downstream
-  wait for first goroutine to return
-  SessionTap.Done() -> increment counters
-```
+`SessionTap` intercepts two frame types:
 
-### Why STATIC cluster, not filter-state selection
+- **`response.create`** (client → upstream): extracts `model` field.
+- **`response.completed`** (upstream → client): extracts `input_tokens` and
+  `output_tokens`.
 
-The loopback cluster is always one address (127.0.0.1:19002). Provider and
-upstream URL selection happen inside `WSProxy.ServeHTTP` in pure Go, reading
-`x-wsproxy-cred`. Envoy's cluster LB is not involved.
-
-Envoy PR #45040 (filter state in cluster LB, 1.39-dev) is not needed. This
-example works on Envoy 1.38.0.
-
-### Why the loopback hop exists
-
-After the 101 Switching Protocols handshake, Envoy handles WS frame forwarding
-as a transparent TCP tunnel. The dynamic module ABI has no per-frame callback.
-The embedded server is the only way to intercept frames from a dynamic module
-without modifying Envoy.
-
-Loopback RTT on Linux/macOS is 0.1--0.5 ms. Against OpenAI network RTT of
-50--150 ms this is negligible.
-
----
-
-## Frame tapping strategy
-
-`SessionTap` intercepts one server-to-client event type:
-
-**`response.completed`** -- contains usage:
-```json
-{
-  "type": "response.completed",
-  "response": {
-    "id": "resp_abc",
-    "usage": {"input_tokens": 210, "output_tokens": 48, "total_tokens": 258}
-  }
-}
-```
-
-Accumulated across all `response.completed` events in the session (one per
-`response.create`). Emitted as Envoy counters at session close.
-
-All other frames are forwarded without parsing.
-
-Fast-path: `bytes.Contains(frame, []byte(`"response.completed"`))` before any
+Fast-path: `bytes.Contains(frame, []byte("response.completed"))` before any
 `json.Unmarshal`. The majority of frames (`response.output_item.delta`, etc.)
 never reach the JSON decoder.
 
-Client-to-server frames (`response.create`) are forwarded without inspection.
-The proxy does not validate or modify request bodies.
+Both taps run in the pump goroutines and must be non-blocking.
 
 ---
 
-## Envoy config overview
+## Configuration
 
-```
-listener :10443
-  upgrade_configs: [{upgrade_type: websocket}]   <- required for WS
-  http_filters:
-    - wsproxy-auth     <- auth gate, sets x-wsproxy-cred header
-    - router
+All options are read from environment variables at startup (env overrides `WSPROXY_*`):
 
-virtual_host routes:
-  - match: prefix /v1/responses + header Upgrade: websocket
-    route: cluster wsproxy-loopback
-           upgrade_configs: [{upgrade_type: websocket}]
-  - match: prefix /v1/responses (non-WS)
-    direct_response: 400
-
-clusters:
-  - name: wsproxy-loopback
-    type: STATIC
-    endpoints: 127.0.0.1:19002
-```
-
-Port 19002 must match `loopback_addr` in the filter config JSON. In a
-production EG deployment the EPP generates this cluster automatically from
-filter config; the operator never writes it manually (see design doc
-section 11).
+| Env var | Default | Notes |
+|---|---|---|
+| `WSPROXY_LISTEN_ADDR` | `127.0.0.1:10001` | Embedded server listen address; must match `ws-proxy-local` cluster |
+| `WSPROXY_UPSTREAM_URL` | `wss://api.openai.com` | Upstream base URL (direct-dial mode) |
+| `WSPROXY_AUTH_VALUE` | `Bearer ${OPENAI_API_KEY}` | Auth header value; `${VAR}` expanded |
+| `WSPROXY_EGRESS_URL` | `` (empty) | When set, dial this Envoy egress listener instead of upstream directly |
+| `WSPROXY_SESSION_LOG` | `` (empty) | Path for JSON-line session records; used by e2e tests |
 
 ---
 
-## Session lifecycle
+## Session record
 
-Each WS connection is a session that carries multiple sequential turns.
+At session end, `recordActorSession` emits a structured slog line and, when
+`WSPROXY_SESSION_LOG` is set, appends a JSON line to that file:
 
-1. Starts when `websocket.Accept` succeeds.
-2. Enforces a max duration via `context.WithDeadline` (default 3600s, matching
-   OpenAI's 60-minute limit). On deadline the proxy sends WS close 1000 to
-   downstream and closes upstream.
-3. Ends when upstream closes, downstream closes, or deadline fires.
-4. On session end: emit accumulated token counts as Envoy counters, record
-   close reason.
+```json
+{"path":"/v1/responses","model":"gpt-4.1","input_tokens":100,"output_tokens":42,"duration_ms":312,"result":"ok","reason":""}
+```
 
-Active sessions tracked in a `sync.Map`. `Group.Stop` closes all active
-sessions gracefully before the embedded server shuts down.
+The JSON file is the e2e test assertion target — no log parsing needed.
 
 ---
 
-## Envoy counters
+## Envoy config
 
-Defined at config time via `up.RegisterWithConfig`:
+### Inbound listener (`:10000`)
 
 ```
-wsproxy_sessions_total          total WS sessions accepted
-wsproxy_input_tokens_total      accumulated input_tokens from response.completed
-wsproxy_output_tokens_total     accumulated output_tokens from response.completed
-wsproxy_turns_total             number of response.completed events seen
-wsproxy_upstream_dial_errors    upstream dial failures (credential resolved but dial failed)
-wsproxy_upstream_errors         error events forwarded from upstream
-wsproxy_sessions_timeout        sessions closed by proxy deadline
+upgrade_configs: [{upgrade_type: websocket}]
+http_filters:
+  - ws-proxy      ← no-op for HTTP; starts embedded server via Group
+  - router
+
+routes:
+  - match: prefix=/ + Upgrade=websocket → cluster ws-proxy-local (loopback)
+  - match: prefix=/                      → cluster mock-upstream (non-WS)
 ```
 
----
+### Egress listener (`:10002`, egress-via-Envoy mode)
 
-## Credential handling (this example)
+```
+upgrade_configs: [{upgrade_type: websocket}]
+http_filters:
+  - router
 
-The `wsproxy-auth` filter resolves the real credential at request time from
-the `OPENAI_API_KEY` environment variable (set at filter config creation). Any
-non-empty `Authorization: Bearer ...` header from the client is accepted (auth
-gate validates presence, not value). The resolved key is passed as
-`x-wsproxy-cred` on the loopback hop.
-
-For a production integration, replace env-var resolution with a
-`CredentialCache.Pin()` call returning an opaque handle, and unpin after the
-upstream WS dial. The plaintext key should only be live during the upstream
-WebSocket handshake.
+routes:
+  - match: prefix=/ + Upgrade=websocket → cluster ws-proxy-egress
+      (ws-auth upstream filter injects Bearer token, Envoy dials api.openai.com over TLS)
+```
 
 ---
 
@@ -303,225 +258,47 @@ WebSocket handshake.
 
 ```
 examples/ws-proxy/
-  README.md               this file -- implementation spec
-  wsproxy.go              WSProxy, SessionTap, frame pump, session lifecycle
-  auth.go                 wsproxy-auth HTTP filter (pre-upgrade auth gate)
-  observability.go        Envoy counter definitions
-  wsproxy_test.go         unit tests for SessionTap and WSProxy
-  cmd/
-    main.go               .so entrypoint: blank-imports abi_impl, registers filters
-  envoy.yaml              reference Envoy config for local runs
+  README.md               this file
+  ws_proxy.go             WSProxy, SessionTap, frame pump, Register()
+  auth.go                 ws-auth upstream HTTP filter (credential injection)
+  observability.go        SessionRecord, InitSessionLog, recordActorSession
+  ws_proxy_test.go        unit tests for SessionTap
+  envoy.yaml              reference Envoy config (direct-dial + egress-via-Envoy)
   Makefile
   e2e/
-    e2e_test.go           end-to-end tests against a mock OpenAI upstream
+    e2e_test.go           end-to-end tests (mock upstream, no real API key)
     testdata/
-      envoy.tmpl.yaml     embedded Envoy config template
+      envoy.tmpl.yaml     Envoy config template rendered per test run
 ```
 
 ---
 
-## Implementation notes
-
-### wsproxy.go
-
-`WSProxy` created once at filter config time by `up.RegisterWithGroup`. The
-`Group` goroutine starts a `net/http.Server` on `loopbackAddr`.
-
-```go
-type WSProxy struct {
-    loopbackAddr string
-    upstreamURL  string        // wss://api.openai.com/v1/responses
-    maxDuration  time.Duration
-    // MetricIDs defined at config time via up.RegisterWithConfig
-    sessionsTotal up.MetricID
-    inputTokens   up.MetricID
-    outputTokens  up.MetricID
-    turnsTotal    up.MetricID
-    // ...
-    active sync.Map // sessionID -> *Session
-}
-
-func (p *WSProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-    // 1. Reject non-WS (no Upgrade header) with 400
-    // 2. websocket.Accept(w, r, nil)
-    // 3. cred := r.Header.Get("x-wsproxy-cred")
-    // 4. websocket.Dial(ctx, p.upstreamURL, &websocket.DialOptions{
-    //        HTTPHeader: http.Header{"Authorization": {"Bearer " + cred}},
-    //    })
-    // 5. tap := &SessionTap{}
-    // 6. ctx, cancel = context.WithDeadline(r.Context(), time.Now().Add(p.maxDuration))
-    // 7. errCh := make(chan error, 2)
-    //    go pump(ctx, downstream, upstream, tap.FeedDownstream, errCh)
-    //    go pump(ctx, upstream, downstream, tap.FeedUpstream, errCh)
-    //    <-errCh; cancel(); <-errCh
-    // 8. increment counters from tap.Counts()
-}
-```
-
-`pump(ctx, src, dst, tapFn, errCh)` reads frames from `src`, calls
-`tapFn(frame)` which returns the (unmodified) frame, writes to `dst`. Sends
-first error to `errCh` and returns.
-
-### auth.go
-
-Runs on the Envoy worker thread. Must not block.
-
-```go
-func authHandler(w *up.Writer, r *up.Request) {
-    if r.Header("authorization") == "" {
-        w.SendLocalResponse(401, []byte(`{"error":"missing authorization"}`))
-        return
-    }
-    cred := os.Getenv("OPENAI_API_KEY")
-    if cred == "" {
-        w.SendLocalResponse(503, []byte(`{"error":"upstream credential not configured"}`))
-        return
-    }
-    w.SetRequestHeader("x-wsproxy-cred", cred)
-}
-```
-
-### SessionTap
-
-```go
-type SessionTap struct {
-    inputTokens  int64
-    outputTokens int64
-    turns        int64
-    // FeedUpstream called from one goroutine; FeedDownstream from another.
-    // No shared state between them -- no mutex needed.
-}
-
-func (t *SessionTap) FeedUpstream(frame []byte) []byte {
-    if !bytes.Contains(frame, []byte(`"response.completed"`)) {
-        return frame // fast path: skip parse
-    }
-    var ev struct {
-        Type     string `json:"type"`
-        Response struct {
-            Usage struct {
-                InputTokens  int64 `json:"input_tokens"`
-                OutputTokens int64 `json:"output_tokens"`
-            } `json:"usage"`
-        } `json:"response"`
-    }
-    if err := json.Unmarshal(frame, &ev); err != nil || ev.Type != "response.completed" {
-        return frame
-    }
-    t.inputTokens  += ev.Response.Usage.InputTokens
-    t.outputTokens += ev.Response.Usage.OutputTokens
-    t.turns++
-    return frame
-}
-
-func (t *SessionTap) FeedDownstream(frame []byte) []byte { return frame }
-
-func (t *SessionTap) Counts() (input, output, turns int64) {
-    return t.inputTokens, t.outputTokens, t.turns
-}
-```
-
-### cmd/main.go
-
-```go
-package main
-
-import (
-    _ "github.com/dio/transit/down/abi_impl"
-    "github.com/dio/transit/examples/ws-proxy"
-)
-
-func init() { wsproxy.Register() }
-func main() {}
-```
-
-`wsproxy.Register()` calls `up.RegisterWithConfig` (counters) +
-`up.RegisterWithGroup` (embedded server, uses the group) +
-`up.Register` (auth filter).
-
----
-
-## Unit tests (wsproxy_test.go)
-
-- `TestSessionTap_ExtractsUsageFromResponseCompleted`: feed a valid
-  `response.completed` frame, assert input/output/turns updated correctly.
-- `TestSessionTap_FastPath_SkipsNonResponseCompleted`: feed 1000 frames
-  without the `"response.completed"` substring, assert JSON decoder never
-  called (stub `jsonUnmarshal` var to detect calls).
-- `TestSessionTap_WrongType_SkipsUpdate`: frame contains
-  `"response.completed"` as a string inside content but `type` field is
-  `"response.output_item.delta"` -- counts must not be updated.
-- `TestSessionTap_MalformedJSON_ForwardsFrame`: frame triggers the
-  `bytes.Contains` check but is invalid JSON -- must not panic, must return
-  frame unchanged.
-- `TestSessionTap_AccumulatesAcrossMultipleTurns`: feed three
-  `response.completed` frames with different token counts, assert cumulative
-  totals.
-- `TestWSProxy_RejectsNonWebSocket`: `ServeHTTP` with a plain HTTP GET returns
-  400 without calling `websocket.Accept`.
-
----
-
-## E2E tests (e2e/e2e_test.go)
-
-In-process mock upstream: a `net/http` server that accepts WebSocket upgrades,
-echoes all client frames back, and sends a `response.completed` event with
-known token counts whenever it receives a `response.create` frame.
-
-Tests:
-
-- `TestWsProxy_ValidAuth_ConnectsToUpstream`: client connects with non-empty
-  Bearer token, mock upstream receives the WS connection, exchange one frame.
-- `TestWsProxy_MissingAuth_401BeforeUpgrade`: client connects with no
-  Authorization header, Envoy returns HTTP 401 (no WS upgrade).
-- `TestWsProxy_TokenUsageExtracted`: send one `response.create`, receive
-  `response.completed` with known counts, close session, assert Envoy counter
-  values via admin `/stats?filter=wsproxy`.
-- `TestWsProxy_NonWsRequest_Returns400`: plain HTTP GET to `/v1/responses`
-  returns 400.
-- `TestWsProxy_MultipleTurns_AccumulatesTokens`: send three `response.create`
-  frames, each returns `response.completed` with distinct token counts, close
-  session, assert counters reflect the sum.
-- `TestWsProxy_SessionTimeout`: configure 2-second max duration, assert proxy
-  closes session with WS close 1000 after deadline.
-- `TestWsProxy_FrameIntegrity`: send 20 frames of varying sizes (1 byte to
-  12 KB) client->upstream->client, assert all arrive intact and in order.
-- `TestWsProxy_ConcurrentSessions`: open 5 simultaneous sessions, each
-  sends 3 `response.create` turns, all close cleanly with no data race
-  (`-race` must pass).
-
----
-
-## Run locally
+## Running
 
 ```sh
-# Build the shared library
+# Build
 make -C examples/ws-proxy build
 
-# Start Envoy (OPENAI_API_KEY must be set for real upstream)
-OPENAI_API_KEY=sk-... make -C examples/ws-proxy run
-
-# Connect with any WS client
-wscat -c 'ws://localhost:10443/v1/responses' -H 'Authorization: Bearer sk-test'
-# then type: {"type":"response.create","model":"gpt-4.1","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}
-
-# Unit tests (no Envoy needed)
+# Unit tests (no Envoy)
 make -C examples/ws-proxy test
 
-# End-to-end tests (mock upstream, no real API key needed)
+# E2e tests (mock upstream, no API key needed)
 make -C examples/ws-proxy e2e
+
+# Run against real OpenAI
+OPENAI_API_KEY=sk-... make -C examples/ws-proxy run
+# then connect:
+wscat -c ws://localhost:10000/v1/responses -H 'Authorization: Bearer sk-test'
 ```
 
 ---
 
-## Out of scope for this example
+## Out of scope
 
-- Real credential cache / virtual key validation (fraser4 integration)
-- `previous_response_id` tracking or validation -- the proxy forwards
-  `response.create` frames verbatim; ID chaining is the client's responsibility
-- Reconnect logic on `websocket_connection_limit_reached` -- client handles this
-- `/responses/compact` integration for context window management
-- Multi-provider routing (Azure, Bedrock equivalents)
-- Envoy Gateway / EPP injection of the loopback cluster (see design doc
-  section 11, `integrations/ws-realtime-eg/`)
-- The Realtime API (`/v1/realtime`) -- separate protocol, separate example if needed
+- Real credential cache / virtual key validation (P2: `CredentialCache.Pin()`)
+- `previous_response_id` tracking — proxy forwards `response.create` verbatim
+- Reconnect on `websocket_connection_limit_reached` — client responsibility
+- OTLP metric export (`ws_proxy_sessions_total`, `ws_proxy_session_duration_ms`) — P3
+- Fraser4 integration (`PolicyCache`, `CredentialCache`, Valet DB) — P4
+- Envoy Gateway / EPP cluster injection (`integrations/ws-proxy-eg/`) — P1
+- Realtime API (`/v1/realtime`) — separate protocol

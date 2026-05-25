@@ -21,14 +21,28 @@
 //
 // # Architecture
 //
-//	Client ──WS──► Envoy (port 10000, upgrade route)
-//	                  │  ──► ws-proxy-local cluster (127.0.0.1:10001)
+// Direct-dial (default):
+//
+//	Client ──WS──► Envoy :10000
+//	                  │  ──► ws-proxy-local (127.0.0.1:10001)
 //	                  │              │
 //	                  │      WSProxy.ServeHTTP
 //	                  │              │  ──► wss://api.openai.com/v1/responses
 //	                  │              │      Authorization: Bearer $OPENAI_API_KEY
 //	                  │
 //	Normal HTTP ──► upstream cluster (TLS + ws-auth upstream filter)
+//
+// Egress-via-Envoy (WSPROXY_EGRESS_URL set):
+//
+//	Client ──WS──► Envoy :10000
+//	                  │  ──► ws-proxy-local (127.0.0.1:10001)
+//	                  │              │
+//	                  │      WSProxy.ServeHTTP
+//	                  │              │  ──► ws://127.0.0.1:10002 (egress listener)
+//	                  │                              │
+//	                  │                      Envoy :10002
+//	                  │                              │  ws-auth injects Bearer token
+//	                  │                              │  ──► wss://api.openai.com/v1/responses
 package wsproxy
 
 import (
@@ -69,6 +83,12 @@ type Config struct {
 	// Default: "127.0.0.1:10001". Must match the ws-proxy-local cluster in envoy.yaml.
 	ListenAddress string `json:"listen_addr"`
 
+	// EgressURL, when set, makes the embedded server dial this local Envoy listener
+	// instead of UpstreamURL. Envoy handles TLS origination and credential injection
+	// (ws-auth upstream filter) on the egress cluster.
+	// Example: "ws://127.0.0.1:10002". Default: "" (direct dial).
+	EgressURL string `json:"egress_url"`
+
 	// OTELEndpoint enables actor-side OTLP/gRPC metrics export when set.
 	// Requires github.com/dio/logging + github.com/tetratelabs/telemetry.
 	// Example: "127.0.0.1:4317".
@@ -98,6 +118,7 @@ type WSProxy struct {
 	upstreamURL string
 	authHeader  string
 	authValue   string
+	egressURL   string // when set, dial this local Envoy listener instead of upstreamURL
 	log         *slog.Logger
 
 	// OnClientFrame is called for each text frame the client sends.
@@ -136,13 +157,19 @@ func (p *WSProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer clientConn.CloseNow()
 
+	// When egressURL is set, dial the local Envoy egress listener (plain ws://).
+	// Envoy injects auth and handles TLS to the real upstream.
+	// When dialing directly, inject auth headers here.
 	upstreamHeader := http.Header{}
-	if p.authHeader != "" && p.authValue != "" {
+	dialBase := p.upstreamURL
+	if p.egressURL != "" {
+		dialBase = p.egressURL
+	} else if p.authHeader != "" && p.authValue != "" {
 		upstreamHeader.Set(p.authHeader, p.authValue)
 	}
 
 	ctx := r.Context()
-	upstreamURL := p.upstreamURL + r.URL.Path
+	upstreamURL := dialBase + r.URL.Path
 	upstreamConn, _, err := websocket.Dial(ctx, upstreamURL, &websocket.DialOptions{
 		HTTPHeader: upstreamHeader,
 	})
@@ -304,11 +331,15 @@ func Register() {
 	if v := os.Getenv("WSPROXY_SESSION_LOG"); v != "" {
 		InitSessionLog(v)
 	}
+	if v := os.Getenv("WSPROXY_EGRESS_URL"); v != "" {
+		cfg.EgressURL = v
+	}
 
 	proxy := &WSProxy{
 		upstreamURL: cfg.UpstreamURL,
 		authHeader:  cfg.AuthHeader,
 		authValue:   resolveEnv(cfg.AuthValue),
+		egressURL:   cfg.EgressURL,
 		log:         slog.Default(),
 	}
 
