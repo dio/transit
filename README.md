@@ -248,6 +248,8 @@ state lives before an L2 `cluster-router` applies provider/model routing.
 | Example | What it shows |
 | --- | --- |
 | `hello` | Minimal downstream HTTP filter. |
+| `body-transform` | `RegisterWithMutableBody`: rename a JSON field before forwarding. |
+| `header-router` | `SetUpstreamOverrideHost`: route to one of two backends based on a request header. |
 | `request-ui` | Request capture with a small UI. |
 | `sse-tap` | Observing server-sent events. |
 | `spa` | Serving embedded static assets from a module. |
