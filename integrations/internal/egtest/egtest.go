@@ -6,8 +6,11 @@ package egtest
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -512,4 +515,104 @@ func stdinNote(stdin string) string {
 		return ""
 	}
 	return fmt.Sprintf(" <stdin:%d bytes>", len(stdin))
+}
+
+// ClusterNamesFromConfigDump parses Envoy's /config_dump response body and
+// returns all cluster names from dynamic_active_clusters and static_clusters.
+func ClusterNamesFromConfigDump(body []byte) []string {
+	var dump struct {
+		Configs []json.RawMessage `json:"configs"`
+	}
+	if err := json.Unmarshal(body, &dump); err != nil {
+		return nil
+	}
+	var names []string
+	for _, raw := range dump.Configs {
+		var cfg struct {
+			DynamicActiveClusters []struct {
+				Cluster struct {
+					Name string `json:"name"`
+				} `json:"cluster"`
+			} `json:"dynamic_active_clusters"`
+			StaticClusters []struct {
+				Cluster struct {
+					Name string `json:"name"`
+				} `json:"cluster"`
+			} `json:"static_clusters"`
+		}
+		if err := json.Unmarshal(raw, &cfg); err != nil {
+			continue
+		}
+		for _, c := range cfg.DynamicActiveClusters {
+			if c.Cluster.Name != "" {
+				names = append(names, c.Cluster.Name)
+			}
+		}
+		for _, c := range cfg.StaticClusters {
+			if c.Cluster.Name != "" {
+				names = append(names, c.Cluster.Name)
+			}
+		}
+	}
+	return names
+}
+
+// DoRequest executes req and returns the response body, HTTP status code, and
+// any transport error.
+func DoRequest(req *http.Request) ([]byte, int, error) {
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, 0, err
+	}
+	return body, resp.StatusCode, nil
+}
+
+// DiscoverBackendCluster polls adminURL/config_dump until a cluster whose name
+// begins with "httproute/<namespace>/<routeName>/rule/" appears, then returns
+// the name. Falls back to a substring match on routeName when the prefix is not
+// found. Times out after 60 seconds.
+func DiscoverBackendCluster(ctx context.Context, t *testing.T, adminURL, namespace, routeName string) string {
+	t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	var names []string
+	for time.Now().Before(deadline) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, adminURL+"/config_dump", nil)
+		if err != nil {
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		body, status, err := DoRequest(req)
+		if err != nil || status != http.StatusOK {
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		names = ClusterNamesFromConfigDump(body)
+		prefix := "httproute/" + namespace + "/" + routeName + "/rule/"
+		for _, name := range names {
+			if strings.HasPrefix(name, prefix) {
+				return name
+			}
+		}
+		if routeName != "" {
+			for _, name := range names {
+				if strings.Contains(name, routeName) {
+					return name
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			require.NoError(t, ctx.Err())
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	require.Failf(t, "backend cluster not found",
+		"no cluster matching httproute/%s/%s/rule/ found after 60s; clusters: %s",
+		namespace, routeName, strings.Join(names, ", "))
+	return ""
 }

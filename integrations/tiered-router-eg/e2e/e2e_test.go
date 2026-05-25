@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -86,7 +85,7 @@ func (s *tieredRouterSuite) TestL1SelectsPhysicalL2ShardServices() {
 	liveLogf(s.T(), "patching generated L2 clusters with cluster-router")
 	l2AAdminURL, stopL2AAdmin := portForward(s.Ctx, s.T(), "deploy/"+l2ADeploy, 19000)
 	defer stopL2AAdmin()
-	l2AClusterName := discoverBackendCluster(s.Ctx, s.T(), l2AAdminURL, "l2-a")
+	l2AClusterName := egtest.DiscoverBackendCluster(s.Ctx, s.T(), l2AAdminURL, dataplaneNamespace, "l2-a")
 	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "epp-l2.tmpl.yaml"), map[string]string{
 		"PolicyName":    "l2-a-cluster-router",
 		"GatewayName":   "l2-a",
@@ -104,7 +103,7 @@ func (s *tieredRouterSuite) TestL1SelectsPhysicalL2ShardServices() {
 
 	l2BAdminURL, stopL2BAdmin := portForward(s.Ctx, s.T(), "deploy/"+l2BDeploy, 19000)
 	defer stopL2BAdmin()
-	l2BClusterName := discoverBackendCluster(s.Ctx, s.T(), l2BAdminURL, "l2-b")
+	l2BClusterName := egtest.DiscoverBackendCluster(s.Ctx, s.T(), l2BAdminURL, dataplaneNamespace, "l2-b")
 	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "epp-l2.tmpl.yaml"), map[string]string{
 		"PolicyName":    "l2-b-cluster-router",
 		"GatewayName":   "l2-b",
@@ -123,7 +122,7 @@ func (s *tieredRouterSuite) TestL1SelectsPhysicalL2ShardServices() {
 	liveLogf(s.T(), "opening L1 Envoy admin port-forward")
 	adminURL, stopAdmin := portForward(s.Ctx, s.T(), "deploy/"+envoyDeploy, 19000)
 	defer stopAdmin()
-	clusterName := discoverBackendCluster(s.Ctx, s.T(), adminURL, "l1-public")
+	clusterName := egtest.DiscoverBackendCluster(s.Ctx, s.T(), adminURL, dataplaneNamespace, "l1-public")
 	liveLogf(s.T(), "patching generated L1 cluster %q", clusterName)
 	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "epp-l1.tmpl.yaml"), map[string]string{
 		"ClusterName": clusterName,
@@ -268,7 +267,7 @@ func requestL1(ctx context.Context, gatewayURL, tag string) (upstreamResponse, e
 	req.Host = gatewayHost
 	req.Header.Set("x-transit-tag", tag)
 	req.Header.Set("x-model", "gpt-fast")
-	raw, status, err := do(req)
+	raw, status, err := egtest.DoRequest(req)
 	if err != nil {
 		return upstreamResponse{}, err
 	}
@@ -353,7 +352,7 @@ func requestDebugDump(ctx context.Context, l2URL string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	raw, status, err := do(req)
+	raw, status, err := egtest.DoRequest(req)
 	if err != nil {
 		return nil, err
 	}
@@ -363,81 +362,12 @@ func requestDebugDump(ctx context.Context, l2URL string) ([]byte, error) {
 	return raw, nil
 }
 
-func discoverBackendCluster(ctx context.Context, t *testing.T, adminURL, routeName string) string {
-	t.Helper()
-	body := get(ctx, t, adminURL+"/config_dump")
-	names := clusterNames(body)
-	for _, name := range names {
-		if strings.HasPrefix(name, "httproute/"+dataplaneNamespace+"/"+routeName+"/rule/") {
-			return name
-		}
-	}
-	for _, name := range names {
-		if strings.Contains(name, routeName) {
-			return name
-		}
-	}
-	require.Failf(t, "backend cluster not found", "could not find generated backend cluster for %s; clusters: %s", routeName, strings.Join(names, ", "))
-	return ""
-}
-
-func clusterNames(body []byte) []string {
-	var dump struct {
-		Configs []json.RawMessage `json:"configs"`
-	}
-	if err := json.Unmarshal(body, &dump); err != nil {
-		return nil
-	}
-	var names []string
-	for _, raw := range dump.Configs {
-		var cfg struct {
-			DynamicActiveClusters []struct {
-				Cluster struct {
-					Name string `json:"name"`
-				} `json:"cluster"`
-			} `json:"dynamic_active_clusters"`
-			StaticClusters []struct {
-				Cluster struct {
-					Name string `json:"name"`
-				} `json:"cluster"`
-			} `json:"static_clusters"`
-		}
-		if err := json.Unmarshal(raw, &cfg); err != nil {
-			continue
-		}
-		for _, cluster := range cfg.DynamicActiveClusters {
-			if cluster.Cluster.Name != "" {
-				names = append(names, cluster.Cluster.Name)
-			}
-		}
-		for _, cluster := range cfg.StaticClusters {
-			if cluster.Cluster.Name != "" {
-				names = append(names, cluster.Cluster.Name)
-			}
-		}
-	}
-	return names
-}
-
 func get(ctx context.Context, t *testing.T, url string) []byte {
 	t.Helper()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	require.NoError(t, err)
-	body, status, err := do(req)
+	body, status, err := egtest.DoRequest(req)
 	require.NoError(t, err)
 	require.Equalf(t, http.StatusOK, status, "GET %s body %s", url, body)
 	return body
-}
-
-func do(req *http.Request) ([]byte, int, error) {
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, 0, err
-	}
-	return body, resp.StatusCode, nil
 }

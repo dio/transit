@@ -131,7 +131,7 @@ func (s *mcpProfileGatewaySuite) TestMCPProfileGatewayTopology() {
 	liveLogf(s.T(), "patching L2-A cluster-router")
 	l2AAdminURL, stopL2AAdmin := portForward(s.Ctx, s.T(), "deploy/"+l2ADeploy, 19000)
 	defer stopL2AAdmin()
-	l2AInitCluster := discoverBackendCluster(s.Ctx, s.T(), l2AAdminURL, "l2-a-cluster-router-init")
+	l2AInitCluster := egtest.DiscoverBackendCluster(s.Ctx, s.T(), l2AAdminURL, dataplaneNamespace, "l2-a-cluster-router-init")
 	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "epp-l2.tmpl.yaml"), map[string]string{
 		"PolicyName":        "l2-a-cluster-router",
 		"GatewayName":       "l2-a",
@@ -144,7 +144,7 @@ func (s *mcpProfileGatewaySuite) TestMCPProfileGatewayTopology() {
 	liveLogf(s.T(), "patching L2-B cluster-router")
 	l2BAdminURL, stopL2BAdmin := portForward(s.Ctx, s.T(), "deploy/"+l2BDeploy, 19000)
 	defer stopL2BAdmin()
-	l2BInitCluster := discoverBackendCluster(s.Ctx, s.T(), l2BAdminURL, "l2-b-cluster-router-init")
+	l2BInitCluster := egtest.DiscoverBackendCluster(s.Ctx, s.T(), l2BAdminURL, dataplaneNamespace, "l2-b-cluster-router-init")
 	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "epp-l2.tmpl.yaml"), map[string]string{
 		"PolicyName":        "l2-b-cluster-router",
 		"GatewayName":       "l2-b",
@@ -161,8 +161,8 @@ func (s *mcpProfileGatewaySuite) TestMCPProfileGatewayTopology() {
 	liveLogf(s.T(), "discovering L1 catalog callout clusters")
 	l1AdminURL, stopL1Admin := portForward(s.Ctx, s.T(), "deploy/"+l1Deploy, 19000)
 	defer stopL1Admin()
-	l1L2ACluster := discoverBackendCluster(s.Ctx, s.T(), l1AdminURL, "l1-l2a-catalog")
-	l1L2BCluster := discoverBackendCluster(s.Ctx, s.T(), l1AdminURL, "l1-l2b-catalog")
+	l1L2ACluster := egtest.DiscoverBackendCluster(s.Ctx, s.T(), l1AdminURL, dataplaneNamespace, "l1-l2a-catalog")
+	l1L2BCluster := egtest.DiscoverBackendCluster(s.Ctx, s.T(), l1AdminURL, dataplaneNamespace, "l1-l2b-catalog")
 	l1Config := buildL1Config(l1L2ACluster, l1L2BCluster)
 	liveLogf(s.T(), "applying real L1 config and restarting L1")
 	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "envoyproxies.tmpl.yaml"), map[string]string{
@@ -706,88 +706,6 @@ func buildL1Config(l1L2ACluster, l1L2BCluster string) string {
 		panic("buildL1Config: " + err.Error())
 	}
 	return string(raw)
-}
-
-// discoverBackendCluster finds the EG-generated Envoy cluster name for the
-// given HTTPRoute. Pattern: httproute/<namespace>/<routeName>/rule/<n>/...
-func discoverBackendCluster(ctx context.Context, t *testing.T, adminURL, routeName string) string {
-	t.Helper()
-	liveLogf(t, "discovering backend cluster for HTTPRoute %s", routeName)
-	deadline := time.Now().Add(60 * time.Second)
-	var names []string
-	for time.Now().Before(deadline) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, adminURL+"/config_dump", nil)
-		if err != nil {
-			time.Sleep(200 * time.Millisecond)
-			continue
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			time.Sleep(200 * time.Millisecond)
-			continue
-		}
-		body, err := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		if err != nil {
-			time.Sleep(200 * time.Millisecond)
-			continue
-		}
-		names = clusterNamesFromDump(body)
-		prefix := "httproute/" + dataplaneNamespace + "/" + routeName + "/rule/"
-		for _, name := range names {
-			if strings.HasPrefix(name, prefix) {
-				liveLogf(t, "found cluster %q for HTTPRoute %s", name, routeName)
-				return name
-			}
-		}
-		select {
-		case <-ctx.Done():
-			require.NoError(t, ctx.Err())
-		case <-time.After(500 * time.Millisecond):
-		}
-	}
-	require.Failf(t, "backend cluster not found",
-		"no cluster with prefix httproute/%s/%s/rule/ found; clusters: %s",
-		dataplaneNamespace, routeName, strings.Join(names, ", "))
-	return ""
-}
-
-func clusterNamesFromDump(body []byte) []string {
-	var dump struct {
-		Configs []json.RawMessage `json:"configs"`
-	}
-	if err := json.Unmarshal(body, &dump); err != nil {
-		return nil
-	}
-	var names []string
-	for _, raw := range dump.Configs {
-		var cfg struct {
-			DynamicActiveClusters []struct {
-				Cluster struct {
-					Name string `json:"name"`
-				} `json:"cluster"`
-			} `json:"dynamic_active_clusters"`
-			StaticClusters []struct {
-				Cluster struct {
-					Name string `json:"name"`
-				} `json:"cluster"`
-			} `json:"static_clusters"`
-		}
-		if err := json.Unmarshal(raw, &cfg); err != nil {
-			continue
-		}
-		for _, c := range cfg.DynamicActiveClusters {
-			if c.Cluster.Name != "" {
-				names = append(names, c.Cluster.Name)
-			}
-		}
-		for _, c := range cfg.StaticClusters {
-			if c.Cluster.Name != "" {
-				names = append(names, c.Cluster.Name)
-			}
-		}
-	}
-	return names
 }
 
 func contains(slice []string, s string) bool {

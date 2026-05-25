@@ -17,7 +17,6 @@ package e2e
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -284,40 +283,14 @@ func (s *tieredWsProxySuite) waitSessionRecord(model string, wantInput, wantOutp
 // name owned by the given Gateway (in default namespace).
 func (s *tieredWsProxySuite) generatedDeployment(gateway string) string {
 	s.T().Helper()
-	return s.generatedResourceName(gateway, "deploy")
+	return egtest.GeneratedResourceName(s.Ctx, s.T(), "envoy-gateway-system", gateway, "deploy")
 }
 
 // generatedService waits for and returns the EG-generated Envoy Service name
 // owned by the given Gateway (in default namespace).
 func (s *tieredWsProxySuite) generatedService(gateway string) string {
 	s.T().Helper()
-	return s.generatedResourceName(gateway, "svc")
-}
-
-func (s *tieredWsProxySuite) generatedResourceName(gateway, kind string) string {
-	s.T().Helper()
-	liveLogf(s.T(), "waiting for generated Envoy %s for Gateway %s", kind, gateway)
-	deadline := time.Now().Add(120 * time.Second)
-	var last string
-	for time.Now().Before(deadline) {
-		last = egtest.Output(s.Ctx, s.T(), "", "kubectl", "get", kind,
-			"-n", "envoy-gateway-system",
-			"-l", fmt.Sprintf(
-				"gateway.envoyproxy.io/owning-gateway-namespace=default,gateway.envoyproxy.io/owning-gateway-name=%s",
-				gateway),
-			"-o", `jsonpath={range .items[*]}{.metadata.name}{'\n'}{end}`)
-		if fields := strings.Fields(last); len(fields) > 0 {
-			return fields[0]
-		}
-		select {
-		case <-s.Ctx.Done():
-			require.NoError(s.T(), s.Ctx.Err())
-		case <-time.After(500 * time.Millisecond):
-		}
-	}
-	require.Failf(s.T(), "generated resource not found",
-		"Envoy %s for Gateway %s not found after 120s; last output: %q", kind, gateway, last)
-	return ""
+	return egtest.GeneratedResourceName(s.Ctx, s.T(), "envoy-gateway-system", gateway, "svc")
 }
 
 func httpGetString(ctx context.Context, t *testing.T, url string) string {

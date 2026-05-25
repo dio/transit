@@ -5,11 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -77,7 +75,7 @@ func (s *clusterRouterSuite) TestClusterRouterEnvoyGateway() {
 	liveLogf(s.T(), "opening Envoy admin port-forward")
 	adminURL, stopAdmin := portForward(s.Ctx, s.T(), "envoy-gateway-system", "deploy/"+envoyDeploy, 19000)
 	defer stopAdmin()
-	clusterName := discoverBackendCluster(s.Ctx, s.T(), adminURL)
+	clusterName := egtest.DiscoverBackendCluster(s.Ctx, s.T(), adminURL, "default", "cluster-router-backend")
 	liveLogf(s.T(), "patching generated cluster %q", clusterName)
 	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "epp.tmpl.yaml"), map[string]string{
 		"ClusterName": clusterName,
@@ -173,7 +171,7 @@ func checkRoute(ctx context.Context, gatewayURL, model string, want upstreamResp
 	}
 	req.Host = gatewayHost
 	req.Header.Set("x-model", model)
-	raw, status, err := do(req)
+	raw, status, err := egtest.DoRequest(req)
 	if err != nil {
 		return err
 	}
@@ -197,66 +195,9 @@ func postModel(ctx context.Context, t *testing.T, controlURL string, update mode
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, controlURL+"/models", bytes.NewReader(raw))
 	require.NoError(t, err)
 	req.Header.Set("content-type", "application/json")
-	body, status, err := do(req)
+	body, status, err := egtest.DoRequest(req)
 	require.NoError(t, err)
 	require.Equalf(t, http.StatusOK, status, "POST /models body %s", body)
-}
-
-func discoverBackendCluster(ctx context.Context, t *testing.T, adminURL string) string {
-	t.Helper()
-	body := get(ctx, t, adminURL+"/config_dump", nil)
-	names := clusterNames(body)
-	for _, name := range names {
-		if strings.HasPrefix(name, "httproute/default/cluster-router/rule/") {
-			return name
-		}
-	}
-	for _, name := range names {
-		if strings.Contains(name, "cluster-router-backend") {
-			return name
-		}
-	}
-	require.Failf(t, "backend cluster not found", "could not find generated backend cluster in config dump; clusters: %s", strings.Join(names, ", "))
-	return ""
-}
-
-func clusterNames(body []byte) []string {
-	var dump struct {
-		Configs []json.RawMessage `json:"configs"`
-	}
-	if err := json.Unmarshal(body, &dump); err != nil {
-		return nil
-	}
-	var names []string
-	for _, raw := range dump.Configs {
-		var cfg struct {
-			Type                  string `json:"@type"`
-			DynamicActiveClusters []struct {
-				Cluster struct {
-					Name string `json:"name"`
-				} `json:"cluster"`
-			} `json:"dynamic_active_clusters"`
-			StaticClusters []struct {
-				Cluster struct {
-					Name string `json:"name"`
-				} `json:"cluster"`
-			} `json:"static_clusters"`
-		}
-		if err := json.Unmarshal(raw, &cfg); err != nil {
-			continue
-		}
-		for _, cluster := range cfg.DynamicActiveClusters {
-			if cluster.Cluster.Name != "" {
-				names = append(names, cluster.Cluster.Name)
-			}
-		}
-		for _, cluster := range cfg.StaticClusters {
-			if cluster.Cluster.Name != "" {
-				names = append(names, cluster.Cluster.Name)
-			}
-		}
-	}
-	return names
 }
 
 func get(ctx context.Context, t *testing.T, url string, headers map[string]string) []byte {
@@ -266,54 +207,18 @@ func get(ctx context.Context, t *testing.T, url string, headers map[string]strin
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	body, status, err := do(req)
+	body, status, err := egtest.DoRequest(req)
 	require.NoError(t, err)
 	require.Equalf(t, http.StatusOK, status, "GET %s body %s", url, body)
 	return body
 }
 
-func do(req *http.Request) ([]byte, int, error) {
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, 0, err
-	}
-	return body, resp.StatusCode, nil
-}
-
 func envoyDeployment(ctx context.Context, t *testing.T) string {
 	t.Helper()
-	return generatedResourceName(ctx, t, "deploy")
+	return egtest.GeneratedResourceName(ctx, t, "envoy-gateway-system", "cluster-router", "deploy")
 }
 
 func envoyService(ctx context.Context, t *testing.T) string {
 	t.Helper()
-	return generatedResourceName(ctx, t, "svc")
-}
-
-func generatedResourceName(ctx context.Context, t *testing.T, kind string) string {
-	t.Helper()
-	liveLogf(t, "waiting for generated Envoy %s", kind)
-	deadline := time.Now().Add(120 * time.Second)
-	var last string
-	for time.Now().Before(deadline) {
-		last = output(ctx, t, "", "kubectl", "get", kind, "-n", "envoy-gateway-system",
-			"-l", "gateway.envoyproxy.io/owning-gateway-namespace=default,gateway.envoyproxy.io/owning-gateway-name=cluster-router",
-			"-o", "jsonpath={range .items[*]}{.metadata.name}{'\\n'}{end}")
-		fields := strings.Fields(last)
-		if len(fields) > 0 {
-			return fields[0]
-		}
-		select {
-		case <-ctx.Done():
-			require.NoError(t, ctx.Err())
-		case <-time.After(500 * time.Millisecond):
-		}
-	}
-	require.Failf(t, "generated Envoy resource not found", "%s not found; last output: %q", kind, last)
-	return ""
+	return egtest.GeneratedResourceName(ctx, t, "envoy-gateway-system", "cluster-router", "svc")
 }

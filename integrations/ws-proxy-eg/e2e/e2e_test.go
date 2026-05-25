@@ -208,37 +208,13 @@ func (s *wsProxySuite) waitEnvoyConfigApplied(adminURL, clusterName string) {
 // envoyDeployment waits for and returns the name of the EG-generated Envoy deployment.
 func (s *wsProxySuite) envoyDeployment() string {
 	s.T().Helper()
-	return s.generatedResourceName("deploy")
+	return egtest.GeneratedResourceName(s.Ctx, s.T(), "envoy-gateway-system", "ws-proxy", "deploy")
 }
 
 // envoyService waits for and returns the name of the EG-generated Envoy service.
 func (s *wsProxySuite) envoyService() string {
 	s.T().Helper()
-	return s.generatedResourceName("svc")
-}
-
-func (s *wsProxySuite) generatedResourceName(kind string) string {
-	s.T().Helper()
-	liveLogf(s.T(), "waiting for generated Envoy %s", kind)
-	deadline := time.Now().Add(120 * time.Second)
-	var last string
-	for time.Now().Before(deadline) {
-		last = egtest.Output(s.Ctx, s.T(), "", "kubectl", "get", kind,
-			"-n", "envoy-gateway-system",
-			"-l", "gateway.envoyproxy.io/owning-gateway-namespace=default,gateway.envoyproxy.io/owning-gateway-name=ws-proxy",
-			"-o", `jsonpath={range .items[*]}{.metadata.name}{'\n'}{end}`)
-		if fields := strings.Fields(last); len(fields) > 0 {
-			return fields[0]
-		}
-		select {
-		case <-s.Ctx.Done():
-			require.NoError(s.T(), s.Ctx.Err())
-		case <-time.After(500 * time.Millisecond):
-		}
-	}
-	require.Failf(s.T(), "generated resource not found",
-		"Envoy %s for Gateway ws-proxy not found; last output: %q", kind, last)
-	return ""
+	return egtest.GeneratedResourceName(s.Ctx, s.T(), "envoy-gateway-system", "ws-proxy", "svc")
 }
 
 func httpGet(ctx context.Context, t *testing.T, url string) []byte {
