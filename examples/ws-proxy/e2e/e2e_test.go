@@ -7,6 +7,7 @@
 package e2e
 
 import (
+	"bufio"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -25,18 +26,20 @@ import (
 	"golang.org/x/net/context"
 
 	"github.com/dio/transit/examples/internal/e2etest"
+	wsproxy "github.com/dio/transit/examples/ws-proxy"
 )
 
 //go:embed testdata/envoy.tmpl.yaml
 var envoyConfigTmpl string
 
 var (
-	proxyURL     string
-	adminURL     string
-	loopbackPort int
-	mockPort     int
-	envoyCmd     *exec.Cmd
-	examplesRoot string
+	proxyURL       string
+	adminURL       string
+	loopbackPort   int
+	mockPort       int
+	sessionLogFile string
+	envoyCmd       *exec.Cmd
+	examplesRoot   string
 )
 
 func TestMain(m *testing.M) {
@@ -59,6 +62,15 @@ func TestMain(m *testing.M) {
 	loopbackPort = e2etest.FreePort()
 	adminPort := e2etest.FreePort()
 
+	// Temp file for structured session log assertions.
+	f, err := os.CreateTemp("", "ws-proxy-sessions-*.jsonl")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "e2e: create session log: %v\n", err)
+		os.Exit(1)
+	}
+	sessionLogFile = f.Name()
+	f.Close()
+
 	proxyURL = fmt.Sprintf("ws://127.0.0.1:%d", proxyPort)
 	adminURL = fmt.Sprintf("http://127.0.0.1:%d", adminPort)
 
@@ -79,6 +91,7 @@ func TestMain(m *testing.M) {
 		"WSPROXY_LISTEN_ADDR="+fmt.Sprintf("127.0.0.1:%d", loopbackPort),
 		fmt.Sprintf("WSPROXY_UPSTREAM_URL=ws://127.0.0.1:%d", mockPort),
 		"WSPROXY_AUTH_VALUE=", // disable auth injection against mock
+		"WSPROXY_SESSION_LOG="+sessionLogFile,
 	)
 	envoyCmd.Stdout = os.Stderr
 	envoyCmd.Stderr = os.Stderr
@@ -103,6 +116,7 @@ func TestMain(m *testing.M) {
 	envoyCmd.Process.Kill()
 	envoyCmd.Wait()
 	os.Remove(cfgPath)
+	os.Remove(sessionLogFile)
 	os.Exit(code)
 }
 
@@ -216,8 +230,83 @@ func TestWsProxy_FrameIntegrity(t *testing.T) {
 	}
 }
 
-// TestWsProxy_TokenUsageExtracted verifies that the SessionTap correctly
-// captures token usage from response.completed frames.
+// TestWsProxy_ObservabilitySessionRecord verifies that recordActorSession emits
+// a JSON session record with the correct model and token counts after a real
+// session through Envoy. This is the P0 observability gate: the slog + JSON
+// file path fires with the right values, not just noise on stderr.
+func TestWsProxy_ObservabilitySessionRecord(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Record file offset before the test so we only read records this session wrote.
+	fi, err := os.Stat(sessionLogFile)
+	require.NoError(t, err)
+	startOffset := fi.Size()
+
+	conn, _, err := websocket.Dial(ctx, proxyURL+"/v1/responses", &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": {"Bearer sk-test"}},
+	})
+	require.NoError(t, err)
+
+	// Send response.create — mock returns response.completed then echoes.
+	req := map[string]any{
+		"type":  "response.create",
+		"model": "gpt-4.1",
+		"input": []map[string]any{},
+	}
+	require.NoError(t, wsjson.Write(ctx, conn, req))
+
+	// Drain: response.completed + echo of response.create.
+	for i := 0; i < 2; i++ {
+		_, _, err := conn.Read(ctx)
+		require.NoError(t, err)
+	}
+
+	// Close the connection cleanly so recordActorSession fires.
+	conn.Close(websocket.StatusNormalClosure, "done")
+
+	// Poll the session log file until the record appears (up to 3s).
+	var rec wsproxy.SessionRecord
+	require.Eventually(t, func() bool {
+		recs := readSessionRecords(t, sessionLogFile, startOffset)
+		if len(recs) == 0 {
+			return false
+		}
+		rec = recs[len(recs)-1]
+		return true
+	}, 3*time.Second, 50*time.Millisecond, "session record not written in time")
+
+	require.Equal(t, "/v1/responses", rec.Path)
+	require.Equal(t, "gpt-4.1", rec.Model, "model must be extracted from response.create")
+	require.Equal(t, uint32(100), rec.InputTokens, "input_tokens from response.completed")
+	require.Equal(t, uint32(42), rec.OutputTokens, "output_tokens from response.completed")
+	require.GreaterOrEqual(t, rec.DurationMS, int64(0))
+	// result is "error" because CloseNow on the other pump sees an EOF — that's
+	// expected for a clean test close. What matters is the token/model fields.
+}
+
+// readSessionRecords reads JSON lines from path starting at byteOffset.
+func readSessionRecords(t *testing.T, path string, byteOffset int64) []wsproxy.SessionRecord {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	if _, err := f.Seek(byteOffset, 0); err != nil {
+		return nil
+	}
+	var recs []wsproxy.SessionRecord
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		var r wsproxy.SessionRecord
+		if json.Unmarshal(sc.Bytes(), &r) == nil {
+			recs = append(recs, r)
+		}
+	}
+	return recs
+}
+
 func TestWsProxy_TokenUsageExtracted(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

@@ -42,6 +42,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
 	"github.com/dio/transit/up"
 )
 
@@ -299,6 +300,9 @@ func Register() {
 	}
 	if v := os.Getenv("WSPROXY_AUTH_VALUE"); v != "" {
 		cfg.AuthValue = v
+	}
+	if v := os.Getenv("WSPROXY_SESSION_LOG"); v != "" {
+		InitSessionLog(v)
 	}
 
 	proxy := &WSProxy{
