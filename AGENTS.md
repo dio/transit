@@ -33,6 +33,8 @@ transit/                     root Go module: github.com/dio/transit
     cluster-router-eg/
     tiered-router-eg/
     mcp-profile-tiered-router-eg/
+    ws-proxy-eg/               Single-tier WS proxy under EG; EPP injects DynamicModuleFilter + STATIC loopback
+    tiered-ws-proxy-eg/        Two-tier WS pipeline: L1 shard-routes upgrade, L2 embedded server + egress listener
   .agents/skills/            In-repo agent skills (load these for relevant tasks)
 ```
 
@@ -54,6 +56,7 @@ writing code, not after.
 | Run e2e suites, debug Envoy startup | `transit-e2e-runner` |
 | Add or debug k3d / Envoy Gateway integrations | `transit-k3d-envoy-gateway-e2e` |
 | Design L1/L2 tiered router scenarios | `transit-tiered-router-design` |
+| Design or debug tiered WS proxy (L1 shard-routes + L2 embedded server + egress) | `transit-k3d-envoy-gateway-e2e` + `transit-tiered-router-design` |
 
 Load with (Hermes):
 ```
@@ -190,13 +193,22 @@ Do not add per-example targets to the root Makefile.
 
 - `upgrade_configs: [{upgrade_type: websocket}]` is required on the HCM
   listener to allow WebSocket upgrades. Omitting it causes Envoy to reject
-  the upgrade with 426.
+  the upgrade with 426. Also add it on the route with `timeout: 0s` or Envoy
+  kills the tunnel after the default 15s route timeout.
 - Filter names in YAML must exactly match the `name` string passed to
   `up.Register*`. Mismatch = filter not found at runtime.
 - Dynamic module config: `name` in YAML maps to `lib<name>.so` on disk.
   Envoy prepends `lib` automatically.
 - Use `ENVOY_DYNAMIC_MODULES_SEARCH_PATH` (env var) to tell Envoy where to
   find `.so` files. Set in e2e TestMain and in `make run`.
+- `WSPROXY_EGRESS_URL` is a **base URL** (e.g. `ws://127.0.0.1:10002`).
+  The ws-proxy code appends `r.URL.Path` before dialing. Including the path
+  in the env var causes a double-path URL and a non-101 response from Envoy.
+- For WS egress via Envoy (two-listener L2 pattern): add a second HTTP listener
+  to `Gateway/l2` (e.g. port 10002). EG generates `tcp-10002`; EPP adds
+  `upgrade_configs` to it. The embedded server dials `WSPROXY_EGRESS_URL` which
+  hits this listener. This restores Envoy's ownership of TLS and auth for the
+  upstream hop — the same ownership the Cluster Extension provides for HTTP.
 
 ---
 

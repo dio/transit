@@ -265,3 +265,85 @@ make -C integrations/tiered-ws-proxy-eg eg-install KEEP_CLUSTER=1
 # Publish short-lived ttl.sh images for CI
 make -C integrations/tiered-ws-proxy-eg publish
 ```
+
+## Debugging post-mortem
+
+This section documents bugs found during the first real e2e run and what they
+taught about debugging this class of system.
+
+### Bug: double path in `WSPROXY_EGRESS_URL` (Gate 2 fail)
+
+**Symptom** — Gate 1 passes (WS `101` end-to-end), Gate 2 immediately
+receives a WS close frame: `StatusInternalError / "upstream unavailable"`.
+
+**Root cause** — `ws_proxy.go` constructs the upstream URL as:
+
+```go
+upstreamURL := dialBase + r.URL.Path   // dialBase = p.egressURL
+```
+
+`EgressURL` is a **base URL** (e.g. `ws://127.0.0.1:10002`). The path is
+appended from the inbound request. Setting
+`WSPROXY_EGRESS_URL=ws://127.0.0.1:10002/v1/responses` (with path) caused the
+embedded server to dial `ws://127.0.0.1:10002/v1/responses/v1/responses` — a
+URL Envoy had no route for.
+
+**Fix** — `WSPROXY_EGRESS_URL=ws://127.0.0.1:10002` (base only).
+
+### Why Gate 1 is a misleading signal when egress fails
+
+`WSProxy.ServeHTTP` calls `websocket.Accept` **before** dialing the egress
+URL. `Accept` sends `101 Switching Protocols` to the client immediately. Gate
+1 (`websocket.Dial` returning `nil`) only proves the inbound 101 path works.
+The egress dial happens after `Accept`; if it fails the server sends
+`clientConn.Close(StatusInternalError, "upstream unavailable")`.
+
+The test harness receives that close frame on the next `conn.Read` call — Gate
+2 — not on `conn.Dial`. This makes the failure look like a Gate 2 data-path
+problem when it is actually a Gate 1 egress-dial problem.
+
+**Diagnosis rule**: if Gate 1 passes but Gate 2 immediately returns
+`StatusInternalError / "upstream unavailable"` on the **first** `Read` (before
+any frame was written), the egress URL is wrong, not the L1→L2 inbound path.
+
+### SKIP_IMAGE_BUILD timestamp mismatch
+
+`IMAGE_TAG := $(shell date +%s)` in the Makefile is evaluated at `make` start
+time. `SKIP_IMAGE_BUILD=1` skips building but does **not** freeze the tag — a
+fresh timestamp is generated on every invocation, so the image names the test
+harness tries to import do not exist.
+
+Pass explicit names when reusing a previous build:
+
+```sh
+make -C integrations/tiered-ws-proxy-eg e2e SKIP_IMAGE_BUILD=1 \
+  L1_IMAGE=transit-tiered-ws-proxy-l1:1779689313 \
+  L2_IMAGE=transit-tiered-ws-proxy-l2:1779689313 \
+  MOCK_IMAGE=transit-tiered-ws-proxy-mock:1779689313
+```
+
+### Diagnosing EPP patch failures
+
+`EnvoyPatchPolicy` status `Programmed=True` means EG accepted the policy and
+attempted all patches. It does **not** guarantee every patch landed correctly
+(e.g. a `replace` targeting a path that doesn't exist in that Envoy version
+silently does nothing). Always verify via `config_dump`:
+
+```sh
+# Confirm DynamicModuleFilter, :10001, and :10002 are present after EPP
+kubectl exec -n envoy-gateway-system deploy/<l2-envoy-deploy> -- \
+  wget -qO- localhost:19000/config_dump \
+  | grep -E 'DynamicModuleFilter|10001|10002|upgrade_type'
+```
+
+The `waitL2ConfigApplied` helper in the test harness automates this poll (60s
+deadline, 500ms interval). If it times out, the EPP patches 1–6 did not all
+land — inspect the patch paths against the running Envoy version's xDS schema.
+
+### Diagnosing 426 vs 503 on the WS upgrade path
+
+| Status | Meaning | Likely cause |
+|--------|---------|--------------|
+| 426 Upgrade Required | `upgrade_configs` missing | L1 EPP patch 1 or L2 EPP patch 2 did not land on the listener |
+| 503 Service Unavailable | cluster has no healthy endpoints | Pause placeholder not ready when EPP was applied; EDS cluster not yet populated |
+| `StatusInternalError` close frame immediately after 101 | embedded server's egress dial failed | Wrong `WSPROXY_EGRESS_URL`, egress listener not yet accepting, or egress cluster has no endpoints |

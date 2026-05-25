@@ -363,6 +363,100 @@ When the suite fails after Envoy Gateway is installed:
    `make -C integrations/<name> eg-install KEEP_CLUSTER=1` to get a stable
    base cluster without the image import, then apply resources manually.
 
+## WebSocket tiered proxy debugging
+
+This section covers failure patterns specific to integrations that use
+`ws-proxy-eg` or `tiered-ws-proxy-eg` shapes (embedded ws-proxy server,
+two-listener L2, `WSPROXY_EGRESS_URL`).
+
+### accept-before-dial: Gate 1 passes but Gate 2 fails on first Read
+
+`WSProxy.ServeHTTP` calls `websocket.Accept` (sends `101`) **before** dialing
+the egress URL. A Gate that only checks the WS dial will pass even when the
+egress dial fails.
+
+```
+Gate 1: conn, _, err := websocket.Dial(...)  ← returns nil (101 received)
+Gate 2: _, _, err = conn.Read(...)           ← returns StatusInternalError "upstream unavailable"
+```
+
+If Gate 2 fails immediately on the **first** `Read` before any frame was
+written, the egress URL is wrong — not the L1→L2 inbound path. Common causes:
+
+| Symptom at Gate 2 | Root cause |
+|-------------------|-----------|
+| `StatusInternalError / upstream unavailable` | Egress dial failed: wrong URL, 426 from Envoy (missing `upgrade_configs` on egress listener), or egress cluster has no endpoints |
+| `StatusInternalError / upstream unavailable` immediately after 101 | `WSPROXY_EGRESS_URL` includes path → double-path URL → Envoy has no route |
+| 426 on Gate 1 | `upgrade_configs` missing on L1 inbound listener or L2 inbound listener |
+| 503 on Gate 1 | EDS cluster has no endpoints; EPP applied before pause placeholder was ready |
+
+### WSPROXY_EGRESS_URL must be a base URL
+
+`ws_proxy.go` constructs the upstream URL as `egressURL + r.URL.Path`. Set:
+
+```yaml
+# Correct
+- name: WSPROXY_EGRESS_URL
+  value: "ws://127.0.0.1:10002"
+
+# Wrong — causes double-path ws://127.0.0.1:10002/v1/responses/v1/responses
+- name: WSPROXY_EGRESS_URL
+  value: "ws://127.0.0.1:10002/v1/responses"
+```
+
+### SKIP_IMAGE_BUILD timestamp mismatch
+
+`IMAGE_TAG := $(shell date +%s)` in the integration Makefile is evaluated at
+`make` start time. `SKIP_IMAGE_BUILD=1` skips the build but does **not** freeze
+the tag — a fresh timestamp is generated. The resulting image names do not exist
+in Docker; `k3d image import` fails.
+
+Always pass explicit image names when reusing a previous build:
+
+```sh
+make -C integrations/tiered-ws-proxy-eg e2e SKIP_IMAGE_BUILD=1 \
+  L1_IMAGE=transit-tiered-ws-proxy-l1:<tag> \
+  L2_IMAGE=transit-tiered-ws-proxy-l2:<tag> \
+  MOCK_IMAGE=transit-tiered-ws-proxy-mock:<tag>
+```
+
+### Two-listener Gateway for WS egress
+
+After `101 Switching Protocols` Envoy becomes a transparent TCP tunnel — EPP
+patches and upstream filters cannot touch WS frames. To keep Envoy ownership
+of TLS and credentials on the upstream hop, add a second HTTP listener to
+the L2 Gateway:
+
+```yaml
+listeners:
+- name: inbound   # receives WS from L1
+  protocol: HTTP
+  port: 80
+- name: egress    # receives WS from embedded server
+  protocol: HTTP
+  port: 10002
+```
+
+EG generates `tcp-80` and `tcp-10002` from the same pod. EPP patches both.
+The embedded server dials `ws://127.0.0.1:10002` (base URL only). This is the
+only pattern that restores Envoy ownership of the upstream WS connection without
+patching Envoy core.
+
+### config_dump verification for L2 patches
+
+Poll `/config_dump` on the L2 Envoy admin port after EPP is applied. A
+fully-patched L2 must show all of:
+
+- `DynamicModuleFilter` with `filter_name: ws-proxy` in `tcp-80` filter chain
+- `127.0.0.1:10001` in a STATIC cluster (inbound → embedded server)
+- `10002` bound as a listener port (egress listener present)
+- `upgrade_type: websocket` in both `tcp-80` and `tcp-10002`
+
+The `waitL2ConfigApplied` helper in `tiered-ws-proxy-eg/e2e/e2e_test.go` checks
+these conditions (60s deadline, 500ms poll). If it times out, one of the six L2
+EPP patches did not land — inspect the patch paths against the running Envoy
+version's xDS schema.
+
 ## Make targets
 
 All Go e2e targets must use `-count=1` so a cached test result cannot skip a

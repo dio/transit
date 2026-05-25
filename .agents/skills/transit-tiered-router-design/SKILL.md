@@ -181,6 +181,53 @@ Only consider a Transit HTTP-filter implementation after the service-level
 aggregator proves the JSON-RPC semantics and Transit has an outbound subrequest
 API with clear body buffering limits.
 
+## Tiered WS proxy (vs tiered HTTP router)
+
+The tiered router pattern works cleanly for HTTP because Cluster Extension
+gives the Go module ownership of host selection while Envoy keeps ownership
+of the TCP connection, TLS, and upstream filters. That ownership breaks for
+WebSocket after `101 Switching Protocols` — Envoy becomes a transparent TCP
+tunnel and cannot run upstream filters on WS frames.
+
+The tiered WS proxy uses a different shape:
+
+| Aspect | Tiered HTTP router | Tiered WS proxy |
+|--------|-------------------|-----------------|
+| L1 role | shard-route at request phase | shard-route at WS upgrade (`ChooseHost`); transparent tunnel after 101 |
+| L2 frame handling | Cluster Extension, Envoy owns connection | embedded server (`RegisterWithGroup`) intercepts every frame |
+| L2 upstream egress | Envoy Cluster Extension (free) | explicit second Gateway listener so Envoy regains ownership |
+| L2 egress ownership | Envoy injects TLS + auth via upstream filters | same — but via the L2 egress listener (`tcp-10002`), not the cluster |
+
+### Two-listener L2 shape
+
+```
+Gateway/l2
+  listener inbound  :80    → EPP: DynamicModuleFilter + upgrade_configs + STATIC 127.0.0.1:10001
+  listener egress  :10002  → EPP: upgrade_configs (ws-auth upstream filter optional)
+```
+
+The embedded server (running at `:10001`) dials `WSPROXY_EGRESS_URL=ws://127.0.0.1:10002`
+(base URL, no path). Envoy's egress listener upgrades to WS and routes to the
+real upstream cluster, keeping TLS and credential injection in Envoy.
+
+### L1 is fully opaque after upgrade
+
+`ChooseHost` fires at the HTTP upgrade phase (before 101). L1 selects the L2
+pod. After 101, L1 is a transparent TCP tunnel — no LB callbacks, no upstream
+filters, no frame inspection. The shard table in cluster-shard-router points at
+`l2.<ns>.svc.cluster.local:80` (the L2 inbound service).
+
+### Testing priority for tiered WS proxy
+
+1. Gate 1: WS dial returns 101 end-to-end (proves upgrade propagates L1→L2→upstream).
+2. Gate 2: first frame round-trip (proves embedded server is reachable and egress works).
+3. Gate 3: session record after close (proves SessionTap fired on real frames).
+
+Gate 1 passing does **not** prove Gate 2 will pass: `websocket.Accept` sends 101
+before the embedded server dials the egress URL. A Gate 2 failure on the first
+`Read` with `StatusInternalError / upstream unavailable` means the egress dial
+failed, not the inbound path.
+
 ## Testing priority
 
 Prove the topology incrementally:
