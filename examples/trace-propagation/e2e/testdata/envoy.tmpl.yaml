@@ -2,6 +2,16 @@ admin:
   address:
     socket_address: { address: 127.0.0.1, port_value: {{.AdminPort}} }
 
+tracing:
+  http:
+    name: envoy.tracers.opentelemetry
+    typed_config:
+      "@type": type.googleapis.com/envoy.config.trace.v3.OpenTelemetryConfig
+      grpc_service:
+        envoy_grpc:
+          cluster_name: otel-collector
+      service_name: "trace-propagation-e2e"
+
 static_resources:
   listeners:
     # Inbound listener — client sends requests here; Envoy loads the filter
@@ -16,6 +26,11 @@ static_resources:
               typed_config:
                 "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
                 stat_prefix: ingress
+                generate_request_id: true
+                tracing:
+                  client_sampling: { value: 100 }
+                  random_sampling: { value: 100 }
+                  overall_sampling: { value: 100 }
                 http_filters:
                   - name: trace-propagation
                     typed_config:
@@ -83,3 +98,18 @@ static_resources:
               - endpoint:
                   address:
                     socket_address: { address: 127.0.0.1, port_value: {{.BackendPort}} }
+
+    - name: otel-collector
+      type: STATIC
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http2_protocol_options: {}
+      load_assignment:
+        cluster_name: otel-collector
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: 127.0.0.1, port_value: {{.OtelPort}} }

@@ -103,5 +103,13 @@ func Register() {
 		func() {},
 	)
 
-	up.RegisterWithGroup(ExtensionName, g, func(w *up.Writer, r *up.Request) {})
+	up.RegisterWithGroup(ExtensionName, g, func(w *up.Writer, r *up.Request) {
+		span := w.GetActiveSpan()
+		if span == nil {
+			return
+		}
+		span.SetOperation("trace-propagation.ingress")
+		span.SetTag("http.method", r.Method)
+		span.SetTag("http.path", r.Path)
+	})
 }
