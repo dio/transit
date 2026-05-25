@@ -30,7 +30,7 @@ All three gates must pass:
 
 ```mermaid
 flowchart TD
-    TH(["Test Harness\ngo test ./e2e/..."])
+    TH(["Test Harness<br/>go test ./e2e/..."])
 
     subgraph k3d["k3d cluster · transit-ws-proxy-eg"]
 
@@ -39,28 +39,28 @@ flowchart TD
 
             subgraph pod["Generated Envoy Pod  (transit-ws-proxy-eg image)"]
                 direction TB
-                LIS["Listener tcp-80\n① DynamicModuleFilter ws-proxy\n② upgrade_configs: websocket"]
-                RC["RouteConfig http-80\n/v1/responses\n→ httproute/default/ws-proxy/rule/0\ntimeout 0s · upgrade_configs: websocket"]
-                CL["Cluster  httproute/default/ws-proxy/rule/0\ntype: STATIC · 127.0.0.1:10001"]
-                ECHO["Embedded Echo Server\n127.0.0.1:10001\n(RegisterWithGroup · libws-proxy.so)"]
+                LIS["Listener tcp-80<br/>① DynamicModuleFilter ws-proxy<br/>② upgrade_configs: websocket"]
+                RC["RouteConfig http-80<br/>/v1/responses<br/>→ httproute/default/ws-proxy/rule/0<br/>timeout 0s · upgrade_configs: websocket"]
+                CL["Cluster  httproute/default/ws-proxy/rule/0<br/>type: STATIC · 127.0.0.1:10001"]
+                ECHO["Embedded Echo Server<br/>127.0.0.1:10001<br/>(RegisterWithGroup · libws-proxy.so)"]
                 LIS --> RC --> CL --> ECHO
             end
         end
 
         subgraph def["default namespace"]
-            EPP["EnvoyPatchPolicy ws-proxy\nProgrammed=True · 4 JSON patches"]
-            HR["HTTPRoute ws-proxy\n/v1/responses → ws-proxy-backend:80"]
+            EPP["EnvoyPatchPolicy ws-proxy<br/>Programmed=True · 4 JSON patches"]
+            HR["HTTPRoute ws-proxy<br/>/v1/responses → ws-proxy-backend:80"]
             SVC["Service ws-proxy-backend"]
-            PD["Deployment ws-proxy-backend\ntransit-ws-proxy-eg-pause image\n(select{} · structural placeholder)\ngives EG a ready endpoint so it\ngenerates the CDS cluster"]
+            PD["Deployment ws-proxy-backend<br/>transit-ws-proxy-eg-pause image<br/>(select{} · structural placeholder)<br/>gives EG a ready endpoint so it<br/>generates the CDS cluster"]
         end
 
         EG -- "xDS + EPP applied" --> pod
         EPP -- "4 patches" --> EG
         HR --> EG
-        PD -- "ready endpoint\n→ EG creates cluster" --> SVC --> EG
+        PD -- "ready endpoint<br/>→ EG creates cluster" --> SVC --> EG
     end
 
-    TH -- "port-forward :19000\nport-forward svc :80" --> pod
+    TH -- "port-forward :19000<br/>port-forward svc :80" --> pod
     TH -. "Gate 1  config_dump" .-> pod
     TH -. "Gate 2  WS dial" .-> LIS
     TH -. "Gate 3  HTTP GET" .-> LIS
