@@ -267,7 +267,9 @@ func TestSpan_egressSpan(t *testing.T) {
 
 // TestUpstream_filterRan verifies that the trace-propagation-upstream filter
 // (wired on the backend cluster) stamps x-upstream-filter: ran on the request
-// before it reaches the backend sink.
+// before it reaches the backend sink, and that the upstream.filter=ran span
+// attribute appears in the OTLP sink — proving GetActiveSpan() works from
+// upstream filter context.
 func TestUpstream_filterRan(t *testing.T) {
 	resp, err := http.Get(proxyURL + "/")
 	if err != nil {
@@ -280,6 +282,11 @@ func TestUpstream_filterRan(t *testing.T) {
 	h := getSinkHeaders()
 	if got := h.Get("x-upstream-filter"); got != "ran" {
 		t.Errorf("upstream filter did not run: x-upstream-filter=%q", got)
+	}
+	if !waitForSpan(t, func(sp *otlptrace.Span) bool {
+		return spanHasAttr(sp, "upstream.filter", "ran")
+	}) {
+		t.Error("timed out waiting for span with upstream.filter=ran")
 	}
 }
 
