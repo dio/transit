@@ -223,7 +223,7 @@ type ClusterLBHandle interface {
 	// HostHealthByAddress performs an O(1) address lookup and returns host health.
 	HostHealthByAddress(addr string) (HostHealth, bool)
 
-	// HostStat returns a live Envoy counter for the healthy host at index.
+	// HostStat returns a live Envoy counter for the host at index within all hosts.
 	HostStat(priority uint32, index int, stat HostStat) uint64
 
 	// FindHostByAddress performs an O(1) address→host pointer lookup across

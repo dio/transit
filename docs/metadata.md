@@ -55,7 +55,7 @@ Envoy access log formatter, and rate-limit services can read it.
 ### Writing
 
 ```go
-// value may be string, float64, int, int64, or bool.
+// value may be any numeric type (int, int64, float64, etc.), string, or bool.
 w.SetMetadata("com.example.my-filter", "model", "gpt-fast")
 w.SetMetadata("com.example.my-filter", "input_tokens", int64(420))
 ```
@@ -67,12 +67,12 @@ with other filters or Envoy's built-in metadata (e.g. `envoy.filters.http.jwt_au
 
 ```go
 // Read back from the same or a downstream filter.
-if buf, ok := w.GetMetadataString(up.MetadataSourceTypeDynamic, "com.example.my-filter", "model"); ok {
+if buf, ok := w.GetMetadataString(up.MetadataSourceDynamic, "com.example.my-filter", "model"); ok {
     model := buf.String()
 }
 
-tokens, ok := w.GetMetadataNumber(up.MetadataSourceTypeDynamic, "com.example.my-filter", "input_tokens")
-enabled, ok := w.GetMetadataBool(up.MetadataSourceTypeDynamic, "com.example.my-filter", "flag")
+tokens, ok := w.GetMetadataNumber(up.MetadataSourceDynamic, "com.example.my-filter", "input_tokens")
+enabled, ok := w.GetMetadataBool(up.MetadataSourceDynamic, "com.example.my-filter", "flag")
 ```
 
 ### Access log
@@ -81,15 +81,15 @@ Dynamic metadata written by a filter is available in Envoy's access log
 format string via `%DYNAMIC_METADATA(namespace:key)%`, enabling per-request
 structured fields without a separate logging filter.
 
-### Available `MetadataSourceType` values
+### Available `MetadataSource` values
 
 | Constant | Store read |
 |---|---|
-| `MetadataSourceTypeDynamic` | Dynamic (mutable, per-stream) |
-| `MetadataSourceTypeRoute` | Static metadata on the matched HTTPRoute |
-| `MetadataSourceTypeCluster` | Static metadata on the upstream cluster |
-| `MetadataSourceTypeHost` | Static metadata on the selected upstream host |
-| `MetadataSourceTypeHostLocality` | Locality metadata on the selected host |
+| `MetadataSourceDynamic` | Dynamic (mutable, per-stream) |
+| `MetadataSourceRoute` | Static metadata on the matched HTTPRoute |
+| `MetadataSourceCluster` | Static metadata on the upstream cluster |
+| `MetadataSourceHost` | Static metadata on the selected upstream host |
+| `MetadataSourceHostLocality` | Locality metadata on the selected host |
 
 ---
 
@@ -102,18 +102,18 @@ not change mid-stream.
 
 ### Reading via `GetMetadataString/Number/Bool`
 
-Use `MetadataSourceTypeRoute`, `MetadataSourceTypeCluster`, or
-`MetadataSourceTypeHost` to read typed proto fields set in the Envoy
+Use `MetadataSourceRoute`, `MetadataSourceCluster`, or
+`MetadataSourceHost` to read typed proto fields set in the Envoy
 configuration:
 
 ```go
 // Read a string field from the matched route's metadata.
-if buf, ok := w.GetMetadataString(up.MetadataSourceTypeRoute, "com.example.routing", "tier"); ok {
+if buf, ok := w.GetMetadataString(up.MetadataSourceRoute, "com.example.routing", "tier"); ok {
     tier := buf.String()
 }
 
 // Read a flag from the upstream cluster's metadata.
-if enabled, ok := w.GetMetadataBool(up.MetadataSourceTypeCluster, "com.example.features", "shadow"); ok && enabled {
+if enabled, ok := w.GetMetadataBool(up.MetadataSourceCluster, "com.example.features", "shadow"); ok && enabled {
     // ...
 }
 ```
@@ -146,7 +146,7 @@ metadata:
       shadow: true
 ```
 
-For host-level metadata (used with `MetadataSourceTypeHost` or
+For host-level metadata (used with `MetadataSourceHost` or
 `AttributeIDXdsUpstreamHostMetadata`), set `metadata` on the endpoint in the
 `ClusterLoadAssignment`.
 
@@ -157,8 +157,8 @@ For host-level metadata (used with `MetadataSourceTypeHost` or
 | Pitfall | Symptom | Fix |
 |---|---|---|
 | `SetFilterState` on the response path | Cluster Extension receives empty string | Move the call to `OnRequestHeaders` |
-| `SetMetadata` with an unrecognised value type | Panic at runtime | Use `string`, `float64`, `int`, `int64`, or `bool` |
+| `SetMetadata` with an unrecognised value type | Panic at runtime | Use any numeric type (int, int64, float64, etc.), `string`, or `bool` |
 | Namespace collision with Envoy built-ins | Unexpected overwrites or missing values | Prefix namespace with a reverse-DNS string you own |
 | Reading dynamic metadata before it is written | `ok=false` | Ensure the writing filter runs earlier in the filter chain |
 | Using `GetAttributeString(AttributeIDXdsRouteMetadata)` before route matching | Empty result | Read only after route matching (not in pre-route `OnRequestHeaders`) |
-| Expecting `GetMetadataString(MetadataSourceTypeCluster, …)` to return host-level metadata | Wrong source | Use `MetadataSourceTypeHost` for per-endpoint metadata |
+| Expecting `GetMetadataString(MetadataSourceCluster, …)` to return host-level metadata | Wrong source | Use `MetadataSourceHost` for per-endpoint metadata |

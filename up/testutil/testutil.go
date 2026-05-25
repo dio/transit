@@ -144,6 +144,8 @@ func (h *FakeFilterHandle) SendResponseTrailers(_ [][2]string)        {}
 // -- Metadata --
 
 func (h *FakeFilterHandle) SetMetadata(ns, key string, value any) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if h.metadata[ns] == nil {
 		h.metadata[ns] = make(map[string]any)
 	}
@@ -151,8 +153,13 @@ func (h *FakeFilterHandle) SetMetadata(ns, key string, value any) {
 }
 
 func (h *FakeFilterHandle) GetMetadataString(_ shared.MetadataSourceType, ns, key string) (shared.UnsafeEnvoyBuffer, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if v, ok := h.metadata[ns][key]; ok {
 		if s, ok := v.(string); ok {
+			if len(s) == 0 {
+				return shared.UnsafeEnvoyBuffer{}, true
+			}
 			b := []byte(s)
 			return shared.UnsafeEnvoyBuffer{Ptr: &b[0], Len: uint64(len(b))}, true
 		}
@@ -161,6 +168,8 @@ func (h *FakeFilterHandle) GetMetadataString(_ shared.MetadataSourceType, ns, ke
 }
 
 func (h *FakeFilterHandle) GetMetadataNumber(_ shared.MetadataSourceType, ns, key string) (float64, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if v, ok := h.metadata[ns][key]; ok {
 		if f, ok := v.(float64); ok {
 			return f, true
@@ -170,12 +179,60 @@ func (h *FakeFilterHandle) GetMetadataNumber(_ shared.MetadataSourceType, ns, ke
 }
 
 func (h *FakeFilterHandle) GetMetadataBool(_ shared.MetadataSourceType, ns, key string) (bool, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if v, ok := h.metadata[ns][key]; ok {
 		if b, ok := v.(bool); ok {
 			return b, true
 		}
 	}
 	return false, false
+}
+
+// Metadata returns the raw stored value for (ns, key) as a string and whether it exists.
+// Only usable when the value was stored as a string.
+func (h *FakeFilterHandle) Metadata(ns, key string) (string, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if v, ok := h.metadata[ns][key]; ok {
+		if s, ok := v.(string); ok {
+			return s, true
+		}
+	}
+	return "", false
+}
+
+// MetadataNumber returns the raw stored value for (ns, key) as float64 and whether it exists.
+func (h *FakeFilterHandle) MetadataNumber(ns, key string) (float64, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if v, ok := h.metadata[ns][key]; ok {
+		if f, ok := v.(float64); ok {
+			return f, true
+		}
+	}
+	return 0, false
+}
+
+// MetadataBool returns the raw stored value for (ns, key) as bool and whether it exists.
+func (h *FakeFilterHandle) MetadataBool(ns, key string) (bool, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if v, ok := h.metadata[ns][key]; ok {
+		if b, ok := v.(bool); ok {
+			return b, true
+		}
+	}
+	return false, false
+}
+
+// ClearMetadata removes a single metadata entry for test isolation.
+func (h *FakeFilterHandle) ClearMetadata(ns, key string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.metadata[ns] != nil {
+		delete(h.metadata[ns], key)
+	}
 }
 
 func (h *FakeFilterHandle) GetMetadataKeys(_ shared.MetadataSourceType, _ string) []shared.UnsafeEnvoyBuffer {

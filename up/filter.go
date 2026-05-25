@@ -30,6 +30,22 @@ func (c *configHandleImpl) DefineCounter(name string, tagKeys ...string) (Metric
 	return MetricID(id), nil
 }
 
+func (c *configHandleImpl) DefineGauge(name string, tagKeys ...string) (MetricID, error) {
+	id, res := c.h.DefineGauge(name, tagKeys...)
+	if res != shared.MetricsSuccess {
+		return 0, fmt.Errorf("up: DefineGauge %q failed (result=%d)", name, res)
+	}
+	return MetricID(id), nil
+}
+
+func (c *configHandleImpl) DefineHistogram(name string, tagKeys ...string) (MetricID, error) {
+	id, res := c.h.DefineHistogram(name, tagKeys...)
+	if res != shared.MetricsSuccess {
+		return 0, fmt.Errorf("up: DefineHistogram %q failed (result=%d)", name, res)
+	}
+	return MetricID(id), nil
+}
+
 func (f *configFactory) Create(h shared.HttpFilterConfigHandle, _ []byte) (shared.HttpFilterFactory, error) {
 	if f.configFn != nil {
 		if err := f.configFn(&configHandleImpl{h: h}); err != nil {
@@ -148,12 +164,15 @@ type filter struct {
 	//
 	// Stale-prevention invariant: flush resets every queue to zero length before
 	// returning. A callback that runs after flush sees an empty queue.
-	stopped     bool // set by SendLocalResponse; cleared by flush on non-local-reply path
-	reqHeaders  []requestHeaderMutation
-	filterState []filterStateMutation
-	counters    []counterMutation
-	override    *upstreamOverrideMutation
-	localReply  *localResponse // set by SendLocalResponse; cleared by flush after sending
+	stopped         bool // set by SendLocalResponse; cleared by flush on non-local-reply path
+	reqHeaders      []requestHeaderMutation
+	filterState     []filterStateMutation
+	counters        []counterMutation
+	gauges          []gaugeMutation
+	histograms      []histogramMutation
+	dynamicMetadata []dynamicMetadataMutation
+	override        *upstreamOverrideMutation
+	localReply      *localResponse // set by SendLocalResponse; cleared by flush after sending
 
 	// stripFramingOnResume is set by OnRequestHeaders when a body is expected and
 	// buffered-body replacement is active. flush removes content-length and
@@ -250,6 +269,25 @@ func (f *filter) flush(continueReq bool) {
 		f.handle.IncrementCounterValue(shared.MetricID(m.id), m.delta)
 	}
 	f.counters = f.counters[:0]
+	for _, m := range f.gauges {
+		switch m.op {
+		case gaugeOpSet:
+			f.handle.SetGaugeValue(shared.MetricID(m.id), m.value)
+		case gaugeOpIncrement:
+			f.handle.IncrementGaugeValue(shared.MetricID(m.id), m.value)
+		case gaugeOpDecrement:
+			f.handle.DecrementGaugeValue(shared.MetricID(m.id), m.value)
+		}
+	}
+	f.gauges = f.gauges[:0]
+	for _, m := range f.histograms {
+		f.handle.RecordHistogramValue(shared.MetricID(m.id), m.value)
+	}
+	f.histograms = f.histograms[:0]
+	for _, m := range f.dynamicMetadata {
+		f.handle.SetMetadata(m.ns, m.key, m.value)
+	}
+	f.dynamicMetadata = f.dynamicMetadata[:0]
 	if f.override != nil {
 		f.handle.SetUpstreamOverrideHost(f.override.host, f.override.strict)
 		f.override = nil

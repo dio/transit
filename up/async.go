@@ -157,8 +157,8 @@ type localResponse struct {
 }
 
 // filterStateMutation is a deferred SetFilterState operation.
-// Filter state is visible to downstream filters, access loggers, and
-// upstream selection callbacks (e.g. LB Policy, Cluster Extension).
+// Filter state is readable by Cluster Extension (ClusterLBContext.GetFilterState).
+// It is NOT available from LB Policy (LBContext has no GetFilterState).
 type filterStateMutation struct {
 	key   string
 	value []byte
@@ -172,11 +172,38 @@ type counterMutation struct {
 	delta uint64
 }
 
+// gaugeMutation is a deferred gauge operation (set, increment, or decrement).
+type gaugeMutation struct {
+	id    MetricID
+	value uint64
+	op    gaugeOp
+}
+
+type gaugeOp uint8
+
+const (
+	gaugeOpSet gaugeOp = iota
+	gaugeOpIncrement
+	gaugeOpDecrement
+)
+
+// histogramMutation is a deferred RecordHistogram operation.
+type histogramMutation struct {
+	id    MetricID
+	value uint64
+}
+
 // upstreamOverrideMutation is a deferred SetUpstreamOverrideHost operation.
 // Only one override is kept; the last call wins (pointer is overwritten).
 type upstreamOverrideMutation struct {
 	host   string
 	strict bool
+}
+
+// dynamicMetadataMutation is a deferred SetMetadata operation.
+type dynamicMetadataMutation struct {
+	ns, key string
+	value   any
 }
 
 // errCalloutInitResult converts a non-success HTTPCalloutInitResult to an error.

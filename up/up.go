@@ -13,10 +13,14 @@ type MetricID uint64
 type LogLevel uint32
 
 // ConfigHandle is passed to config callbacks at filter config creation time.
-// Use it to define metrics (counters, histograms) once — before any requests arrive.
+// Use it to define metrics once — before any requests arrive.
 type ConfigHandle interface {
 	// DefineCounter defines an Envoy counter metric. tagKeys are optional dimension names.
 	DefineCounter(name string, tagKeys ...string) (MetricID, error)
+	// DefineGauge defines an Envoy gauge metric. tagKeys are optional dimension names.
+	DefineGauge(name string, tagKeys ...string) (MetricID, error)
+	// DefineHistogram defines an Envoy histogram metric. tagKeys are optional dimension names.
+	DefineHistogram(name string, tagKeys ...string) (MetricID, error)
 }
 
 // ConfigFunc is called once at filter config creation time on the main thread.
@@ -46,6 +50,17 @@ const (
 	LogWarn     LogLevel = LogLevel(shared.LogLevelWarn)
 	LogError    LogLevel = LogLevel(shared.LogLevelError)
 	LogCritical LogLevel = LogLevel(shared.LogLevelCritical)
+)
+
+// MetadataSource identifies which metadata store to read from.
+type MetadataSource uint32
+
+const (
+	MetadataSourceDynamic      MetadataSource = MetadataSource(shared.MetadataSourceTypeDynamic)
+	MetadataSourceRoute        MetadataSource = MetadataSource(shared.MetadataSourceTypeRoute)
+	MetadataSourceCluster      MetadataSource = MetadataSource(shared.MetadataSourceTypeCluster)
+	MetadataSourceHost         MetadataSource = MetadataSource(shared.MetadataSourceTypeHost)
+	MetadataSourceHostLocality MetadataSource = MetadataSource(shared.MetadataSourceTypeHostLocality)
 )
 
 // registry is a duplicate-name sentinel for up.Register variants.

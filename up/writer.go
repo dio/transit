@@ -254,6 +254,42 @@ func (w *Writer) IncrementCounter(id MetricID, delta uint64) {
 	w.f.handle.IncrementCounterValue(shared.MetricID(id), delta)
 }
 
+// IncrementGauge queues (or immediately applies) a gauge increment.
+func (w *Writer) IncrementGauge(id MetricID, delta uint64) {
+	if w.queued() {
+		w.f.gauges = append(w.f.gauges, gaugeMutation{id: id, value: delta, op: gaugeOpIncrement})
+		return
+	}
+	w.f.handle.IncrementGaugeValue(shared.MetricID(id), delta)
+}
+
+// DecrementGauge queues (or immediately applies) a gauge decrement.
+func (w *Writer) DecrementGauge(id MetricID, delta uint64) {
+	if w.queued() {
+		w.f.gauges = append(w.f.gauges, gaugeMutation{id: id, value: delta, op: gaugeOpDecrement})
+		return
+	}
+	w.f.handle.DecrementGaugeValue(shared.MetricID(id), delta)
+}
+
+// SetGauge queues (or immediately applies) a gauge absolute assignment.
+func (w *Writer) SetGauge(id MetricID, value uint64) {
+	if w.queued() {
+		w.f.gauges = append(w.f.gauges, gaugeMutation{id: id, value: value, op: gaugeOpSet})
+		return
+	}
+	w.f.handle.SetGaugeValue(shared.MetricID(id), value)
+}
+
+// RecordHistogram queues (or immediately applies) a histogram observation.
+func (w *Writer) RecordHistogram(id MetricID, value uint64) {
+	if w.queued() {
+		w.f.histograms = append(w.f.histograms, histogramMutation{id: id, value: value})
+		return
+	}
+	w.f.handle.RecordHistogramValue(shared.MetricID(id), value)
+}
+
 // Go upgrades this request to asynchronous mode. fn runs in a new goroutine
 // and may call w.Do to issue outbound HTTP callouts. After fn returns, Transit
 // hops back to the Envoy worker thread, applies queued mutations, and resumes

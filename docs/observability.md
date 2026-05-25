@@ -143,24 +143,6 @@ single host address string.
 
 ---
 
-## Dynamic metadata (not yet exposed in transit)
-
-Envoy's dynamic metadata is a per-stream, per-namespace typed value store
-(`google.protobuf.Struct`). It is richer than filter state:
-
-- **Readable by access loggers** via the `%DYNAMIC_METADATA(filter:key)%`
-  access log format string.
-- **Readable by Envoy's rate-limit service** and other built-in Envoy extensions.
-- **Typed** — can hold numbers, booleans, and nested objects, not just bytes.
-
-Transit does not currently wrap the dynamic metadata ABI. If you need
-per-request data to appear in structured access logs today, work around it
-by writing the data to a log line via `w.Log`, or by using an access logger
-registered with `up.RegisterAccessLogger` that reads from a shared in-process
-sink populated by the HTTP filter.
-
----
-
 ## Decision guide
 
 **"I want to debug a specific request."**
@@ -185,5 +167,5 @@ in `ChooseHost`.
 (`ctx.GetOverrideHost`) and Cluster Extension.
 
 **"I want per-request fields in Envoy access logs."**
-→ Dynamic metadata — not yet in transit. Use `w.Log` or an in-process access
-logger as a workaround.
+→ `w.SetMetadata(ns, key, value)` — Envoy access log formatter reads it via
+`%DYNAMIC_METADATA(namespace:key)%`. See `docs/metadata.md` for the full guide.
