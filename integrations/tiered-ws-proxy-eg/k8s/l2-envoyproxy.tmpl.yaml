@@ -28,7 +28,7 @@ spec:
             value: "127.0.0.1:10001"
           # Egress listener address: the embedded server dials this per session.
           - name: WSPROXY_EGRESS_URL
-            value: "ws://127.0.0.1:10002/v1/responses"
+            value: "ws://127.0.0.1:10002"
           # Gate 3: session records written here after each WS session closes.
           - name: WSPROXY_SESSION_LOG
             value: "/tmp/ws-sessions.jsonl"
