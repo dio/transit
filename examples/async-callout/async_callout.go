@@ -23,12 +23,13 @@ func Handler(w *up.Writer, _ *up.Request) {
 		Body:          []byte(`{"scope":"read"}`),
 		TimeoutMillis: 250,
 	}, func(result up.HTTPCalloutResult, _ [][2]shared.UnsafeEnvoyBuffer, body []shared.UnsafeEnvoyBuffer) {
-		if result != up.HTTPCalloutSuccess {
-			w.SendLocalResponse(503, []byte(`{"error":"auth unavailable"}`), [2]string{"content-type", "application/json"})
-			return
+		bodyStr := ""
+		if len(body) > 0 {
+			bodyStr = body[0].ToString()
 		}
-		if len(body) == 0 || body[0].ToString() != "ok" {
-			w.SendLocalResponse(403, []byte(`{"error":"denied"}`), [2]string{"content-type", "application/json"})
+		code, resp := CheckAuth(result, bodyStr)
+		if code != 0 {
+			w.SendLocalResponse(code, resp, [2]string{"content-type", "application/json"})
 			return
 		}
 		w.SetRequestHeader("x-auth-checked", "true")
@@ -36,4 +37,16 @@ func Handler(w *up.Writer, _ *up.Request) {
 	if err != nil {
 		w.SendLocalResponse(503, []byte(`{"error":"auth unavailable"}`), [2]string{"content-type", "application/json"})
 	}
+}
+
+// CheckAuth evaluates an auth callout result and response body string.
+// Returns (0, nil) meaning "pass through", or (statusCode, body) to send a local response.
+func CheckAuth(result up.HTTPCalloutResult, body string) (int, []byte) {
+	if result != up.HTTPCalloutSuccess {
+		return 503, []byte(`{"error":"auth unavailable"}`)
+	}
+	if body != "ok" {
+		return 403, []byte(`{"error":"denied"}`)
+	}
+	return 0, nil
 }
