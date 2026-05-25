@@ -17,7 +17,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -35,7 +34,6 @@ var envoyConfigTmpl string
 
 var (
 	proxyURL      string
-	envoyCmd      *exec.Cmd
 	examplesRoot  string
 	control       *configServer
 	upstreamA     *upstreamServer
@@ -115,38 +113,15 @@ func TestMain(m *testing.M) {
 		HTTPSProviderCAPath:            httpsProvider.caPath,
 	})
 
-	envoyCmd = exec.Command(bin, "-c", cfgPath, "--log-level", "warning",
-		"--component-log-level", "dynamic_modules:info")
-	envoyCmd.Env = append(os.Environ(),
-		"GODEBUG=cgocheck=0",
-		"ENVOY_DYNAMIC_MODULES_SEARCH_PATH="+exampleDir,
-	)
-	envoyCmd.Stdout = os.Stderr
-	envoyCmd.Stderr = os.Stderr
-	if err := envoyCmd.Start(); err != nil {
-		os.Remove(cfgPath)
+	stop, ok := e2etest.StartEnvoy(bin, cfgPath, exampleDir, adminPort, nil)
+	if !ok {
 		cleanupHTTPSProvider()
-		fmt.Fprintf(os.Stderr, "e2e: envoy start failed: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Fprintf(os.Stderr, "e2e: envoy pid=%d\n", envoyCmd.Process.Pid)
-
-	adminURL := fmt.Sprintf("http://127.0.0.1:%d", adminPort)
-	if !e2etest.WaitURL(adminURL+"/ready", 15*time.Second) {
-		envoyCmd.Process.Kill()
-		envoyCmd.Wait()
-		os.Remove(cfgPath)
-		cleanupHTTPSProvider()
-		fmt.Fprintln(os.Stderr, "e2e: envoy not ready in time")
 		os.Exit(1)
 	}
 	fmt.Fprintln(os.Stderr, "e2e: envoy ready")
 
 	code := m.Run()
-
-	envoyCmd.Process.Kill()
-	envoyCmd.Wait()
-	os.Remove(cfgPath)
+	stop()
 	cleanupHTTPSProvider()
 	os.Exit(code)
 }

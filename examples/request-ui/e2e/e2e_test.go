@@ -49,7 +49,6 @@ var (
 )
 
 var (
-	envoyCmd     *exec.Cmd
 	testsvr      *exec.Cmd
 	examplesRoot string
 )
@@ -129,32 +128,13 @@ func TestMain(m *testing.M) {
 	})
 
 	// Start Envoy.
-	envoyCmd = exec.Command(bin, "-c", cfgPath, "--log-level", "warning")
-	envoyCmd.Env = append(os.Environ(),
-		"GODEBUG=cgocheck=0",
+	stop, ok := e2etest.StartEnvoy(bin, cfgPath, exampleDir, adminPort, []string{
 		"REQUI_MODE=memory",
 		fmt.Sprintf("REQUI_ADDR=127.0.0.1:%d", uiPort),
-		"ENVOY_DYNAMIC_MODULES_SEARCH_PATH="+exampleDir,
-	)
-	envoyCmd.Stdout = os.Stderr
-	envoyCmd.Stderr = os.Stderr
-	if err := envoyCmd.Start(); err != nil {
+	})
+	if !ok {
 		testsvr.Process.Kill()
 		testsvr.Wait()
-		os.Remove(cfgPath)
-		fmt.Fprintf(os.Stderr, "e2e: envoy start failed: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Fprintf(os.Stderr, "e2e: envoy pid=%d proxy=:%d\n", envoyCmd.Process.Pid, proxyPort)
-
-	adminReady := fmt.Sprintf("http://127.0.0.1:%d/ready", adminPort)
-	if !waitURL(adminReady, 15*time.Second) {
-		envoyCmd.Process.Kill()
-		envoyCmd.Wait()
-		testsvr.Process.Kill()
-		testsvr.Wait()
-		os.Remove(cfgPath)
-		fmt.Fprintln(os.Stderr, "e2e: envoy not ready in time")
 		os.Exit(1)
 	}
 	fmt.Fprintln(os.Stderr, "e2e: envoy ready")
@@ -162,23 +142,18 @@ func TestMain(m *testing.M) {
 	// Trigger the first OnLog so the request-ui HTTP server starts.
 	http.Get(proxyURL + "/health")
 	if !waitURL(uiURL+"/", 10*time.Second) {
-		envoyCmd.Process.Kill()
-		envoyCmd.Wait()
+		stop()
 		testsvr.Process.Kill()
 		testsvr.Wait()
-		os.Remove(cfgPath)
 		fmt.Fprintln(os.Stderr, "e2e: request-ui server not ready in time")
 		os.Exit(1)
 	}
 	fmt.Fprintf(os.Stderr, "e2e: request-ui ready at %s\n", uiURL)
 
 	code := m.Run()
-
-	envoyCmd.Process.Kill()
-	envoyCmd.Wait()
+	stop()
 	testsvr.Process.Kill()
 	testsvr.Wait()
-	os.Remove(cfgPath)
 	os.Exit(code)
 }
 

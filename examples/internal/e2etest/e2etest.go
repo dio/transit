@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"text/template"
 	"time"
@@ -62,6 +63,43 @@ func WriteEnvoyConfig(name, tmpl string, data any) string {
 		panic(err)
 	}
 	return f.Name()
+}
+
+// StartEnvoy starts Envoy with the standard dynamic-module flags and waits for
+// its admin /ready endpoint. searchPath sets ENVOY_DYNAMIC_MODULES_SEARCH_PATH.
+// extraEnv is appended after GODEBUG and ENVOY_DYNAMIC_MODULES_SEARCH_PATH.
+// The returned stop func kills the process and removes cfgPath; call it before
+// os.Exit. Returns (nil, false) on failure after printing to stderr.
+func StartEnvoy(bin, cfgPath, searchPath string, adminPort int, extraEnv []string) (stop func(), ok bool) {
+	cmd := exec.Command(bin, "-c", cfgPath, "--log-level", "warning",
+		"--component-log-level", "dynamic_modules:info")
+	cmd.Env = append(os.Environ(),
+		"GODEBUG=cgocheck=0",
+		"ENVOY_DYNAMIC_MODULES_SEARCH_PATH="+searchPath,
+	)
+	cmd.Env = append(cmd.Env, extraEnv...)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+
+	stop = func() {
+		cmd.Process.Kill() //nolint:errcheck
+		cmd.Wait()         //nolint:errcheck
+		os.Remove(cfgPath) //nolint:errcheck
+	}
+
+	if err := cmd.Start(); err != nil {
+		os.Remove(cfgPath) //nolint:errcheck
+		fmt.Fprintf(os.Stderr, "e2e: envoy start failed: %v\n", err)
+		return nil, false
+	}
+	fmt.Fprintf(os.Stderr, "e2e: envoy pid=%d\n", cmd.Process.Pid)
+
+	if !WaitURL(fmt.Sprintf("http://127.0.0.1:%d/ready", adminPort), 15*time.Second) {
+		stop()
+		fmt.Fprintln(os.Stderr, "e2e: envoy not ready in time")
+		return nil, false
+	}
+	return stop, true
 }
 
 // WaitURL polls a URL until it returns 200 OK or the timeout expires.

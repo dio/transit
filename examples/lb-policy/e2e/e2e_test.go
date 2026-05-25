@@ -24,13 +24,11 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 	"text/template"
-	"time"
 
 	"github.com/dio/transit/examples/internal/e2etest"
 )
@@ -40,7 +38,6 @@ var envoyConfigTmpl string
 
 var (
 	proxyURL     string
-	envoyCmd     *exec.Cmd
 	examplesRoot string
 )
 
@@ -72,36 +69,14 @@ func TestMain(m *testing.M) {
 		"AdminPort":    adminPort,
 	})
 
-	envoyCmd = exec.Command(bin, "-c", cfgPath, "--log-level", "warning",
-		"--component-log-level", "dynamic_modules:info")
-	envoyCmd.Env = append(os.Environ(),
-		"GODEBUG=cgocheck=0",
-		"ENVOY_DYNAMIC_MODULES_SEARCH_PATH="+lbPolicyDir,
-	)
-	envoyCmd.Stdout = os.Stderr
-	envoyCmd.Stderr = os.Stderr
-	if err := envoyCmd.Start(); err != nil {
-		os.Remove(cfgPath)
-		fmt.Fprintf(os.Stderr, "e2e: envoy start failed: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Fprintf(os.Stderr, "e2e: envoy pid=%d\n", envoyCmd.Process.Pid)
-
-	adminURL := fmt.Sprintf("http://127.0.0.1:%d", adminPort)
-	if !waitURL(adminURL+"/ready", 15*time.Second) {
-		envoyCmd.Process.Kill()
-		envoyCmd.Wait()
-		os.Remove(cfgPath)
-		fmt.Fprintln(os.Stderr, "e2e: envoy not ready in time")
+	stop, ok := e2etest.StartEnvoy(bin, cfgPath, lbPolicyDir, adminPort, nil)
+	if !ok {
 		os.Exit(1)
 	}
 	fmt.Fprintln(os.Stderr, "e2e: envoy ready")
 
 	code := m.Run()
-
-	envoyCmd.Process.Kill()
-	envoyCmd.Wait()
-	os.Remove(cfgPath)
+	stop()
 	os.Exit(code)
 }
 
@@ -170,20 +145,6 @@ func freePort() int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
-func waitURL(url string, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		resp, err := http.Get(url) //nolint:noctx
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return true
-			}
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	return false
-}
 
 func writeEnvoyConfig(ports map[string]int) string {
 	tmpl := template.Must(template.New("envoy").Parse(envoyConfigTmpl))

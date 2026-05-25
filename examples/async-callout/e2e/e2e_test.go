@@ -24,11 +24,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
-	"time"
 
 	"github.com/dio/transit/examples/internal/e2etest"
 )
@@ -38,7 +36,6 @@ var envoyConfigTmpl string
 
 var (
 	proxyURL     string
-	envoyCmd     *exec.Cmd
 	examplesRoot string
 
 	// authResponse is the body the stub auth server returns.
@@ -96,34 +93,16 @@ func TestMain(m *testing.M) {
 		AdminPort: adminPort,
 		AuthPort:  authPort,
 	})
-	defer os.Remove(cfgPath)
-
 	asyncCalloutDir := filepath.Join(examplesRoot, "async-callout")
-	envoyCmd = exec.Command(bin, "-c", cfgPath, "--log-level", "warning",
-		"--component-log-level", "dynamic_modules:info")
-	envoyCmd.Env = append(os.Environ(),
-		"GODEBUG=cgocheck=0",
-		"ENVOY_DYNAMIC_MODULES_SEARCH_PATH="+asyncCalloutDir,
-	)
-	envoyCmd.Stdout = os.Stderr
-	envoyCmd.Stderr = os.Stderr
-	if err := envoyCmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "e2e: envoy start failed: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Fprintf(os.Stderr, "e2e: envoy pid=%d\n", envoyCmd.Process.Pid)
 
-	if !e2etest.WaitURL(fmt.Sprintf("http://127.0.0.1:%d/ready", adminPort), 15*time.Second) {
-		envoyCmd.Process.Kill()
-		envoyCmd.Wait()
-		fmt.Fprintln(os.Stderr, "e2e: envoy not ready in time")
+	stop, ok := e2etest.StartEnvoy(bin, cfgPath, asyncCalloutDir, adminPort, nil)
+	if !ok {
 		os.Exit(1)
 	}
 	fmt.Fprintln(os.Stderr, "e2e: envoy ready")
 
 	code := m.Run()
-	envoyCmd.Process.Kill()
-	envoyCmd.Wait()
+	stop()
 	os.Exit(code)
 }
 

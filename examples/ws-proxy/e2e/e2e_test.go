@@ -14,7 +14,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -39,7 +38,6 @@ var (
 	egressPort     int
 	mockPort       int
 	sessionLogFile string
-	envoyCmd       *exec.Cmd
 	examplesRoot   string
 )
 
@@ -85,43 +83,23 @@ func TestMain(m *testing.M) {
 	})
 
 	wsProxyDir := filepath.Join(examplesRoot, "ws-proxy")
-	envoyCmd = exec.Command(bin, "-c", cfgPath, "--log-level", "warning",
-		"--component-log-level", "dynamic_modules:info")
-	envoyCmd.Env = append(os.Environ(),
-		"GODEBUG=cgocheck=0",
-		"ENVOY_DYNAMIC_MODULES_SEARCH_PATH="+wsProxyDir,
-		"WSPROXY_LISTEN_ADDR="+fmt.Sprintf("127.0.0.1:%d", loopbackPort),
+	stop, ok := e2etest.StartEnvoy(bin, cfgPath, wsProxyDir, adminPort, []string{
+		"WSPROXY_LISTEN_ADDR=" + fmt.Sprintf("127.0.0.1:%d", loopbackPort),
 		// Egress via Envoy: embedded server dials the local egress listener;
 		// Envoy routes the WS upgrade to mock-upstream. WSPROXY_UPSTREAM_URL
 		// is unused when WSPROXY_EGRESS_URL is set.
 		fmt.Sprintf("WSPROXY_EGRESS_URL=ws://127.0.0.1:%d", egressPort),
 		"WSPROXY_AUTH_VALUE=", // no auth against mock
-		"WSPROXY_SESSION_LOG="+sessionLogFile,
-	)
-	envoyCmd.Stdout = os.Stderr
-	envoyCmd.Stderr = os.Stderr
-	if err := envoyCmd.Start(); err != nil {
-		os.Remove(cfgPath)
-		fmt.Fprintf(os.Stderr, "e2e: envoy start failed: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Fprintf(os.Stderr, "e2e: envoy pid=%d\n", envoyCmd.Process.Pid)
-
-	if !e2etest.WaitURL(adminURL+"/ready", 15*time.Second) {
-		envoyCmd.Process.Kill()
-		envoyCmd.Wait()
-		os.Remove(cfgPath)
-		fmt.Fprintln(os.Stderr, "e2e: envoy not ready in time")
+		"WSPROXY_SESSION_LOG=" + sessionLogFile,
+	})
+	if !ok {
 		os.Exit(1)
 	}
 	fmt.Fprintln(os.Stderr, "e2e: envoy ready")
 
 	code := m.Run()
-
-	envoyCmd.Process.Kill()
-	envoyCmd.Wait()
-	os.Remove(cfgPath)
-	os.Remove(sessionLogFile)
+	stop()
+	os.Remove(sessionLogFile) //nolint:errcheck
 	os.Exit(code)
 }
 
