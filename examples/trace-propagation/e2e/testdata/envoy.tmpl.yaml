@@ -1,0 +1,85 @@
+admin:
+  address:
+    socket_address: { address: 127.0.0.1, port_value: {{.AdminPort}} }
+
+static_resources:
+  listeners:
+    # Inbound listener — client sends requests here; Envoy loads the filter
+    # (which starts the embedded server), then routes all traffic to the
+    # trace-propagation-local cluster (the embedded Go HTTP server).
+    - name: inbound
+      address:
+        socket_address: { address: 127.0.0.1, port_value: {{.ProxyPort}} }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: ingress
+                http_filters:
+                  - name: trace-propagation
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: trace-propagation
+                      filter_name: trace-propagation
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: inbound
+                  virtual_hosts:
+                    - name: local
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          route:
+                            cluster: trace-propagation-local
+                            timeout: 5s
+
+    # Egress listener — the embedded server calls here; Envoy routes to the
+    # backend sink cluster.
+    - name: egress
+      address:
+        socket_address: { address: 127.0.0.1, port_value: {{.EgressPort}} }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: egress
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: egress
+                  virtual_hosts:
+                    - name: egress
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          route:
+                            cluster: backend
+                            timeout: 5s
+
+  clusters:
+    - name: trace-propagation-local
+      type: STATIC
+      load_assignment:
+        cluster_name: trace-propagation-local
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: 127.0.0.1, port_value: {{.ServerPort}} }
+
+    - name: backend
+      type: STATIC
+      load_assignment:
+        cluster_name: backend
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: 127.0.0.1, port_value: {{.BackendPort}} }
