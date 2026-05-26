@@ -108,6 +108,9 @@ func (s *mcpProfileGatewaySuite) TestMCPProfileGatewayTopology() {
 		run(s.Ctx, s.T(), "", "kubectl", "wait", "gateway/"+gw, "-n", dataplaneNamespace,
 			"--for=condition=Accepted", "--timeout=120s")
 	}
+	for _, gw := range []string{"l1", "l2-a", "l2-b"} {
+		egtest.WaitGatewayProgrammed(s.Ctx, s.T(), dataplaneNamespace, gw)
+	}
 
 	liveLogf(s.T(), "waiting for generated Envoy deployments")
 	l1Deploy := generatedResourceName(s.Ctx, s.T(), dataplaneNamespace, "l1", "deploy")

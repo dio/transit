@@ -68,6 +68,7 @@ func (s *clusterRouterSuite) TestClusterRouterEnvoyGateway() {
 	waitReady(s.Ctx, s.T(), "app=upstream-b")
 	waitReady(s.Ctx, s.T(), "app=upstream-c")
 	run(s.Ctx, s.T(), "", "kubectl", "wait", "gateway/cluster-router", "--for=condition=Accepted", "--timeout=120s")
+	egtest.WaitGatewayProgrammed(s.Ctx, s.T(), "default", "cluster-router")
 
 	liveLogf(s.T(), "waiting for generated Envoy deployment")
 	envoyDeploy := envoyDeployment(s.Ctx, s.T())
@@ -215,10 +216,10 @@ func get(ctx context.Context, t *testing.T, url string, headers map[string]strin
 
 func envoyDeployment(ctx context.Context, t *testing.T) string {
 	t.Helper()
-	return egtest.GeneratedResourceName(ctx, t, "envoy-gateway-system", "cluster-router", "deploy")
+	return egtest.GeneratedResourceName(ctx, t, "envoy-gateway-system", "default", "cluster-router", "deploy")
 }
 
 func envoyService(ctx context.Context, t *testing.T) string {
 	t.Helper()
-	return egtest.GeneratedResourceName(ctx, t, "envoy-gateway-system", "cluster-router", "svc")
+	return egtest.GeneratedResourceName(ctx, t, "envoy-gateway-system", "default", "cluster-router", "svc")
 }

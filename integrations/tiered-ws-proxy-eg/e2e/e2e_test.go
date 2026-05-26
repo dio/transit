@@ -102,6 +102,8 @@ func (s *tieredWsProxySuite) TestTieredWsProxyGates() {
 		"--for=condition=Accepted", "--timeout=120s")
 	run(s.Ctx, s.T(), "", "kubectl", "wait", "gateway/l2",
 		"--for=condition=Accepted", "--timeout=120s")
+	egtest.WaitGatewayProgrammed(s.Ctx, s.T(), "default", "l1")
+	egtest.WaitGatewayProgrammed(s.Ctx, s.T(), "default", "l2")
 
 	// EPP replace on l2-inbound cluster requires a ready endpoint; wait for
 	// the pause placeholder before applying the EPP.
@@ -283,14 +285,14 @@ func (s *tieredWsProxySuite) waitSessionRecord(model string, wantInput, wantOutp
 // name owned by the given Gateway (in default namespace).
 func (s *tieredWsProxySuite) generatedDeployment(gateway string) string {
 	s.T().Helper()
-	return egtest.GeneratedResourceName(s.Ctx, s.T(), "envoy-gateway-system", gateway, "deploy")
+	return egtest.GeneratedResourceName(s.Ctx, s.T(), "envoy-gateway-system", "default", gateway, "deploy")
 }
 
 // generatedService waits for and returns the EG-generated Envoy Service name
 // owned by the given Gateway (in default namespace).
 func (s *tieredWsProxySuite) generatedService(gateway string) string {
 	s.T().Helper()
-	return egtest.GeneratedResourceName(s.Ctx, s.T(), "envoy-gateway-system", gateway, "svc")
+	return egtest.GeneratedResourceName(s.Ctx, s.T(), "envoy-gateway-system", "default", gateway, "svc")
 }
 
 func httpGetString(ctx context.Context, t *testing.T, url string) string {

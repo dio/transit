@@ -80,6 +80,7 @@ func (s *wsProxySuite) TestWsProxyGates() {
 	liveLogf(s.T(), "waiting for Gateway to be Accepted")
 	run(s.Ctx, s.T(), "", "kubectl", "wait", "gateway/ws-proxy",
 		"--for=condition=Accepted", "--timeout=120s")
+	egtest.WaitGatewayProgrammed(s.Ctx, s.T(), "default", "ws-proxy")
 
 	liveLogf(s.T(), "waiting for backend placeholder deployment")
 	waitDeployment(s.Ctx, s.T(), "default", "ws-proxy-backend")
@@ -208,13 +209,13 @@ func (s *wsProxySuite) waitEnvoyConfigApplied(adminURL, clusterName string) {
 // envoyDeployment waits for and returns the name of the EG-generated Envoy deployment.
 func (s *wsProxySuite) envoyDeployment() string {
 	s.T().Helper()
-	return egtest.GeneratedResourceName(s.Ctx, s.T(), "envoy-gateway-system", "ws-proxy", "deploy")
+	return egtest.GeneratedResourceName(s.Ctx, s.T(), "envoy-gateway-system", "default", "ws-proxy", "deploy")
 }
 
 // envoyService waits for and returns the name of the EG-generated Envoy service.
 func (s *wsProxySuite) envoyService() string {
 	s.T().Helper()
-	return egtest.GeneratedResourceName(s.Ctx, s.T(), "envoy-gateway-system", "ws-proxy", "svc")
+	return egtest.GeneratedResourceName(s.Ctx, s.T(), "envoy-gateway-system", "default", "ws-proxy", "svc")
 }
 
 func httpGet(ctx context.Context, t *testing.T, url string) []byte {

@@ -70,6 +70,9 @@ func (s *tieredRouterSuite) TestL1SelectsPhysicalL2ShardServices() {
 	run(s.Ctx, s.T(), "", "kubectl", "wait", "gateway/l1", "-n", dataplaneNamespace, "--for=condition=Accepted", "--timeout=120s")
 	run(s.Ctx, s.T(), "", "kubectl", "wait", "gateway/l2-a", "-n", dataplaneNamespace, "--for=condition=Accepted", "--timeout=120s")
 	run(s.Ctx, s.T(), "", "kubectl", "wait", "gateway/l2-b", "-n", dataplaneNamespace, "--for=condition=Accepted", "--timeout=120s")
+	egtest.WaitGatewayProgrammed(s.Ctx, s.T(), dataplaneNamespace, "l1")
+	egtest.WaitGatewayProgrammed(s.Ctx, s.T(), dataplaneNamespace, "l2-a")
+	egtest.WaitGatewayProgrammed(s.Ctx, s.T(), dataplaneNamespace, "l2-b")
 
 	liveLogf(s.T(), "waiting for generated Envoy deployments")
 	envoyDeploy := generatedResourceName(s.Ctx, s.T(), dataplaneNamespace, "l1", "deploy")

@@ -332,6 +332,14 @@ func WaitReady(ctx context.Context, t *testing.T, namespace, label string) {
 	Run(ctx, t, "", "kubectl", "wait", "pods", "--for=condition=Ready", "-n", namespace, "-l", label, "--timeout=120s")
 }
 
+// WaitGatewayProgrammed waits for a Gateway to reach the Programmed condition,
+// meaning Envoy Gateway has translated it and provisioned the underlying infra.
+func WaitGatewayProgrammed(ctx context.Context, t *testing.T, namespace, name string) {
+	t.Helper()
+	Run(ctx, t, "", "kubectl", "wait", "gateway/"+name, "-n", namespace,
+		"--for=condition=Programmed", "--timeout=120s")
+}
+
 // WaitDeployment waits for a named deployment to roll out and be Available.
 func WaitDeployment(ctx context.Context, t *testing.T, namespace, name string) {
 	t.Helper()
@@ -362,14 +370,16 @@ func WaitEnvoyPatchPolicyProgrammed(ctx context.Context, t *testing.T, namespace
 
 // GeneratedResourceName polls for an Envoy Gateway generated resource owned by
 // the given Gateway and returns its name.
-func GeneratedResourceName(ctx context.Context, t *testing.T, namespace, gateway, kind string) string {
+// resourceNamespace: the namespace where the resource will be created (typically envoy-gateway-system)
+// gatewayNamespace: the namespace of the Gateway resource
+func GeneratedResourceName(ctx context.Context, t *testing.T, resourceNamespace, gatewayNamespace, gateway, kind string) string {
 	t.Helper()
 	LiveLogf(t, "waiting for generated Envoy %s for Gateway %s", kind, gateway)
 	deadline := time.Now().Add(120 * time.Second)
 	var last string
 	for time.Now().Before(deadline) {
-		last = Output(ctx, t, "", "kubectl", "get", kind, "-n", namespace,
-			"-l", "gateway.envoyproxy.io/owning-gateway-namespace="+namespace+",gateway.envoyproxy.io/owning-gateway-name="+gateway,
+		last = Output(ctx, t, "", "kubectl", "get", kind, "-n", resourceNamespace,
+			"-l", "gateway.envoyproxy.io/owning-gateway-namespace="+gatewayNamespace+",gateway.envoyproxy.io/owning-gateway-name="+gateway,
 			"-o", `jsonpath={range .items[*]}{.metadata.name}{'\n'}{end}`)
 		if fields := strings.Fields(last); len(fields) > 0 {
 			return fields[0]
@@ -381,7 +391,7 @@ func GeneratedResourceName(ctx context.Context, t *testing.T, namespace, gateway
 		}
 	}
 	require.Failf(t, "generated Envoy resource not found", "%s/%s for Gateway %s not found; last output: %q",
-		namespace, kind, gateway, last)
+		resourceNamespace, kind, gateway, last)
 	return ""
 }
 

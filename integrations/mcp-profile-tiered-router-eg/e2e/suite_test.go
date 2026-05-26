@@ -57,7 +57,7 @@ func waitEnvoyPatchPolicyProgrammed(ctx context.Context, t *testing.T, namespace
 
 func generatedResourceName(ctx context.Context, t *testing.T, namespace, gateway, kind string) string {
 	t.Helper()
-	return egtest.GeneratedResourceName(ctx, t, namespace, gateway, kind)
+	return egtest.GeneratedResourceName(ctx, t, namespace, namespace, gateway, kind)
 }
 
 func portForward(ctx context.Context, t *testing.T, target string, remotePort int) (string, func()) {
