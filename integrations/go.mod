@@ -19,4 +19,7 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/dio/transit => ../
+replace (
+	github.com/dio/gateway-pairs => ../../gateway-pairs2
+	github.com/dio/transit => ../
+)

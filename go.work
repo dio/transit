@@ -2,6 +2,7 @@ go 1.26.2
 
 use (
 	.
+	../gateway-pairs2
 	./e2e
 	./examples
 	./integrations

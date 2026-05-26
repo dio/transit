@@ -4,6 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
+	"github.com/dio/gateway-pairs/gwpapi"
 	"github.com/dio/transit/integrations/internal/egtest"
 )
 
@@ -21,7 +24,23 @@ func (s *envoyGatewaySuite) SetupSuite() {
 	s.Cluster = "transit-tiered-router-eg"
 	s.SystemNamespace = systemNamespace
 	s.DataplaneNamespace = dataplaneNamespace
-	s.SetupSuiteBase(s.InstallEnvoyGateway)
+	s.SetupSuiteBase(s.installWithGwp)
+}
+
+func (s *envoyGatewaySuite) installWithGwp() {
+	c := gwpapi.New(gwpapi.Options{
+		KubeContext: egtest.KubeContext(s.T()),
+		Prefix:      "transit",
+		Suffix:      "",
+		UseSuffix:   true,
+	})
+	require.NoError(s.T(), c.CRDInstall(s.Ctx, gwpapi.CRDInstallOptions{}))
+	require.NoError(s.T(), c.PairInstall(s.Ctx, 1, gwpapi.PairInstallOptions{
+		ExtraSet: []string{
+			"gateway-helm.config.envoyGateway.extensionApis.enableEnvoyPatchPolicy=true",
+			"gateway-helm.config.envoyGateway.runtimeFlags.enabled={XDSNameSchemeV2}",
+		},
+	}))
 }
 
 func (s *envoyGatewaySuite) verifyEnvoyGatewayInstall() {

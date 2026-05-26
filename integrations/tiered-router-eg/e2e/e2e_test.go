@@ -52,8 +52,7 @@ func (s *tieredRouterSuite) TestL1SelectsPhysicalL2ShardServices() {
 	liveLogf(s.T(), "verifying Envoy Gateway install")
 	s.verifyEnvoyGatewayInstall()
 
-	liveLogf(s.T(), "applying tiered namespaces and workloads")
-	apply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "namespaces.yaml"))
+	liveLogf(s.T(), "applying tiered workloads")
 	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "envoyproxies.tmpl.yaml"), map[string]string{
 		"EnvoyImage": s.envoyImage,
 	})
