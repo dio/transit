@@ -145,7 +145,6 @@ func freePort() int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
-
 func writeEnvoyConfig(ports map[string]int) string {
 	tmpl := template.Must(template.New("envoy").Parse(envoyConfigTmpl))
 	f, err := os.CreateTemp("", "transit-lb-policy-e2e-*.yaml")

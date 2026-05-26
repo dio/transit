@@ -19,8 +19,8 @@
 package e2e
 
 import (
-	_ "embed"
 	"context"
+	_ "embed"
 	"fmt"
 	"net"
 	"net/http"

@@ -150,4 +150,3 @@ func writeEnvoyConfig(data envoyConfigData) string {
 	f.Close()
 	return f.Name()
 }
-

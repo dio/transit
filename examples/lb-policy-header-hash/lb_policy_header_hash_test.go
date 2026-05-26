@@ -60,11 +60,11 @@ func (c *fakeLBContext) GetHeader(name string) (string, bool) {
 	v, ok := c.headers[name]
 	return v, ok
 }
-func (c *fakeLBContext) GetAllHeaders() [][2]string                                     { return nil }
-func (c *fakeLBContext) GetOverrideHost() (string, bool)                                { return "", false }
-func (c *fakeLBContext) ComputeHashKey() (uint64, bool)                                 { return 0, false }
-func (c *fakeLBContext) GetHostSelectionRetryCount() uint32                             { return 0 }
-func (c *fakeLBContext) ShouldSelectAnotherHost(_ up.LBHandle, _ uint32, _ int) bool   { return false }
+func (c *fakeLBContext) GetAllHeaders() [][2]string                                  { return nil }
+func (c *fakeLBContext) GetOverrideHost() (string, bool)                             { return "", false }
+func (c *fakeLBContext) ComputeHashKey() (uint64, bool)                              { return 0, false }
+func (c *fakeLBContext) GetHostSelectionRetryCount() uint32                          { return 0 }
+func (c *fakeLBContext) ShouldSelectAnotherHost(_ up.LBHandle, _ uint32, _ int) bool { return false }
 
 func fnv32a(s string) uint32 {
 	h := fnv.New32a()

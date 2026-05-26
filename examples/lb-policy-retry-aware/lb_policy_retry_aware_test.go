@@ -54,11 +54,11 @@ type fakeLBContext struct {
 	shouldSkip func(index int) bool
 }
 
-func (c *fakeLBContext) GetAllHeaders() [][2]string                  { return nil }
-func (c *fakeLBContext) GetOverrideHost() (string, bool)             { return "", false }
-func (c *fakeLBContext) GetHeader(_ string) (string, bool)           { return "", false }
-func (c *fakeLBContext) ComputeHashKey() (uint64, bool)              { return 0, false }
-func (c *fakeLBContext) GetHostSelectionRetryCount() uint32          { return 0 }
+func (c *fakeLBContext) GetAllHeaders() [][2]string         { return nil }
+func (c *fakeLBContext) GetOverrideHost() (string, bool)    { return "", false }
+func (c *fakeLBContext) GetHeader(_ string) (string, bool)  { return "", false }
+func (c *fakeLBContext) ComputeHashKey() (uint64, bool)     { return 0, false }
+func (c *fakeLBContext) GetHostSelectionRetryCount() uint32 { return 0 }
 func (c *fakeLBContext) ShouldSelectAnotherHost(_ up.LBHandle, _ uint32, index int) bool {
 	if c.shouldSkip == nil {
 		return false

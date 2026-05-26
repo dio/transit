@@ -121,4 +121,3 @@ func writeEnvoyConfig(data map[string]int) string {
 	f.Close()
 	return f.Name()
 }
-

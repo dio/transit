@@ -16,10 +16,10 @@ type fakeClusterLBHandle struct {
 	stats []uint64 // parallel to hosts; HostStatRqActive values
 }
 
-func (h *fakeClusterLBHandle) ClusterName() string           { return "test" }
-func (h *fakeClusterLBHandle) PriorityCount() int            { return 1 }
-func (h *fakeClusterLBHandle) HostCount(_ uint32) int        { return len(h.hosts) }
-func (h *fakeClusterLBHandle) HealthyHostCount(_ uint32) int { return len(h.hosts) }
+func (h *fakeClusterLBHandle) ClusterName() string            { return "test" }
+func (h *fakeClusterLBHandle) PriorityCount() int             { return 1 }
+func (h *fakeClusterLBHandle) HostCount(_ uint32) int         { return len(h.hosts) }
+func (h *fakeClusterLBHandle) HealthyHostCount(_ uint32) int  { return len(h.hosts) }
 func (h *fakeClusterLBHandle) DegradedHostCount(_ uint32) int { return 0 }
 func (h *fakeClusterLBHandle) Host(_ uint32, index int) up.HostPtr {
 	return h.hosts[index]

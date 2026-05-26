@@ -87,12 +87,12 @@ func (c *fakeClusterLBContext) GetFilterStateTyped(key string) (string, bool) {
 	return v, ok
 }
 
-func (c *fakeClusterLBContext) GetAllHeaders() [][2]string                     { return nil }
-func (c *fakeClusterLBContext) GetOverrideHost() (string, bool)                { return "", false }
-func (c *fakeClusterLBContext) GetHeader(_ string) (string, bool)              { return "", false }
-func (c *fakeClusterLBContext) GetDownstreamSNI() (string, bool)               { return "", false }
-func (c *fakeClusterLBContext) ComputeHashKey() (uint64, bool)                 { return 0, false }
-func (c *fakeClusterLBContext) GetHostSelectionRetryCount() uint32             { return 0 }
+func (c *fakeClusterLBContext) GetAllHeaders() [][2]string         { return nil }
+func (c *fakeClusterLBContext) GetOverrideHost() (string, bool)    { return "", false }
+func (c *fakeClusterLBContext) GetHeader(_ string) (string, bool)  { return "", false }
+func (c *fakeClusterLBContext) GetDownstreamSNI() (string, bool)   { return "", false }
+func (c *fakeClusterLBContext) ComputeHashKey() (uint64, bool)     { return 0, false }
+func (c *fakeClusterLBContext) GetHostSelectionRetryCount() uint32 { return 0 }
 func (c *fakeClusterLBContext) ShouldSelectAnotherHost(_ up.ClusterLBHandle, _ uint32, _ int) bool {
 	return false
 }
