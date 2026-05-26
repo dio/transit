@@ -28,7 +28,6 @@ import (
 	"strings"
 	"testing"
 	"text/template"
-	"time"
 
 	"github.com/dio/transit/examples/internal/e2etest"
 )
@@ -128,21 +127,6 @@ func freePort() int {
 	}
 	defer l.Close()
 	return l.Addr().(*net.TCPAddr).Port
-}
-
-func waitURL(url string, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		resp, err := http.Get(url) //nolint:noctx
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return true
-			}
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	return false
 }
 
 func writeEnvoyConfig(ports map[string]int) string {

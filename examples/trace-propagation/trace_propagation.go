@@ -31,6 +31,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	oteltrace "go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/dio/transit/up"
 )
@@ -91,7 +92,11 @@ func (s *proxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			span.RecordError(err)
+		}
+	}()
 	for k, vs := range resp.Header {
 		for _, v := range vs {
 			w.Header().Add(k, v)
@@ -186,7 +191,7 @@ func setupTracer(endpoint string) (oteltrace.Tracer, propagation.TextMapPropagat
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "trace-propagation: otel exporter: %v — embedded spans disabled\n", err)
-		return oteltrace.NewNoopTracerProvider().Tracer(""), prop
+		return noop.NewTracerProvider().Tracer(""), prop
 	}
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exp),

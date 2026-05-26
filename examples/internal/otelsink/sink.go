@@ -34,7 +34,15 @@ func (s *Sink) Start() int {
 	srv := grpc.NewServer()
 	otlpcollectortrace.RegisterTraceServiceServer(srv, &tracesSvc{sink: s})
 	go srv.Serve(l) //nolint:errcheck
-	return l.Addr().(*net.TCPAddr).Port
+	addr := l.Addr()
+	if addr == nil {
+		panic("otelsink: addr is nil")
+	}
+	tcpAddr, ok := addr.(*net.TCPAddr)
+	if !ok {
+		panic("otelsink: addr is not a TCP address")
+	}
+	return tcpAddr.Port
 }
 
 // WaitForSpan blocks until a span matching predicate arrives or ctx is

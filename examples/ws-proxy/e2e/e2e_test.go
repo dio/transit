@@ -8,6 +8,7 @@ package e2e
 
 import (
 	"bufio"
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -22,7 +23,6 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/net/context"
 
 	"github.com/dio/transit/examples/internal/e2etest"
 	wsproxy "github.com/dio/transit/examples/ws-proxy"

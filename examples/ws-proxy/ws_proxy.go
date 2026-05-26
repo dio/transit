@@ -155,7 +155,11 @@ func (p *WSProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Error("ws-proxy: accept failed", "err", err)
 		return
 	}
-	defer clientConn.CloseNow()
+	defer func() {
+		if err := clientConn.CloseNow(); err != nil {
+			log.Error("ws-proxy: close client connection failed", "err", err)
+		}
+	}()
 
 	// When egressURL is set, dial the local Envoy egress listener (plain ws://).
 	// Envoy injects auth and handles TLS to the real upstream.
@@ -175,10 +179,16 @@ func (p *WSProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		log.Error("ws-proxy: upstream dial failed", "url", upstreamURL, "err", err)
-		clientConn.Close(websocket.StatusInternalError, "upstream unavailable")
+		if err := clientConn.Close(websocket.StatusInternalError, "upstream unavailable"); err != nil {
+			log.Error("ws-proxy: close client connection failed", "err", err)
+		}
 		return
 	}
-	defer upstreamConn.CloseNow()
+	defer func() {
+		if err := upstreamConn.CloseNow(); err != nil {
+			log.Error("ws-proxy: close upstream connection failed", "err", err)
+		}
+	}()
 
 	tap := NewSessionTap()
 	start := time.Now()
