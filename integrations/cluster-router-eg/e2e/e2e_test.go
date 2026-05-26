@@ -76,7 +76,7 @@ func (s *clusterRouterSuite) TestClusterRouterEnvoyGateway() {
 	liveLogf(s.T(), "opening Envoy admin port-forward")
 	adminURL, stopAdmin := portForward(s.Ctx, s.T(), "envoy-gateway-system", "deploy/"+envoyDeploy, 19000)
 	defer stopAdmin()
-	clusterName := egtest.DiscoverBackendCluster(s.Ctx, s.T(), adminURL, "default", "cluster-router-backend")
+	clusterName := egtest.DiscoverBackendCluster(s.Ctx, s.T(), adminURL, "default", "cluster-router")
 	liveLogf(s.T(), "patching generated cluster %q", clusterName)
 	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "epp.tmpl.yaml"), map[string]string{
 		"ClusterName": clusterName,
