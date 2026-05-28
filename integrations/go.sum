@@ -3,6 +3,12 @@ github.com/coder/websocket v1.8.14/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6p
 github.com/creack/pty v1.1.9/go.mod h1:oKZEueFk5CKHvIhNR5MUki03XCEU+Q6VDXinZuGJ33E=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+github.com/dio/gateway-pairs v0.2.1 h1:Zh17zIT+9ZG7biE1DA7Nd+FTblAtFKW6LpOO4FO6jyM=
+github.com/dio/gateway-pairs v0.2.1/go.mod h1:aljNERGVh0A3YLKWQkq6Uarr3jgzCOivqJ1vOCwGR34=
+github.com/dio/sh v0.0.2 h1:pfkcMHE8lIcTxfMiWyTAr/BD6UHUR6S6K/JvJhYGtZA=
+github.com/dio/sh v0.0.2/go.mod h1:9qbav4SIwj+iR/rkgxYQYmFfpco4pADdBUrkszbVaRs=
+github.com/dio/transit v0.0.0-20260524011848-c4ee1587ea44 h1:WSBDx2839SgPu6su1aV2Kwpb6cHdQY+dJBR8O7ubUew=
+github.com/dio/transit v0.0.0-20260524011848-c4ee1587ea44/go.mod h1:Ngt06ok4nPyUSywxTuhXjDHl++fkYIdTPHRukSyUIBY=
 github.com/envoyproxy/envoy/source/extensions/dynamic_modules v0.0.0-20260521055639-0d6e3c60aa55 h1:lTewRAh7QFyxr0VG4GyFrAg5FUT95W8jOYWmMgQ+iaI=
 github.com/envoyproxy/envoy/source/extensions/dynamic_modules v0.0.0-20260521055639-0d6e3c60aa55/go.mod h1:NpQosaDAX20s0ak0o/4b5dLOdvkbk15XqoakhSNX1Gg=
 github.com/kr/pretty v0.3.1 h1:flRD4NNwYAUpkphVc1HcthR4KEIFJ65n8Mw5qdRn3LE=
