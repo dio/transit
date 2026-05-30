@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/dio/transit/integrations/internal/egtest"
@@ -362,14 +361,4 @@ func requestDebugDump(ctx context.Context, l2URL string) ([]byte, error) {
 		return nil, fmt.Errorf("debug dump status %d body %s", status, raw)
 	}
 	return raw, nil
-}
-
-func get(ctx context.Context, t *testing.T, url string) []byte {
-	t.Helper()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	require.NoError(t, err)
-	body, status, err := egtest.DoRequest(req)
-	require.NoError(t, err)
-	require.Equalf(t, http.StatusOK, status, "GET %s body %s", url, body)
-	return body
 }

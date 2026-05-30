@@ -58,7 +58,7 @@ func serveEcho(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(os.Stderr, "ws-proxy-echo: accept: %v\n", err)
 		return
 	}
-	defer conn.CloseNow()
+	defer func() { _ = conn.CloseNow() }()
 	ctx := r.Context()
 	for {
 		typ, data, err := conn.Read(ctx)

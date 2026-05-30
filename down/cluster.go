@@ -308,8 +308,11 @@ type Cluster interface {
 	// NewClusterLB creates a per-worker LB instance.
 	NewClusterLB() ClusterLB
 
-	// ServerInitialized is called after all clusters have initialised and
-	// before Envoy workers start. Start background discovery here.
+	// ServerInitialized is called on the Envoy main thread after all clusters
+	// have initialized and before workers start accepting traffic. It is safe
+	// to call blocking setup operations here (e.g. a cold-start RPC Fetch)
+	// because no requests are in flight yet. Use up.ClusterGroup.Start to
+	// launch background goroutines scoped to the cluster's lifetime.
 	ServerInitialized(h ClusterHandle)
 
 	// DrainStarted is called when Envoy begins draining.

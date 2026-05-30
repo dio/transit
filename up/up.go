@@ -83,8 +83,14 @@ func Register(name string, h HandlerFunc) {
 // (via [Group.Stop]) when Envoy destroys the filter factory. The handler and the
 // goroutines in g share state via closure — no package-level variables needed.
 // Must be called from an init() function. Panics on duplicate names.
-// Note: if any goroutine in the group exits for any reason — including a normal return — the entire group is
-// stopped via Group.Stop. Goroutines that must survive transient errors should loop and retry internally.
+//
+// Note: if any goroutine in the group exits for any reason — including a normal
+// return — the entire group is stopped via Group.Stop. Goroutines that must
+// survive transient errors should loop internally or use [RunRetry].
+//
+// For background work in cluster extensions (which have no filter factory),
+// use [ClusterGroup] with [ClusterGroup.Start] called from
+// [Cluster.ServerInitialized] instead.
 func RegisterWithGroup(name string, g *Group, h HandlerFunc) {
 	if _, ok := registry[name]; ok {
 		panic("up: filter already registered: " + name)

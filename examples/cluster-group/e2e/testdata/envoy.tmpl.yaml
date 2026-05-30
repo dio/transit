@@ -1,0 +1,42 @@
+static_resources:
+  listeners:
+    - name: proxy
+      address:
+        socket_address: { address: 127.0.0.1, port_value: {{.ProxyPort}} }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: proxy
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: local
+                  virtual_hosts:
+                    - name: local
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          route: { cluster: dynamic }
+
+  clusters:
+    - name: dynamic
+      connect_timeout: 5s
+      lb_policy: CLUSTER_PROVIDED
+      cluster_type:
+        name: envoy.clusters.dynamic_modules
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_modules.v3.ClusterConfig
+          dynamic_module_config:
+            name: cluster-group
+          cluster_name: discovery-cluster
+          cluster_config:
+            "@type": type.googleapis.com/google.protobuf.StringValue
+            value: '{"discovery_url":"http://127.0.0.1:{{.DiscoveryPort}}/hosts","refresh_ms":200}'
+
+admin:
+  address:
+    socket_address: { address: 127.0.0.1, port_value: {{.AdminPort}} }

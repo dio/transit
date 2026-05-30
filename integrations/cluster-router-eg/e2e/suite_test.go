@@ -80,8 +80,3 @@ func requireEnv(t *testing.T, name string) string {
 	t.Helper()
 	return egtest.RequireEnv(t, name)
 }
-
-func output(ctx context.Context, t *testing.T, stdin, name string, args ...string) string {
-	t.Helper()
-	return egtest.Output(ctx, t, stdin, name, args...)
-}

@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/dio/gateway-pairs/gwpapi"
 	"github.com/stretchr/testify/require"
 
-	"github.com/dio/gateway-pairs/gwpapi"
 	"github.com/dio/transit/integrations/internal/egtest"
 )
 

@@ -43,7 +43,7 @@ func handle(w http.ResponseWriter, r *http.Request) {
 		slog.Error("accept", "err", err)
 		return
 	}
-	defer conn.CloseNow()
+	defer func() { _ = conn.CloseNow() }()
 
 	ctx := r.Context()
 	for {

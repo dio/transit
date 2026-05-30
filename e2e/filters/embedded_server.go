@@ -19,7 +19,7 @@ func init() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("x-embedded-server", "ran")
-		fmt.Fprintln(w, "ok")
+		fmt.Fprintln(w, "ok") //nolint:errcheck
 	})
 
 	srv := &http.Server{Handler: mux}
@@ -33,7 +33,7 @@ func init() {
 				}
 				return srv.Serve(ln)
 			},
-			func() { srv.Close() },
+			func() { _ = srv.Close() },
 		)
 	}
 
