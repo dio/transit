@@ -29,6 +29,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/dio/transit/examples/internal/e2etest"
 )
 
@@ -144,19 +146,14 @@ func TestValidToken_passes(t *testing.T) {
 	introspectionCode = http.StatusOK
 	introspectionMu.Unlock()
 
-	req, _ := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
+	req, err := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
+	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer tok")
 	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET /: %v", err)
-	}
+	require.NoError(t, err)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("want 200, got %d", resp.StatusCode)
-	}
-	if got := resp.Header.Get("x-jwt-sub"); got != "alice" {
-		t.Fatalf("want x-jwt-sub=alice, got %q", got)
-	}
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, "alice", resp.Header.Get("x-jwt-sub"))
 }
 
 // TestInvalidToken_returns401 verifies that an inactive token causes the filter
@@ -167,18 +164,55 @@ func TestInvalidToken_returns401(t *testing.T) {
 	introspectionCode = http.StatusOK
 	introspectionMu.Unlock()
 
-	req, _ := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
+	req, err := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
+	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer tok")
 	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET /: %v", err)
-	}
+	require.NoError(t, err)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("want 401, got %d", resp.StatusCode)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	if string(body) != `{"error":"token inactive"}` {
-		t.Fatalf("unexpected body: %s", body)
-	}
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, `{"error":"token inactive"}`, string(body))
+}
+
+// TestMissingAuthorizationHeader_returns401 verifies that requests without an
+// Authorization header are rejected with 401, as documented in the README.
+func TestMissingAuthorizationHeader_returns401(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
+	require.NoError(t, err)
+	// No Authorization header set
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+// TestNonBearerScheme_returns401 verifies that Authorization headers with
+// non-Bearer schemes are rejected with 401.
+func TestNonBearerScheme_returns401(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Basic dXNlcjpwYXNz")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+// TestIntrospectionServerError_returns401 verifies that when the introspection
+// server returns a non-2xx status code, the filter rejects the token with 401.
+func TestIntrospectionServerError_returns401(t *testing.T) {
+	introspectionMu.Lock()
+	introspectionCode = http.StatusInternalServerError
+	introspectionBody = `{"error":"server error"}`
+	introspectionMu.Unlock()
+
+	req, err := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer tok")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }

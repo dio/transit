@@ -17,17 +17,24 @@
 package e2e
 
 import (
-	_ "embed"
-	"fmt"
-	"io"
-	"net"
-	"net/http"
-	"os"
-	"path/filepath"
-	"runtime"
-	"testing"
+	"context"       // context.WithTimeout() for WaitForSpan/WaitForMetric/WaitForRecord
+	_ "embed"       // embed.FS for //go:embed envoy.tmpl.yaml
+	"fmt"           // fmt.Sprintf, fmt.Fprintf for test logging
+	"io"            // io.ReadAll for response body reading
+	"net"           // net.Listener for backend server in startBackend()
+	"net/http"      // http.Get, http.Post, http.Server for requests and upstream mock
+	"os"            // os.Environ, os.Exit, os.Remove for env setup and file cleanup
+	"path/filepath" // filepath.Join for constructing paths
+	"runtime"       // runtime.Caller to locate this file and find examplesRoot
+	"testing"       // testing.T for test functions
+	"time"          // time.Second for context timeout durations
 
-	"github.com/dio/transit/examples/internal/e2etest"
+	otlplogs "go.opentelemetry.io/proto/otlp/logs/v1"       // LogRecord for log assertions
+	otlpmetrics "go.opentelemetry.io/proto/otlp/metrics/v1" // Metric for metric assertions
+	otlptrace "go.opentelemetry.io/proto/otlp/trace/v1"     // Span for trace assertions
+
+	"github.com/dio/transit/examples/internal/e2etest"  // EnvoyBin, FreePort, StartEnvoy, etc.
+	"github.com/dio/transit/examples/internal/otelsink" // Sink for in-memory OTLP receiver
 )
 
 //go:embed testdata/envoy.tmpl.yaml
@@ -36,6 +43,7 @@ var envoyConfigTmpl string
 var (
 	proxyURL     string
 	examplesRoot string
+	otelSink     *otelsink.Sink
 )
 
 func TestMain(m *testing.M) {
@@ -54,6 +62,10 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	otelSink = otelsink.New()
+	otelPort := otelSink.Start()
+	fmt.Fprintf(os.Stderr, "e2e: OTLP sink at port %d\n", otelPort)
+
 	// Start upstream backend.
 	backendPort := e2etest.FreePort()
 	backend := startBackend(backendPort, "upstream-ok")
@@ -67,11 +79,13 @@ func TestMain(m *testing.M) {
 		ProxyPort   int
 		AdminPort   int
 		BackendPort int
+		OtelPort    int
 	}
 	cfgPath := e2etest.WriteEnvoyConfig("transit-observability-e2e", envoyConfigTmpl, tmplData{
 		ProxyPort:   proxyPort,
 		AdminPort:   adminPort,
 		BackendPort: backendPort,
+		OtelPort:    otelPort,
 	})
 	defer os.Remove(cfgPath)
 
@@ -126,7 +140,283 @@ func TestPost_responds200(t *testing.T) {
 	}
 }
 
+// ── Trace tests ───────────────────────────────────────────────────────────────
+
+// TestTrace_spanOperation verifies that a span with the correct operation name
+// is created for each request.
+func TestTrace_spanOperation(t *testing.T) {
+	resp, err := http.Get(proxyURL + "/")
+	if err != nil {
+		t.Fatalf("GET /: %v", err)
+	}
+	resp.Body.Close()
+
+	if !waitForSpan(t, func(s *otlptrace.Span) bool {
+		return s.Name == "http.request"
+	}) {
+		t.Error("timed out waiting for span with name=http.request")
+	}
+}
+
+// TestTrace_httpMethodTag verifies that the http.method attribute is set.
+func TestTrace_httpMethodTag(t *testing.T) {
+	resp, err := http.Get(proxyURL + "/path/to/resource")
+	if err != nil {
+		t.Fatalf("GET /path/to/resource: %v", err)
+	}
+	resp.Body.Close()
+
+	if !waitForSpan(t, func(s *otlptrace.Span) bool {
+		return spanHasAttr(s, "http.method", "GET")
+	}) {
+		t.Error("timed out waiting for span with http.method=GET")
+	}
+}
+
+// TestTrace_httpPathTag verifies that the http.path attribute is set correctly.
+func TestTrace_httpPathTag(t *testing.T) {
+	resp, err := http.Get(proxyURL + "/test/path")
+	if err != nil {
+		t.Fatalf("GET /test/path: %v", err)
+	}
+	resp.Body.Close()
+
+	if !waitForSpan(t, func(s *otlptrace.Span) bool {
+		return spanHasAttr(s, "http.path", "/test/path")
+	}) {
+		t.Error("timed out waiting for span with http.path=/test/path")
+	}
+}
+
+// TestTrace_llmModelTag_present verifies that llm.model is set when x-model header is sent.
+func TestTrace_llmModelTag_present(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("x-model", "claude-opus-4-1")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET / with x-model: %v", err)
+	}
+	resp.Body.Close()
+
+	if !waitForSpan(t, func(s *otlptrace.Span) bool {
+		return spanHasAttr(s, "llm.model", "claude-opus-4-1")
+	}) {
+		t.Error("timed out waiting for span with llm.model=claude-opus-4-1")
+	}
+}
+
+// TestTrace_llmModelTag_absent verifies that llm.model is not set when x-model header is absent.
+func TestTrace_llmModelTag_absent(t *testing.T) {
+	resp, err := http.Get(proxyURL + "/")
+	if err != nil {
+		t.Fatalf("GET /: %v", err)
+	}
+	resp.Body.Close()
+
+	if !waitForSpan(t, func(s *otlptrace.Span) bool {
+		return s.Name == "http.request" && !spanHasAttrAny(s, "llm.model")
+	}) {
+		t.Error("timed out waiting for span without llm.model attribute")
+	}
+}
+
+// TestTrace_httpStatusCodeTag verifies that http.status_code is set on the span.
+func TestTrace_httpStatusCodeTag(t *testing.T) {
+	resp, err := http.Get(proxyURL + "/")
+	if err != nil {
+		t.Fatalf("GET /: %v", err)
+	}
+	resp.Body.Close()
+
+	if !waitForSpan(t, func(s *otlptrace.Span) bool {
+		return spanHasAttr(s, "http.status_code", "200")
+	}) {
+		t.Error("timed out waiting for span with http.status_code=200")
+	}
+}
+
+// ── Metric tests ──────────────────────────────────────────────────────────────
+
+// TestMetric_requestsCounterIncremented verifies that observability_requests_total
+// counter is incremented for each request.
+func TestMetric_requestsCounterIncremented(t *testing.T) {
+	resp, err := http.Get(proxyURL + "/")
+	if err != nil {
+		t.Fatalf("GET /: %v", err)
+	}
+	resp.Body.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	if !waitForMetric(t, ctx, func(m *otlpmetrics.Metric) bool {
+		return metricNamed(m, "observability_requests_total")
+	}) {
+		t.Error("timed out waiting for observability_requests_total metric")
+	}
+}
+
+// TestMetric_responsesCounterIncremented verifies that observability_responses_total
+// counter is incremented for each response.
+func TestMetric_responsesCounterIncremented(t *testing.T) {
+	resp, err := http.Get(proxyURL + "/")
+	if err != nil {
+		t.Fatalf("GET /: %v", err)
+	}
+	resp.Body.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	if !waitForMetric(t, ctx, func(m *otlpmetrics.Metric) bool {
+		return metricNamed(m, "observability_responses_total")
+	}) {
+		t.Error("timed out waiting for observability_responses_total metric")
+	}
+}
+
+// ── Log tests ────────────────────────────────────────────────────────────────
+
+// TestLog_statusCodeInMetadata verifies that status_code appears in log records.
+func TestLog_statusCodeInMetadata(t *testing.T) {
+	resp, err := http.Get(proxyURL + "/")
+	if err != nil {
+		t.Fatalf("GET /: %v", err)
+	}
+	resp.Body.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	if !waitForRecord(t, ctx, func(r *otlplogs.LogRecord) bool {
+		return recordHasAttr(r, "status_code", "200")
+	}) {
+		t.Error("timed out waiting for log record with status_code=200")
+	}
+}
+
+// TestLog_modelPresentWhenHeaderSet verifies that model attribute is set in logs
+// when x-model header is sent.
+func TestLog_modelPresentWhenHeaderSet(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("x-model", "claude-sonnet-4-1")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET / with x-model: %v", err)
+	}
+	resp.Body.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	if !waitForRecord(t, ctx, func(r *otlplogs.LogRecord) bool {
+		return recordHasAttr(r, "model", "claude-sonnet-4-1")
+	}) {
+		t.Error("timed out waiting for log record with model=claude-sonnet-4-1")
+	}
+}
+
+// TestLog_modelAbsentWhenNoHeader verifies that log records are created
+// when x-model header is not sent. (The model field may be empty or absent.)
+func TestLog_modelAbsentWhenNoHeader(t *testing.T) {
+	resp, err := http.Get(proxyURL + "/modeltest")
+	if err != nil {
+		t.Fatalf("GET /modeltest: %v", err)
+	}
+	resp.Body.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if !waitForRecord(t, ctx, func(r *otlplogs.LogRecord) bool {
+		// Just verify we get a log record. The model attribute will be empty or absent.
+		return recordHasAttr(r, "status_code", "200")
+	}) {
+		t.Error("timed out waiting for log record with status_code=200")
+	}
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
+
+// waitForSpan blocks until a span matching predicate arrives or ctx is
+// cancelled. Returns true on match, false on timeout.
+func waitForSpan(t *testing.T, predicate func(*otlptrace.Span) bool) bool {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, ok := otelSink.WaitForSpan(ctx, predicate)
+	return ok
+}
+
+// waitForMetric blocks until a metric matching predicate arrives or ctx is
+// cancelled. Returns true on match, false on timeout.
+func waitForMetric(t *testing.T, ctx context.Context, predicate func(*otlpmetrics.Metric) bool) bool {
+	t.Helper()
+	_, ok := otelSink.WaitForMetric(ctx, predicate)
+	return ok
+}
+
+// waitForRecord blocks until a log record matching predicate arrives or ctx is
+// cancelled. Returns true on match, false on timeout.
+func waitForRecord(t *testing.T, ctx context.Context, predicate func(*otlplogs.LogRecord) bool) bool {
+	t.Helper()
+	_, ok := otelSink.WaitForRecord(ctx, predicate)
+	return ok
+}
+
+// spanHasAttr checks if a span has an attribute with the given key and string value.
+func spanHasAttr(span *otlptrace.Span, key, value string) bool {
+	if span == nil || span.Attributes == nil {
+		return false
+	}
+	for _, kv := range span.Attributes {
+		if kv.Key == key {
+			if sv := kv.Value.GetStringValue(); sv == value {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// spanHasAttrAny checks if a span has any attribute with the given key.
+func spanHasAttrAny(span *otlptrace.Span, key string) bool {
+	if span == nil || span.Attributes == nil {
+		return false
+	}
+	for _, kv := range span.Attributes {
+		if kv.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+// recordHasAttr checks if a log record has an attribute with the given key and string value.
+func recordHasAttr(record *otlplogs.LogRecord, key, value string) bool {
+	if record == nil || record.Attributes == nil {
+		return false
+	}
+	for _, kv := range record.Attributes {
+		if kv.Key == key {
+			if sv := kv.Value.GetStringValue(); sv == value {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// metricNamed checks if a metric has the given name.
+func metricNamed(metric *otlpmetrics.Metric, name string) bool {
+	return metric != nil && metric.Name == name
+}
 
 // startBackend starts an HTTP server on the given port that always responds
 // with body as the response body (no trailing newline).

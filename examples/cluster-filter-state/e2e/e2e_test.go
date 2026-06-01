@@ -11,8 +11,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/dio/transit/examples/internal/e2etest"
 )
@@ -37,7 +38,8 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 
-	if err := e2etest.CheckSharedLibrary(examplesRoot, "cluster-filter-state", "libcluster-filter-state.so"); err != nil {
+	err := e2etest.CheckSharedLibrary(examplesRoot, "cluster-filter-state", "libcluster-filter-state.so")
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "e2e: %v\n", err)
 		os.Exit(1)
 	}
@@ -68,40 +70,85 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func TestGet_filterStateRouting(t *testing.T) {
-	// Send x-target-host pointing to upstream A; expect its response.
+func TestGet_filterStateRoutingToUpstreamA(t *testing.T) {
+	// Filter state routing: x-target-host header writes filter state,
+	// cluster extension reads it and selects matching host.
 	req, err := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
+	require.NoError(t, err)
 	req.Header.Set("x-target-host", fmt.Sprintf("127.0.0.1:%d", upstreamAPort))
 
 	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET /: %v", err)
-	}
+	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("want 200, got %d", resp.StatusCode)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), "upstream-a") {
-		t.Fatalf("body %q does not contain 'upstream-a'", body)
-	}
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "upstream-a")
+}
+
+func TestGet_filterStateRoutingToUpstreamB(t *testing.T) {
+	// Filter state routing: x-target-host pointing to upstream B.
+	// Proves filter state is read and matched correctly.
+	req, err := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
+	require.NoError(t, err)
+	req.Header.Set("x-target-host", fmt.Sprintf("127.0.0.1:%d", upstreamBPort))
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "upstream-b")
+}
+
+func TestGet_emptyHeader_routesToDefault(t *testing.T) {
+	// Empty x-target-host header: filter state is set but empty,
+	// cluster extension falls back to first host (upstream A).
+	req, err := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
+	require.NoError(t, err)
+	req.Header.Set("x-target-host", "")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "upstream-a")
 }
 
 func TestGet_noHeader_routesToDefault(t *testing.T) {
-	// No x-target-host header: filter state absent, cluster falls back to first host.
+	// No x-target-host header: filter state not set,
+	// cluster extension falls back to first host (upstream A).
 	resp, err := http.Get(proxyURL + "/") //nolint:noctx
-	if err != nil {
-		t.Fatalf("GET /: %v", err)
-	}
+	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("want 200, got %d", resp.StatusCode)
-	}
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "upstream-a")
+}
+
+func TestGet_unmappedTarget_routesToDefault(t *testing.T) {
+	// x-target-host points to unmapped address: no match in cluster config,
+	// cluster extension falls back to first host (upstream A).
+	req, err := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
+	require.NoError(t, err)
+	req.Header.Set("x-target-host", "192.168.1.99:9999")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "upstream-a")
 }
 
 // startUpstream starts a minimal HTTP server that returns name in the body.

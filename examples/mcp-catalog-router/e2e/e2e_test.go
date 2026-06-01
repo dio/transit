@@ -96,6 +96,14 @@ func TestCatalogRouterEnvoy(t *testing.T) {
 	require.Equal(t, "aws____read_documentation", list.Tools[0].Name)
 }
 
+// Note: mcp-catalog-router does not validate incoming client credentials.
+// It configures credentials (Credential field in Server config) purely for
+// outgoing requests to backend servers, not for validating incoming requests.
+// Unlike mcp-profile-router and mcp-profile-gateway, which validate APIKey in
+// incoming requests and return 401 if missing or wrong, mcp-catalog-router
+// accepts all requests and only uses the configured credential when forwarding
+// to backends. This is by design for the catalog-router pattern.
+
 func initialize(t *testing.T, url string) string {
 	t.Helper()
 	resp := postRPCRaw(t, url, "", mcpprofilerouter.JSONRPCRequest{

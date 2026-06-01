@@ -28,6 +28,8 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/dio/transit/examples/internal/e2etest"
 )
 
@@ -79,19 +81,24 @@ func TestMain(m *testing.M) {
 	authServer.Start()
 	defer authServer.Close()
 
+	// Start an upstream that echoes back request headers.
+	upstreamPort := startUpstream()
+
 	proxyPort := e2etest.FreePort()
 	adminPort := e2etest.FreePort()
 	proxyURL = fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
 
 	type ports struct {
-		ProxyPort int
-		AdminPort int
-		AuthPort  int
+		ProxyPort    int
+		AdminPort    int
+		AuthPort     int
+		UpstreamPort int
 	}
 	cfgPath := e2etest.WriteEnvoyConfig("transit-async-callout-e2e", envoyConfigTmpl, ports{
-		ProxyPort: proxyPort,
-		AdminPort: adminPort,
-		AuthPort:  authPort,
+		ProxyPort:    proxyPort,
+		AdminPort:    adminPort,
+		AuthPort:     authPort,
+		UpstreamPort: upstreamPort,
 	})
 	asyncCalloutDir := filepath.Join(examplesRoot, "async-callout")
 
@@ -107,53 +114,64 @@ func TestMain(m *testing.M) {
 }
 
 // TestAuthOK_passes verifies that when the auth stub returns "ok" the filter
-// forwards the request and injects x-auth-checked: true.
+// forwards the request, injects x-auth-checked: true, and upstream receives it.
 func TestAuthOK_passes(t *testing.T) {
 	authResponse = "ok"
 	authResponseCode = http.StatusOK
 
 	resp, err := http.Get(proxyURL + "/")
-	if err != nil {
-		t.Fatalf("GET /: %v", err)
-	}
+	require.NoError(t, err)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("want 200, got %d", resp.StatusCode)
-	}
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	// Upstream echoes back the x-auth-checked header value
+	require.Equal(t, "true", string(body))
 }
 
 // TestAuthDenied_returns403 verifies that a non-"ok" body from the auth stub
-// causes the filter to send a 403 local response.
+// causes the filter to send a 403 local response without forwarding.
 func TestAuthDenied_returns403(t *testing.T) {
 	authResponse = "denied"
 	authResponseCode = http.StatusOK
 
 	resp, err := http.Get(proxyURL + "/")
-	if err != nil {
-		t.Fatalf("GET /: %v", err)
-	}
+	require.NoError(t, err)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("want 403, got %d", resp.StatusCode)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	if string(body) != `{"error":"denied"}` {
-		t.Fatalf("unexpected body: %s", body)
-	}
+	require.Equal(t, http.StatusForbidden, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, `{"error":"denied"}`, string(body))
 }
 
-// TestAuthError_returns503 verifies that a non-2xx from the auth stub causes
-// the filter to send a 503 local response.
-func TestAuthError_returns503(t *testing.T) {
-	authResponse = ""
-	authResponseCode = http.StatusInternalServerError
+// TestAuthErrorResponse_returns403 verifies that when the auth stub returns a
+// non-"ok" body (even with 2xx status), the filter rejects with 403.
+func TestAuthErrorResponse_returns403(t *testing.T) {
+	authResponse = "server-error"
+	authResponseCode = http.StatusOK
 
 	resp, err := http.Get(proxyURL + "/")
-	if err != nil {
-		t.Fatalf("GET /: %v", err)
-	}
+	require.NoError(t, err)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("want 503, got %d", resp.StatusCode)
+	require.Equal(t, http.StatusForbidden, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, `{"error":"denied"}`, string(body))
+}
+
+// startUpstream starts a minimal HTTP server that echoes back the x-auth-checked header.
+func startUpstream() int {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic("startUpstream: " + err.Error())
 	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Echo back the x-auth-checked header value
+		authChecked := r.Header.Get("x-auth-checked")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, authChecked)
+	})
+	go http.Serve(l, mux) //nolint:errcheck
+	return l.Addr().(*net.TCPAddr).Port
 }

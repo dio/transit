@@ -20,12 +20,15 @@ package e2e
 import (
 	_ "embed"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/dio/transit/examples/internal/e2etest"
 )
@@ -34,8 +37,10 @@ import (
 var envoyConfigTmpl string
 
 var (
-	proxyURL     string
-	examplesRoot string
+	proxyURL            string
+	examplesRoot        string
+	upstreamPrimaryPort int
+	upstreamPremiumPort int
 )
 
 func TestMain(m *testing.M) {
@@ -55,15 +60,18 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	upstreamPort := startUpstream()
+	upstreamPrimaryPort = startUpstream("primary")
+	upstreamPremiumPort = startUpstream("premium")
+
 	proxyPort := e2etest.FreePort()
 	adminPort := e2etest.FreePort()
 	proxyURL = fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
 
 	cfgPath := e2etest.WriteEnvoyConfig("lb-policy-metadata-route-e2e", envoyConfigTmpl, map[string]int{
-		"ProxyPort":    proxyPort,
-		"UpstreamPort": upstreamPort,
-		"AdminPort":    adminPort,
+		"ProxyPort":           proxyPort,
+		"UpstreamPrimaryPort": upstreamPrimaryPort,
+		"UpstreamPremiumPort": upstreamPremiumPort,
+		"AdminPort":           adminPort,
 	})
 
 	stop, ok := e2etest.StartEnvoy(bin, cfgPath, exampleDir, adminPort, nil)
@@ -77,40 +85,71 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// TestGet_matchingCapability verifies that a request with x-required-capability
-// matching the endpoint's metadata is routed successfully (200 OK).
-func TestGet_matchingCapability(t *testing.T) {
+// TestGet_requestPrimaryCapability verifies that a request with
+// x-required-capability: primary routes to the primary host.
+func TestGet_requestPrimaryCapability(t *testing.T) {
 	req, err := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
+	require.NoError(t, err)
 	req.Header.Set("x-required-capability", "primary")
 	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET /: %v", err)
-	}
+	require.NoError(t, err)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("want 200, got %d", resp.StatusCode)
-	}
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, "primary", string(body))
 }
 
-// TestGet_noCapabilityHeader verifies that a request without the capability
-// header falls back to the first host and succeeds (200 OK).
-func TestGet_noCapabilityHeader(t *testing.T) {
-	resp, err := http.Get(proxyURL + "/")
-	if err != nil {
-		t.Fatalf("GET /: %v", err)
-	}
+// TestGet_requestPremiumCapability verifies that a request with
+// x-required-capability: premium routes to the premium host.
+func TestGet_requestPremiumCapability(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
+	require.NoError(t, err)
+	req.Header.Set("x-required-capability", "premium")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("want 200, got %d", resp.StatusCode)
-	}
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, "premium", string(body))
+}
+
+// TestGet_unmatchedCapability_fallbackToFirst verifies that a request with
+// an unmapped capability falls back to the first host.
+func TestGet_unmatchedCapability_fallbackToFirst(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
+	require.NoError(t, err)
+	req.Header.Set("x-required-capability", "experimental")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	// Fallback is first host in config (primary)
+	require.Equal(t, "primary", string(body))
+}
+
+// TestGet_noCapabilityHeader_fallbackToFirst verifies that a request without
+// the capability header falls back to the first host.
+func TestGet_noCapabilityHeader_fallbackToFirst(t *testing.T) {
+	resp, err := http.Get(proxyURL + "/")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, "primary", string(body))
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-func startUpstream() int {
+func startUpstream(name string) int {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		panic("startUpstream: " + err.Error())
@@ -118,7 +157,7 @@ func startUpstream() int {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "upstream ok")
+		fmt.Fprint(w, name)
 	})
 	go http.Serve(l, mux) //nolint:errcheck
 	return l.Addr().(*net.TCPAddr).Port

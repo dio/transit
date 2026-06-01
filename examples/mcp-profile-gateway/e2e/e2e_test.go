@@ -220,6 +220,148 @@ func TestProfileGatewayEnvoyCatalogForwarding(t *testing.T) {
 	mu.Unlock()
 }
 
+func TestProfileGatewayEnvoyMissingAuth_returns401(t *testing.T) {
+	_, file, _, _ := runtime.Caller(0)
+	examplesRoot := filepath.Join(filepath.Dir(file), "../../")
+	envoyBin := e2etest.EnvoyBin(examplesRoot)
+	if _, err := os.Stat(envoyBin); err != nil {
+		t.Skipf("envoy not found at %s (run: make download-envoy)", envoyBin)
+	}
+	require.NoError(t, e2etest.CheckSharedLibrary(examplesRoot, "mcp-profile-gateway", "libmcp-profile-gateway.so"))
+
+	configJSON, err := json.Marshal(mcpprofilegateway.Config{
+		CatalogServers: map[string]mcpprofilegateway.CatalogServer{
+			"aws-knowledge": {URL: "http://l2-catalog.local", Cluster: "l2-catalog"},
+		},
+		Profiles: map[string]mcpprofilegateway.Profile{
+			"profile": {
+				Name:   "profile",
+				APIKey: "profile-key",
+				Servers: map[string]mcpprofilegateway.ProfileServer{
+					"aws-knowledge": {URL: "http://l2-catalog.local", Prefix: "aws"},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	proxyPort := e2etest.FreePort()
+	adminPort := e2etest.FreePort()
+	cfgPath := e2etest.WriteEnvoyConfig("mcp-profile-gateway-noauth-e2e", envoyConfigTmpl, envoyConfigData{
+		ProxyPort: proxyPort,
+		AdminPort: adminPort,
+		L2Host:    "127.0.0.1",
+		L2Port:    8080,
+	})
+	defer func() { _ = os.Remove(cfgPath) }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, envoyBin, "-c", cfgPath, "--log-level", "warning", "--component-log-level", "dynamic_modules:info")
+	cmd.Env = append(os.Environ(),
+		"GODEBUG=cgocheck=0",
+		"ENVOY_DYNAMIC_MODULES_SEARCH_PATH="+filepath.Join(examplesRoot, "mcp-profile-gateway"),
+		mcpprofilegateway.ConfigEnv+"="+string(configJSON),
+	)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	require.NoError(t, cmd.Start())
+	defer func() {
+		cancel()
+		_ = cmd.Wait()
+	}()
+
+	require.Eventually(t, func() bool {
+		return e2etest.WaitURL(fmt.Sprintf("http://127.0.0.1:%d/ready", adminPort), 200*time.Millisecond)
+	}, 15*time.Second, 200*time.Millisecond)
+
+	profileURL := fmt.Sprintf("http://127.0.0.1:%d/mcp/profile", proxyPort)
+
+	// Request without authorization header should be rejected
+	resp := postRPCRaw(t, profileURL, mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  mcpprofilerouter.MethodInitialize,
+		Params: mustRaw(t, mcpprofilerouter.InitializeParams{
+			ProtocolVersion: mcpprofilerouter.ProtocolVersion,
+			ClientInfo:      mcpprofilerouter.Implementation{Name: "e2e"},
+		}),
+	}, map[string]string{})
+	defer func() { _ = resp.Body.Close() }()
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+func TestProfileGatewayEnvoyWrongAuth_returns401(t *testing.T) {
+	_, file, _, _ := runtime.Caller(0)
+	examplesRoot := filepath.Join(filepath.Dir(file), "../../")
+	envoyBin := e2etest.EnvoyBin(examplesRoot)
+	if _, err := os.Stat(envoyBin); err != nil {
+		t.Skipf("envoy not found at %s (run: make download-envoy)", envoyBin)
+	}
+	require.NoError(t, e2etest.CheckSharedLibrary(examplesRoot, "mcp-profile-gateway", "libmcp-profile-gateway.so"))
+
+	configJSON, err := json.Marshal(mcpprofilegateway.Config{
+		CatalogServers: map[string]mcpprofilegateway.CatalogServer{
+			"aws-knowledge": {URL: "http://l2-catalog.local", Cluster: "l2-catalog"},
+		},
+		Profiles: map[string]mcpprofilegateway.Profile{
+			"profile": {
+				Name:   "profile",
+				APIKey: "profile-key",
+				Servers: map[string]mcpprofilegateway.ProfileServer{
+					"aws-knowledge": {URL: "http://l2-catalog.local", Prefix: "aws"},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	proxyPort := e2etest.FreePort()
+	adminPort := e2etest.FreePort()
+	cfgPath := e2etest.WriteEnvoyConfig("mcp-profile-gateway-wrongauth-e2e", envoyConfigTmpl, envoyConfigData{
+		ProxyPort: proxyPort,
+		AdminPort: adminPort,
+		L2Host:    "127.0.0.1",
+		L2Port:    8080,
+	})
+	defer func() { _ = os.Remove(cfgPath) }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, envoyBin, "-c", cfgPath, "--log-level", "warning", "--component-log-level", "dynamic_modules:info")
+	cmd.Env = append(os.Environ(),
+		"GODEBUG=cgocheck=0",
+		"ENVOY_DYNAMIC_MODULES_SEARCH_PATH="+filepath.Join(examplesRoot, "mcp-profile-gateway"),
+		mcpprofilegateway.ConfigEnv+"="+string(configJSON),
+	)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	require.NoError(t, cmd.Start())
+	defer func() {
+		cancel()
+		_ = cmd.Wait()
+	}()
+
+	require.Eventually(t, func() bool {
+		return e2etest.WaitURL(fmt.Sprintf("http://127.0.0.1:%d/ready", adminPort), 200*time.Millisecond)
+	}, 15*time.Second, 200*time.Millisecond)
+
+	profileURL := fmt.Sprintf("http://127.0.0.1:%d/mcp/profile", proxyPort)
+
+	// Request with wrong authorization should be rejected
+	resp := postRPCRaw(t, profileURL, mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  mcpprofilerouter.MethodInitialize,
+		Params: mustRaw(t, mcpprofilerouter.InitializeParams{
+			ProtocolVersion: mcpprofilerouter.ProtocolVersion,
+			ClientInfo:      mcpprofilerouter.Implementation{Name: "e2e"},
+		}),
+	}, map[string]string{"authorization": "Bearer wrong-key"})
+	defer func() { _ = resp.Body.Close() }()
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
 func TestProfileGatewayEnvoyToolsCall(t *testing.T) {
 	_, file, _, _ := runtime.Caller(0)
 	examplesRoot := filepath.Join(filepath.Dir(file), "../../")

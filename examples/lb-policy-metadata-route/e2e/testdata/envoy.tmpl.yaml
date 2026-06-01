@@ -42,11 +42,18 @@ static_resources:
           - lb_endpoints:
               - endpoint:
                   address:
-                    socket_address: { address: 127.0.0.1, port_value: {{.UpstreamPort}} }
+                    socket_address: { address: 127.0.0.1, port_value: {{.UpstreamPrimaryPort}} }
                 metadata:
                   filter_metadata:
                     envoy.lb:
                       capability: primary
+              - endpoint:
+                  address:
+                    socket_address: { address: 127.0.0.1, port_value: {{.UpstreamPremiumPort}} }
+                metadata:
+                  filter_metadata:
+                    envoy.lb:
+                      capability: premium
 
 admin:
   address:

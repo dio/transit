@@ -99,14 +99,25 @@ jobs:
         run: make download-envoy
 
       - run: make e2e
-      - run: make -C examples/hello e2e
-      - run: make -C examples/sse-tap e2e
-      - run: make -C examples/request-ui e2e
-      - run: make -C examples/lb-policy e2e
+      - run: make -C examples/async-callout e2e
+      - run: make -C examples/body-transform e2e
       - run: make -C examples/cluster e2e
       - run: make -C examples/cluster-dfp e2e
+      - run: make -C examples/cluster-group e2e
+      - run: make -C examples/cluster-least-conn e2e
       - run: make -C examples/cluster-router e2e
       - run: make -C examples/cluster-shard-router e2e
+      - run: make -C examples/filter-chain e2e
+      - run: make -C examples/hello e2e
+      - run: make -C examples/jwt-callout e2e
+      - run: make -C examples/lb-policy e2e
+      - run: make -C examples/lb-policy-header-hash e2e
+      - run: make -C examples/lb-policy-metadata-route e2e
+      - run: make -C examples/mcp-catalog-router e2e
+      - run: make -C examples/mcp-profile-gateway e2e
+      - run: make -C examples/mcp-profile-router e2e
+      - run: make -C examples/request-ui e2e
+      - run: make -C examples/sse-tap e2e
       - run: make -C examples/spa e2e
 
   # ---------------------------------------------------------------------------

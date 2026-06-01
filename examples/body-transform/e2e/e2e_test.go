@@ -28,6 +28,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/dio/transit/examples/internal/e2etest"
 )
 
@@ -100,32 +102,59 @@ func TestMain(m *testing.M) {
 
 func TestPost_jsonBody_messageRenamedToText(t *testing.T) {
 	resp, err := http.Post(proxyURL+"/", "application/json", strings.NewReader(`{"message":"hello"}`))
-	if err != nil {
-		t.Fatalf("POST /: %v", err)
-	}
+	require.NoError(t, err)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("want 200, got %d", resp.StatusCode)
-	}
-	body, _ := io.ReadAll(resp.Body)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
 	got := strings.TrimSpace(string(body))
-	if got != `{"text":"hello"}` {
-		t.Fatalf("want {\"text\":\"hello\"}, got %q", got)
-	}
+	require.Equal(t, `{"text":"hello"}`, got)
+}
+
+func TestPost_jsonBodyMissingMessage_passedThrough(t *testing.T) {
+	// JSON without "message" field should pass through unchanged
+	resp, err := http.Post(proxyURL+"/", "application/json", strings.NewReader(`{"other":"value"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	got := strings.TrimSpace(string(body))
+	require.Equal(t, `{"other":"value"}`, got)
+}
+
+func TestPost_emptyBody_passedThrough(t *testing.T) {
+	// Empty body should pass through unchanged
+	resp, err := http.Post(proxyURL+"/", "application/json", strings.NewReader(""))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	got := strings.TrimSpace(string(body))
+	require.Equal(t, "", got)
+}
+
+func TestPost_malformedJSON_passedThrough(t *testing.T) {
+	// Malformed JSON should pass through unchanged (filter doesn't validate)
+	malformedJSON := `{invalid json`
+	resp, err := http.Post(proxyURL+"/", "application/json", strings.NewReader(malformedJSON))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	got := strings.TrimSpace(string(body))
+	require.Equal(t, malformedJSON, got)
 }
 
 func TestPost_nonJSON_passedThrough(t *testing.T) {
 	resp, err := http.Post(proxyURL+"/", "text/plain", strings.NewReader("hello"))
-	if err != nil {
-		t.Fatalf("POST /: %v", err)
-	}
+	require.NoError(t, err)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("want 200, got %d", resp.StatusCode)
-	}
-	body, _ := io.ReadAll(resp.Body)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
 	got := strings.TrimSpace(string(body))
-	if got != "hello" {
-		t.Fatalf("want hello, got %q", got)
-	}
+	require.Equal(t, "hello", got)
 }

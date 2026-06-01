@@ -26,6 +26,8 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/dio/transit/examples/internal/e2etest"
 )
 
@@ -100,35 +102,49 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func TestRequest_withAPIKey_passes(t *testing.T) {
+func TestRequest_withValidAPIKey_passes(t *testing.T) {
 	req, err := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
+	require.NoError(t, err)
 	req.Header.Set("x-api-key", "secret")
 
 	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET /: %v", err)
-	}
+	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("want 200, got %d", resp.StatusCode)
-	}
-	if got := resp.Header.Get("x-filtered"); got != "true" {
-		t.Fatalf("want x-filtered: true, got %q", got)
-	}
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, "true", resp.Header.Get("x-filtered"))
 }
 
 func TestRequest_missingAPIKey_returns401(t *testing.T) {
 	resp, err := http.Get(proxyURL + "/") //nolint:noctx
-	if err != nil {
-		t.Fatalf("GET /: %v", err)
-	}
+	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("want 401, got %d", resp.StatusCode)
-	}
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+func TestRequest_withEmptyAPIKey_returns401(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
+	require.NoError(t, err)
+	req.Header.Set("x-api-key", "")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+func TestRequest_withAnyNonEmptyAPIKey_passes(t *testing.T) {
+	// Filter only checks for presence, not the value
+	req, err := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
+	require.NoError(t, err)
+	req.Header.Set("x-api-key", "any-value")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, "true", resp.Header.Get("x-filtered"))
 }

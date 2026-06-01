@@ -28,6 +28,155 @@ var envoyConfigTmpl string
 //go:embed testdata/envoy_cluster_router.tmpl.yaml
 var envoyClusterRouterConfigTmpl string
 
+func TestMCPProfileRouterMissingAuth_returns401(t *testing.T) {
+	must := require.New(t)
+
+	_, file, _, _ := runtime.Caller(0)
+	examplesRoot := filepath.Join(filepath.Dir(file), "../../")
+	bin := e2etest.EnvoyBin(examplesRoot)
+	if _, err := os.Stat(bin); err != nil {
+		t.Skipf("envoy not found at %s (run: make download-envoy)", bin)
+	}
+
+	proxyPort := e2etest.FreePort()
+	adminPort := e2etest.FreePort()
+	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
+	profile := mcpprofilerouter.Profile{
+		ID:            "9b3f7d0a80c4aa6d-67261ca9ea3dadb2",
+		Name:          "test",
+		APIKey:        "profile-key",
+		RouteHeader:   "x-mcp-server",
+		TimeoutMillis: 2000,
+		Servers: map[string]mcpprofilerouter.Server{
+			"github": {URL: proxyURL + "/_egress/github", Prefix: "github"},
+		},
+	}
+
+	soPath := filepath.Join(examplesRoot, "mcp-profile-router", "libmcp-profile-router.so")
+	if _, err := os.Stat(soPath); err != nil {
+		t.Fatalf("%s not found; run `make -C examples/mcp-profile-router build` before e2e: %v", soPath, err)
+	}
+
+	profileJSON, err := json.Marshal(profile)
+	must.NoError(err)
+	cfgPath := e2etest.WriteEnvoyConfig("mcp-profile-router-noauth-e2e", envoyConfigTmpl, envoyConfigData{
+		ProxyPort:  proxyPort,
+		AdminPort:  adminPort,
+		GitHubHost: "127.0.0.1",
+		GitHubPort: "8080",
+		KiwiHost:   "127.0.0.1",
+		KiwiPort:   "8080",
+	})
+	t.Cleanup(func() { _ = os.Remove(cfgPath) })
+
+	envoy := exec.Command(bin, "-c", cfgPath, "--log-level", "warning", "--concurrency", "4")
+	envoy.Env = append(os.Environ(),
+		"GODEBUG=cgocheck=0",
+		"ENVOY_DYNAMIC_MODULES_SEARCH_PATH="+filepath.Join(examplesRoot, "mcp-profile-router"),
+		mcpprofilerouter.ProfileEnv+"="+string(profileJSON),
+	)
+	envoy.Stdout = os.Stderr
+	envoy.Stderr = os.Stderr
+	must.NoError(envoy.Start())
+	t.Cleanup(func() {
+		_ = envoy.Process.Kill()
+		_, _ = envoy.Process.Wait()
+	})
+	adminURL := fmt.Sprintf("http://127.0.0.1:%d", adminPort)
+	must.True(e2etest.WaitURL(adminURL+"/ready", 15*time.Second), "envoy did not become ready")
+
+	// Request without authorization header should be rejected
+	body := mustRaw(mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  mcpprofilerouter.MethodInitialize,
+		Params: mustRaw(mcpprofilerouter.InitializeParams{
+			ProtocolVersion: mcpprofilerouter.ProtocolVersion,
+			ClientInfo:      mcpprofilerouter.Implementation{Name: "e2e"},
+		}),
+	})
+	httpReq, err := http.NewRequest(http.MethodPost, proxyURL+"/mcp/9b3f7d0a80c4aa6d-67261ca9ea3dadb2", bytes.NewReader(body)) //nolint:noctx
+	require.NoError(t, err)
+	httpReq.Header.Set("content-type", "application/json")
+	httpReq.Header.Set("accept", "application/json")
+	// Deliberately not setting authorization header
+	resp, err := http.DefaultClient.Do(httpReq)
+	must.NoError(err)
+	defer resp.Body.Close()
+	must.Equal(http.StatusUnauthorized, resp.StatusCode)
+}
+
+func TestMCPProfileRouterWrongAuth_returns401(t *testing.T) {
+	must := require.New(t)
+
+	_, file, _, _ := runtime.Caller(0)
+	examplesRoot := filepath.Join(filepath.Dir(file), "../../")
+	bin := e2etest.EnvoyBin(examplesRoot)
+	if _, err := os.Stat(bin); err != nil {
+		t.Skipf("envoy not found at %s (run: make download-envoy)", bin)
+	}
+
+	proxyPort := e2etest.FreePort()
+	adminPort := e2etest.FreePort()
+	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
+	profile := mcpprofilerouter.Profile{
+		ID:            "9b3f7d0a80c4aa6d-67261ca9ea3dadb2",
+		Name:          "test",
+		APIKey:        "profile-key",
+		RouteHeader:   "x-mcp-server",
+		TimeoutMillis: 2000,
+		Servers: map[string]mcpprofilerouter.Server{
+			"github": {URL: proxyURL + "/_egress/github", Prefix: "github"},
+		},
+	}
+
+	soPath := filepath.Join(examplesRoot, "mcp-profile-router", "libmcp-profile-router.so")
+	if _, err := os.Stat(soPath); err != nil {
+		t.Fatalf("%s not found; run `make -C examples/mcp-profile-router build` before e2e: %v", soPath, err)
+	}
+
+	profileJSON, err := json.Marshal(profile)
+	must.NoError(err)
+	cfgPath := e2etest.WriteEnvoyConfig("mcp-profile-router-wrongauth-e2e", envoyConfigTmpl, envoyConfigData{
+		ProxyPort:  proxyPort,
+		AdminPort:  adminPort,
+		GitHubHost: "127.0.0.1",
+		GitHubPort: "8080",
+		KiwiHost:   "127.0.0.1",
+		KiwiPort:   "8080",
+	})
+	t.Cleanup(func() { _ = os.Remove(cfgPath) })
+
+	envoy := exec.Command(bin, "-c", cfgPath, "--log-level", "warning", "--concurrency", "4")
+	envoy.Env = append(os.Environ(),
+		"GODEBUG=cgocheck=0",
+		"ENVOY_DYNAMIC_MODULES_SEARCH_PATH="+filepath.Join(examplesRoot, "mcp-profile-router"),
+		mcpprofilerouter.ProfileEnv+"="+string(profileJSON),
+	)
+	envoy.Stdout = os.Stderr
+	envoy.Stderr = os.Stderr
+	must.NoError(envoy.Start())
+	t.Cleanup(func() {
+		_ = envoy.Process.Kill()
+		_, _ = envoy.Process.Wait()
+	})
+	adminURL := fmt.Sprintf("http://127.0.0.1:%d", adminPort)
+	must.True(e2etest.WaitURL(adminURL+"/ready", 15*time.Second), "envoy did not become ready")
+
+	// Request with wrong authorization should be rejected
+	resp := postRPCRawWithHeaders(t, proxyURL, "", mcpprofilerouter.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  mcpprofilerouter.MethodInitialize,
+		Params: mustRaw(mcpprofilerouter.InitializeParams{
+			ProtocolVersion: mcpprofilerouter.ProtocolVersion,
+			ClientInfo:      mcpprofilerouter.Implementation{Name: "e2e"},
+		}),
+	}, map[string]string{"authorization": "Bearer wrong-key"})
+	defer resp.Body.Close()
+	must.Equal(http.StatusUnauthorized, resp.StatusCode)
+}
+
 func TestMCPProfileRouterEndToEnd(t *testing.T) {
 	must := require.New(t)
 
@@ -309,13 +458,26 @@ func postRPC(t *testing.T, baseURL, sessionID string, req mcpprofilerouter.JSONR
 
 func postRPCRaw(t *testing.T, baseURL, sessionID string, req mcpprofilerouter.JSONRPCRequest) *http.Response {
 	t.Helper()
+	return postRPCRawWithHeaders(t, baseURL, sessionID, req, map[string]string{"authorization": "Bearer profile-key"})
+}
+
+func postRPCRawWithHeaders(t *testing.T, baseURL, sessionID string, req mcpprofilerouter.JSONRPCRequest, headers map[string]string) *http.Response {
+	t.Helper()
 	body, err := json.Marshal(req)
 	require.NoError(t, err)
 	httpReq, err := http.NewRequest(http.MethodPost, baseURL+"/mcp/9b3f7d0a80c4aa6d-67261ca9ea3dadb2", bytes.NewReader(body)) //nolint:noctx
 	require.NoError(t, err)
 	httpReq.Header.Set("content-type", "application/json")
 	httpReq.Header.Set("accept", "application/json")
-	httpReq.Header.Set("authorization", "Bearer profile-key")
+	if headers == nil {
+		// If nil, set default auth
+		httpReq.Header.Set("authorization", "Bearer profile-key")
+	} else {
+		// If non-nil (even if empty), use exactly what was provided
+		for name, value := range headers {
+			httpReq.Header.Set(name, value)
+		}
+	}
 	if sessionID != "" {
 		httpReq.Header.Set(mcpprofilerouter.SessionIDHeader, sessionID)
 	}
