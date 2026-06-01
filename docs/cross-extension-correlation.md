@@ -2,7 +2,7 @@
 
 > **Status:** implementation guidance. Primitive B landed in `d5803e4`;
 > Primitive A landed in `661f47a`, and orange has been migrated to it.
-> request-ui still demonstrates the older access-logger correlation shape.
+> request-ui has been migrated to Primitive B.
 
 Envoy's dynamic-module extension types (HTTP filter, ClusterLB extension,
 LB Policy, AccessLogger) are independent: each runs in its own per-stream
@@ -49,14 +49,14 @@ sketches the primitives.
   bytes, response flags, code details) attached to a record it built
   earlier. AccessLogger is the only place Envoy delivers those finalized
   fields.
-- **Today**: `examples/request-ui` deposits a partial `*sink.Record` into
-  `PendingRecords` (a `sync.Map`) keyed by `x-request-id` in the response
-  handler. The access logger pops it in `OnLog(AccessLogTypeDownstreamEnd)`,
-  enriches with finalized fields, sends to the sink.
+- **Today**: `examples/request-ui` stores a per-request accumulator in
+  `Request.Context`, enriches it in the response handler, and sends the
+  final `*sink.Record` from `WithOnStreamFinalized`. The SDK owns the
+  filter-to-internal-access-logger correlation.
 - **Race**: no — producer always runs first.
-- **Leak status**: a soft leak class exists if `x-request-id` is empty
-  or changes between the two views; the early-return paths in
-  `alLogger.OnLog` orphan entries silently.
+- **Leak status**: closed for the in-tree example. The SDK correlates by
+  `x-request-id` when present and by an SDK fallback header when request id
+  generation is disabled.
 
 ### 3. Upstream filter ↔ downstream filter (same stream)
 

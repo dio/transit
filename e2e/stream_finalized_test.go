@@ -93,6 +93,23 @@ func (s *StreamFinalizedSuite) TestLocalReply_firesWithResponseCode() {
 	s.Equal(uint64(1), after.NonZeroResponseCode-before.NonZeroResponseCode, "ResponseCode must be populated for local reply")
 }
 
+func (s *StreamFinalizedSuite) TestNoRequestIDLocalReply_usesFallbackCorrelation() {
+	before := readStreamFinalizedCounters(s.T())
+
+	// This listener disables generate_request_id. The SDK must stamp its
+	// fallback correlation header immediately so the access logger can find
+	// the finalized entry even though guard sends a local reply before queued
+	// request-header mutations would normally flush.
+	req, _ := http.NewRequest(http.MethodGet, streamFinalizedFallbackAddr+"/", nil)
+	resp := mustDo(s.T(), req)
+	readBody(s.T(), resp)
+	s.Equal(http.StatusUnauthorized, resp.StatusCode)
+
+	after := readStreamFinalizedCounters(s.T())
+	s.Equal(uint64(1), after.Fired-before.Fired)
+	s.Equal(uint64(1), after.ContextOK-before.ContextOK)
+	s.Equal(uint64(1), after.NonZeroResponseCode-before.NonZeroResponseCode)
+}
 
 func (s *StreamFinalizedSuite) TestUpstreamFailure_firesWithResponseFlags() {
 	before := readStreamFinalizedCounters(s.T())

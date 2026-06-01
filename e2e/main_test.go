@@ -84,6 +84,7 @@ var (
 	streamFinalizedAddr           string
 	streamFinalizedDeadAddr       string
 	streamFinalizedLocalAddr      string
+	streamFinalizedFallbackAddr   string
 	streamFinalizedLoopbackAddr   string
 	adminAddr                     string
 )
@@ -154,6 +155,7 @@ func TestMain(m *testing.M) {
 	streamFinalizedPort := freePort()
 	streamFinalizedDeadPort := freePort()
 	streamFinalizedLocalPort := freePort()
+	streamFinalizedFallbackPort := freePort()
 	streamFinalizedLoopbackPort := freePort()
 	// deadUpstreamPort: nothing listens here; Envoy gets ECONNREFUSED, setting UF flag.
 	deadUpstreamPort := freePort()
@@ -191,6 +193,7 @@ func TestMain(m *testing.M) {
 	streamFinalizedAddr = fmt.Sprintf("http://localhost:%d", streamFinalizedPort)
 	streamFinalizedDeadAddr = fmt.Sprintf("http://localhost:%d", streamFinalizedDeadPort)
 	streamFinalizedLocalAddr = fmt.Sprintf("http://localhost:%d", streamFinalizedLocalPort)
+	streamFinalizedFallbackAddr = fmt.Sprintf("http://localhost:%d", streamFinalizedFallbackPort)
 	streamFinalizedLoopbackAddr = fmt.Sprintf("http://127.0.0.1:%d", streamFinalizedLoopbackPort)
 	adminAddr = fmt.Sprintf("http://localhost:%d", adminPort)
 
@@ -281,6 +284,7 @@ func TestMain(m *testing.M) {
 		StreamFinalizedPort:                streamFinalizedPort,
 		StreamFinalizedDeadPort:            streamFinalizedDeadPort,
 		StreamFinalizedLocalPort:           streamFinalizedLocalPort,
+		StreamFinalizedFallbackPort:        streamFinalizedFallbackPort,
 		StreamFinalizedLoopbackPort:        streamFinalizedLoopbackPort,
 		DeadUpstreamPort:                   deadUpstreamPort,
 		AdminPort:                          adminPort,
@@ -808,6 +812,7 @@ type envoyPorts struct {
 	StreamFinalizedPort                int
 	StreamFinalizedDeadPort            int
 	StreamFinalizedLocalPort           int
+	StreamFinalizedFallbackPort        int
 	StreamFinalizedLoopbackPort        int
 	DeadUpstreamPort                   int
 	AdminPort                          int

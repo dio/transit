@@ -3,19 +3,19 @@
 This example records requests and responses that pass through Envoy, then serves
 a small UI for inspecting them.
 
-It combines an HTTP filter with a dynamic module access logger. The filter
-captures request and response data while the stream is active. The access logger
-runs after the stream ends and fills in finalized fields such as duration,
-response flags, byte counts, trace IDs, and upstream timing.
+It uses an HTTP filter with `up.WithOnStreamFinalized`. The filter captures
+request and response data while the stream is active, and the finalized callback
+fills in end-of-stream fields such as duration, response flags, byte counts,
+trace IDs, and upstream timing.
 
 Records can be stored in Postgres or in an in-memory ring buffer.
 
 ## What it shows
 
-- `up.RegisterWithResponse`
-- `up.RegisterAccessLogger`
-- correlation through `x-request-id`
-- finalized stream data from `AccessLoggerHandle`
+- `up.Register`
+- `up.WithResponse`
+- `up.WithOnStreamFinalized`
+- finalized stream data from `up.FinalizedInfo`
 - a module-owned HTTP UI and SSE updates
 - optional Postgres storage
 
@@ -78,9 +78,8 @@ make -C examples/request-ui e2e
 
 ## Files
 
-- `filter.go` records request and response state.
-- `accesslogger.go` enriches records after the stream completes.
+- `filter.go` records request and response state, then enriches and sends the
+  record from `WithOnStreamFinalized`.
 - `sink/` stores records and serves the UI.
-- `cmd/main.go` starts the sink, links the ABI layer, and registers both module
-  components.
+- `cmd/main.go` starts the sink, links the ABI layer, and registers the filter.
 - `envoy.yaml` is a reference bootstrap for local Envoy runs.
