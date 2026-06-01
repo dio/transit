@@ -78,6 +78,26 @@ func (s *OtelMetricsSuite) TestStats_httpCounterAfterRequest() {
 	s.Require().NotEmpty(m.Name)
 }
 
+// TestStats_customDynamicModuleCounter verifies that a counter defined by a
+// dynamic module filter via DefineCounter is exported via the OTel stats sink.
+// Envoy prepends "dynamicmodulescustom." to every metric defined by a dynamic
+// module, so "e2e.requests_total" becomes "dynamicmodulescustom.e2e.requests_total".
+func (s *OtelMetricsSuite) TestStats_customDynamicModuleCounter() {
+	req, _ := http.NewRequest(http.MethodGet, metricsAddr+"/", nil)
+	resp := mustDo(s.T(), req)
+	resp.Body.Close()
+	s.Require().Equal(http.StatusOK, resp.StatusCode)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	m, ok := otelSink.WaitForMetric(ctx, func(m *otlpmetrics.Metric) bool {
+		return m.Name == "dynamicmodulescustom.e2e.requests_total"
+	})
+	s.Require().True(ok, "timed out waiting for dynamicmodulescustom.e2e.requests_total")
+	s.Require().NotEmpty(m.Name)
+}
+
 // metricHasAttr reports whether any data point in m carries an attribute
 // with the given key and string value.
 func metricHasAttr(m *otlpmetrics.Metric, key, val string) bool {

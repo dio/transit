@@ -30,6 +30,36 @@ static_resources:
                             status: 200
                             body: { inline_string: "echo ok" }
 
+    - name: metrics-e2e
+      address:
+        socket_address: { address: 0.0.0.0, port_value: {{.MetricsPort}} }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: metrics_e2e
+                http_filters:
+                  - name: e2e-metrics
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: e2e
+                      filter_name: e2e-metrics
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: metrics_e2e
+                  virtual_hosts:
+                    - name: local
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          direct_response:
+                            status: 200
+                            body: { inline_string: "metrics-ok" }
+
     - name: guard
       address:
         socket_address: { address: 0.0.0.0, port_value: {{.GuardPort}} }

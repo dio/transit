@@ -53,6 +53,7 @@ var envoyConfigTmpl string
 
 var (
 	echoAddr                      string
+	metricsAddr                   string
 	guardAddr                     string
 	accessLoggerAddr              string
 	correlatorAddr                string
@@ -102,6 +103,7 @@ func TestMain(m *testing.M) {
 	}
 
 	echoPort := freePort()
+	metricsPort := freePort()
 	guardPort := freePort()
 	accessLoggerPort := freePort()
 	correlatorPort := freePort()
@@ -146,6 +148,7 @@ func TestMain(m *testing.M) {
 	adminPort := freePort()
 
 	echoAddr = fmt.Sprintf("http://localhost:%d", echoPort)
+	metricsAddr = fmt.Sprintf("http://localhost:%d", metricsPort)
 	guardAddr = fmt.Sprintf("http://localhost:%d", guardPort)
 	accessLoggerAddr = fmt.Sprintf("http://localhost:%d", accessLoggerPort)
 	correlatorAddr = fmt.Sprintf("http://localhost:%d", correlatorPort)
@@ -211,6 +214,7 @@ func TestMain(m *testing.M) {
 	cfgPath := writeEnvoyConfig(envoyPorts{
 		SinkURL:                            sinkURL,
 		EchoPort:                           echoPort,
+		MetricsPort:                        metricsPort,
 		GuardPort:                          guardPort,
 		AccessLoggerPort:                   accessLoggerPort,
 		CorrelatorPort:                     correlatorPort,
@@ -724,6 +728,7 @@ func waitReady(timeout time.Duration) bool {
 type envoyPorts struct {
 	SinkURL                            string
 	EchoPort                           int
+	MetricsPort                        int
 	GuardPort                          int
 	AccessLoggerPort                   int
 	CorrelatorPort                     int
