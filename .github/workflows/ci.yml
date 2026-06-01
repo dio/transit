@@ -116,6 +116,7 @@ jobs:
       - run: make -C examples/mcp-catalog-router e2e
       - run: make -C examples/mcp-profile-gateway e2e
       - run: make -C examples/mcp-profile-router e2e
+      - run: make -C examples/observability e2e
       - run: make -C examples/request-ui e2e
       - run: make -C examples/sse-tap e2e
       - run: make -C examples/spa e2e
