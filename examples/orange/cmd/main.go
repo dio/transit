@@ -6,8 +6,9 @@ package main
 import (
 	_ "github.com/dio/transit/down/abi_impl"
 	_ "github.com/dio/transit/examples/orange/classify"
-	_ "github.com/dio/transit/examples/orange/credinject"
+	_ "github.com/dio/transit/examples/orange/debug"
 	_ "github.com/dio/transit/examples/orange/hostpick"
+	_ "github.com/dio/transit/examples/orange/translate"
 )
 
 func main() {}

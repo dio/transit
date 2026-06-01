@@ -29,7 +29,9 @@ test:
 	cd $(ROOT)/examples && go test ./$(EXAMPLE)/...
 
 e2e: build
-	cd $(ROOT)/examples && ENVOY_BIN=$(ENVOY_BIN) go test ./$(EXAMPLE)/e2e/... -v -timeout=90s -count=1
+	cd $(ROOT)/examples && \
+	  GITHUB_TOKEN=$${GITHUB_TOKEN:-$$(gh auth token 2>/dev/null)} \
+	  ENVOY_BIN=$(ENVOY_BIN) go test ./$(EXAMPLE)/e2e/... -v -timeout=90s -count=1
 
 run: build $(ENVOY_BIN) $(CURDIR)/envoy.yaml
 	@if [ -z "$$OPENAI_API_KEY" ]; then echo "OPENAI_API_KEY is unset (env://OPENAI_API_KEY in orange.yaml will fail Envoy boot)"; exit 1; fi

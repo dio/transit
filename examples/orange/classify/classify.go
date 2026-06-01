@@ -47,7 +47,7 @@ const (
 	// colliding with the async path.
 	StateToken = "orange.cls-token"
 
-	// Dynamic metadata — readable by upstream HTTP filters (credinject).
+	// Dynamic metadata — readable by upstream HTTP filters (translate).
 	MetadataNamespace   = "orange"
 	MetadataKeyUpstream = "upstream"
 	MetadataKeyProvider = "provider"
@@ -59,10 +59,18 @@ const (
 	// ErrModelRequired and ErrUnknownModel are the orange.* codes published on
 	// pending.Result.Err. They mirror the error response codes.
 	ErrModelRequired = "orange.model_required"
+
+	// ErrStreamTerminated is the orange.* code published on pending.Result.Err
+	// when the stream ends before the body handler resolves the Pending —
+	// downstream disconnect, idle timeout, another filter's local reply, reset.
+	// Resolve is CAS, so this is a no-op when bodyHandler already published a
+	// result.
+	ErrStreamTerminated = "orange.stream_terminated"
 )
 
 func init() {
-	up.RegisterWithMutableBody(FilterName, requestHandler, bodyHandler, nil)
+	up.RegisterWithMutableBody(FilterName, requestHandler, bodyHandler, nil,
+		up.WithOnStreamComplete(onStreamComplete))
 }
 
 // streamState is stashed in the per-stream context slot at headers phase so
@@ -116,7 +124,9 @@ func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 	if !ok || st == nil {
 		return
 	}
-	defer pending.Delete(st.token)
+	// Cleanup (pending.Delete + a terminal Resolve) is owned by
+	// onStreamComplete so it runs even when this handler doesn't —
+	// downstream disconnect after headers, idle timeout, foreign local reply.
 
 	cfg := config.Get()
 	field := cfg.Classify.ModelField
@@ -140,11 +150,11 @@ func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 		return
 	}
 
-	ups := cfg.Upstreams[upstream]
+	prov := cfg.Providers[upstream]
 	// Rewrite :authority to the provider host so the upstream sees the right
 	// Host header. SNI is no longer driven by :authority — it comes from each
 	// host's `sni` metadata via transport_socket_matches (see envoy.tmpl.yaml).
-	if host := ups.Host(); host != "" {
+	if host := prov.Host(); host != "" {
 		w.SetRequestHeader(":authority", host)
 	}
 
@@ -152,18 +162,40 @@ func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 	w.SetFilterState(StateUpstream, upstream)
 	w.SetMetadata(MetadataNamespace, MetadataKeyUpstream, upstream)
 	w.SetMetadata(MetadataNamespace, MetadataKeyModel, model)
-	if ups.Kind != "" {
-		w.SetFilterState(StateProvider, ups.Kind)
-		w.SetMetadata(MetadataNamespace, MetadataKeyProvider, ups.Kind)
+	if prov.Kind != "" {
+		w.SetFilterState(StateProvider, prov.Kind)
+		w.SetMetadata(MetadataNamespace, MetadataKeyProvider, prov.Kind)
 	}
 
-	w.Log(up.LogInfo, "orange-classify body: resolved model=%s upstream=%s host=%s kind=%s",
-		model, upstream, ups.Host(), ups.Kind)
+	w.Log(up.LogInfo, "orange-classify body: resolved model=%s provider=%s host=%s kind=%s",
+		model, upstream, prov.Host(), prov.Kind)
 	st.p.Resolve(pending.Result{
-		Upstream: upstream,
-		Provider: ups.Kind,
+		Provider: upstream,
+		Kind:     prov.Kind,
 		Model:    model,
 	})
+}
+
+// onStreamComplete is the single owner of per-stream cleanup. It runs once
+// per stream regardless of how Envoy terminated it, so it is the only place
+// guaranteed to fire for every token that requestHandler minted.
+//
+// Resolve is a CAS — when bodyHandler already published a real Result this is
+// a no-op. When bodyHandler never ran, it unblocks the hostpick goroutine
+// waiting on Pending.Done() with ErrStreamTerminated so it exits cleanly
+// instead of leaking. pending.Delete is idempotent.
+func onStreamComplete(ctx *any) {
+	if ctx == nil || *ctx == nil {
+		return
+	}
+	st, ok := (*ctx).(*streamState)
+	if !ok || st == nil {
+		return
+	}
+	if st.p != nil {
+		st.p.Resolve(pending.Result{Err: ErrStreamTerminated})
+	}
+	pending.Delete(st.token)
 }
 
 func sendError(w *up.Writer, status int, code, msg string) {

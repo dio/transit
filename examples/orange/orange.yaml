@@ -1,15 +1,13 @@
 # examples/orange/config/orange.yaml
 #
 # Single config; each module reads its own section. Shared data at top level
-# (upstreams, models) is referenced by the per-module sections by name.
-#
-# M0: not parsed yet — present as the target shape so M1+ can land without
-# breaking config layout.
+# (providers, models) is referenced by the per-module sections by name.
 
-upstreams:
+providers:
   openai_direct:
     kind: openai
     endpoint: https://api.openai.com
+    path_prefix: "/v1"
     auth:
       type: bearer
       secret: env://OPENAI_API_KEY
@@ -17,6 +15,7 @@ upstreams:
   anthropic_direct:
     kind: anthropic
     endpoint: https://api.anthropic.com
+    path_prefix: "/v1"
     anthropic_version: "2023-06-01"
     auth:
       type: x-api-key
@@ -24,11 +23,11 @@ upstreams:
 
 models:
   - match: "gpt-4o*"
-    upstream: openai_direct
+    provider: openai_direct
   - match: "gpt-4.1*"
-    upstream: openai_direct
+    provider: openai_direct
   - match: "claude-*"
-    upstream: anthropic_direct
+    provider: anthropic_direct
 
 classify:
   model_field: model
@@ -36,7 +35,7 @@ classify:
     status: 404
     code: orange.model_not_found
 
-credinject:
+translate:
   strip_request_headers:
     - authorization
     - x-api-key

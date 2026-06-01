@@ -1,6 +1,6 @@
 // Package config loads and exposes the single orange.yaml file.
 //
-// Each module (classify, credinject, hostpick) calls Get() lazily and reads
+// Each module (classify, translate, hostpick) calls Get() lazily and reads
 // the section it cares about. The first Get() resolves the path from the
 // ORANGE_CONFIG env var; missing/unreadable/invalid → panic. Loud failures
 // at module init are the demo-friendly default.
@@ -23,22 +23,31 @@ const EnvVar = "ORANGE_CONFIG"
 // Config is the full parsed shape of orange.yaml. Modules read the subset
 // they need; unknown fields in YAML are ignored (yaml.v3 default).
 type Config struct {
-	Upstreams  map[string]Upstream `yaml:"upstreams"`
-	Models     []ModelMatch        `yaml:"models"`
-	Classify   ClassifyCfg         `yaml:"classify"`
-	Credinject CredinjectCfg       `yaml:"credinject"`
-	Hostpick   HostpickCfg         `yaml:"hostpick"`
+	Providers map[string]Provider `yaml:"providers"`
+	Models    []ModelMatch        `yaml:"models"`
+	Classify  ClassifyCfg         `yaml:"classify"`
+	Translate TranslateCfg        `yaml:"translate"`
+	Hostpick  HostpickCfg         `yaml:"hostpick"`
 
-	// resolvedSecrets maps upstream name → resolved auth secret. Filled at
+	// resolvedSecrets maps provider name → resolved auth secret. Filled at
 	// Load time so missing env vars / unreadable files fail Envoy boot.
 	resolvedSecrets map[string]string
 }
 
-type Upstream struct {
-	Kind             string `yaml:"kind"`
-	Endpoint         string `yaml:"endpoint"`
-	AnthropicVersion string `yaml:"anthropic_version,omitempty"`
-	Auth             Auth   `yaml:"auth"`
+type Provider struct {
+	Kind             string  `yaml:"kind"`
+	Endpoint         string  `yaml:"endpoint"`
+	AnthropicVersion string  `yaml:"anthropic_version,omitempty"`
+	PathPrefix       *string `yaml:"path_prefix,omitempty"`
+	Auth             Auth    `yaml:"auth"`
+}
+
+// ResolvedPathPrefix returns the configured path prefix, defaulting to "/v1".
+func (p Provider) ResolvedPathPrefix() string {
+	if p.PathPrefix == nil {
+		return "/v1"
+	}
+	return *p.PathPrefix
 }
 
 type Auth struct {
@@ -48,7 +57,7 @@ type Auth struct {
 
 type ModelMatch struct {
 	Match    string `yaml:"match"`
-	Upstream string `yaml:"upstream"`
+	Provider string `yaml:"provider"`
 }
 
 type ClassifyCfg struct {
@@ -61,7 +70,7 @@ type OnMiss struct {
 	Code   string `yaml:"code"`
 }
 
-type CredinjectCfg struct {
+type TranslateCfg struct {
 	StripRequestHeaders []string `yaml:"strip_request_headers"`
 }
 
@@ -127,14 +136,14 @@ func LoadFile(path string) (*Config, error) {
 	if cfg.Hostpick.UpstreamKey == "" {
 		cfg.Hostpick.UpstreamKey = "orange.upstream"
 	}
-	cfg.resolvedSecrets = make(map[string]string, len(cfg.Upstreams))
-	for name, ups := range cfg.Upstreams {
-		if ups.Auth.Secret == "" {
+	cfg.resolvedSecrets = make(map[string]string, len(cfg.Providers))
+	for name, p := range cfg.Providers {
+		if p.Auth.Secret == "" {
 			continue
 		}
-		v, err := resolveSecret(ups.Auth.Secret)
+		v, err := resolveSecret(p.Auth.Secret)
 		if err != nil {
-			return nil, fmt.Errorf("orange/config: upstream %q: %w", name, err)
+			return nil, fmt.Errorf("orange/config: provider %q: %w", name, err)
 		}
 		cfg.resolvedSecrets[name] = v
 	}
@@ -159,32 +168,32 @@ func resolveSecret(ref string) (string, error) {
 	return v, nil
 }
 
-// UpstreamSecret returns the resolved auth secret for the named upstream.
-// Empty if the upstream is unknown or has no auth.
-func (c *Config) UpstreamSecret(name string) string {
+// ProviderSecret returns the resolved auth secret for the named provider.
+// Empty if the provider is unknown or has no auth.
+func (c *Config) ProviderSecret(name string) string {
 	return c.resolvedSecrets[name]
 }
 
-// LookupModel returns the first upstream whose match glob matches model.
+// LookupModel returns the first provider whose match glob matches model.
 // Empty string means no match.
 func (c *Config) LookupModel(model string) string {
 	for _, m := range c.Models {
 		if ok, _ := filepath.Match(m.Match, model); ok {
-			return m.Upstream
+			return m.Provider
 		}
 	}
 	return ""
 }
 
-// Host returns the hostname portion of an upstream endpoint URL, e.g.
+// Host returns the hostname portion of a provider endpoint URL, e.g.
 // "api.openai.com" for "https://api.openai.com". Empty if unparseable.
-func (u Upstream) Host() string {
-	if u.Endpoint == "" {
+func (p Provider) Host() string {
+	if p.Endpoint == "" {
 		return ""
 	}
-	p, err := url.Parse(u.Endpoint)
+	u, err := url.Parse(p.Endpoint)
 	if err != nil {
 		return ""
 	}
-	return p.Hostname()
+	return u.Hostname()
 }

@@ -82,11 +82,11 @@ func TestBody_knownModel_resolvesUpstream(t *testing.T) {
 	if res.Err != "" {
 		t.Errorf("err = %q, want empty", res.Err)
 	}
-	if res.Upstream != "openai_direct" {
-		t.Errorf("upstream = %q", res.Upstream)
-	}
-	if res.Provider != "openai" {
+	if res.Provider != "openai_direct" {
 		t.Errorf("provider = %q", res.Provider)
+	}
+	if res.Kind != "openai" {
+		t.Errorf("kind = %q", res.Kind)
 	}
 	if res.Model != "gpt-4o-mini" {
 		t.Errorf("model = %q", res.Model)
@@ -94,9 +94,52 @@ func TestBody_knownModel_resolvesUpstream(t *testing.T) {
 	if v, ok := h.Metadata(MetadataNamespace, MetadataKeyUpstream); !ok || v != "openai_direct" {
 		t.Errorf("metadata upstream = (%q, %v)", v, ok)
 	}
-	if pending.Lookup(st.token) != nil {
-		t.Error("token not deleted from registry after resolve")
+	// Cleanup is owned by onStreamComplete now; the entry survives until then.
+	if pending.Lookup(st.token) != st.p {
+		t.Error("token unexpectedly missing from registry before stream complete")
 	}
+	var ctx any = st
+	onStreamComplete(&ctx)
+	if pending.Lookup(st.token) != nil {
+		t.Error("token not deleted from registry after onStreamComplete")
+	}
+	// Resolve must remain the bodyHandler's (CAS loses races silently).
+	if got, _ := st.p.Result(); got.Err != "" {
+		t.Errorf("post-cleanup err = %q, want empty (CAS should preserve body result)", got.Err)
+	}
+}
+
+func TestOnStreamComplete_cleansUpWhenBodyNeverRan(t *testing.T) {
+	loadTestConfig(t)
+	// Headers-only flow: simulates downstream disconnect / timeout after
+	// headers and before the body handler runs.
+	_, st := runFlow(t, nil)
+	if st == nil {
+		t.Fatal("expected stream state from headers phase")
+	}
+
+	var ctx any = st
+	onStreamComplete(&ctx)
+
+	if pending.Lookup(st.token) != nil {
+		t.Error("token not deleted from registry after onStreamComplete")
+	}
+	res, ok := st.p.Result()
+	if !ok {
+		t.Fatal("pending should be resolved by onStreamComplete")
+	}
+	if res.Err != ErrStreamTerminated {
+		t.Errorf("err = %q, want %q", res.Err, ErrStreamTerminated)
+	}
+}
+
+func TestOnStreamComplete_nilContextIsNoop(t *testing.T) {
+	loadTestConfig(t)
+	// SDK calls onStreamComplete even for requests that never matched the
+	// route (no streamState was ever stashed). Must not panic.
+	var ctx any
+	onStreamComplete(&ctx)
+	onStreamComplete(nil)
 }
 
 func TestBody_missingModel_400(t *testing.T) {

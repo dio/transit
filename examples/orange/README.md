@@ -26,8 +26,8 @@ Three dynamic modules ship in one `.so`:
 | Module       | Phase                    | Job |
 |--------------|--------------------------|-----|
 | `classify`   | downstream HTTP filter   | Parse `model` from the JSON body, look up the upstream, rewrite `:authority`, resolve the per-request pending so `hostpick` can complete. |
-| `hostpick`   | dynamic-modules cluster  | `ChooseHost` returns a `ClusterLBCompletion`; a goroutine waits on the pending from `classify` and completes with the matching host. |
-| `credinject` | upstream HTTP filter     | Strip client-supplied auth, inject the provider credential. OpenAI → `Authorization: Bearer …`. Anthropic → `x-api-key` + `anthropic-version`. |
+| `hostpick`   | dynamic-modules cluster  | `ChooseHost` returns a `ClusterLBCompletion` and registers a callback on the pending from `classify`. When `classify` resolves the pending, the callback hops to the cluster main thread and completes with the matching host. |
+| `translate`  | upstream HTTP filter     | Strip client-supplied auth, rewrite path prefix, inject the provider credential. OpenAI → `Authorization: Bearer …`. Anthropic → `x-api-key` + `anthropic-version`. |
 
 ## Why this is not just "header-based routing"
 
@@ -39,11 +39,20 @@ design races and loses.
 
 `classify` mints a per-request token at headers phase, registers a
 `pending.Pending` under it, and writes the token to filter state. `hostpick`
-returns a `ClusterLBCompletion` and a goroutine waits on that pending. When
-the body arrives, `classify.bodyHandler` parses the model and resolves the
-pending; the waiter hops back to the cluster's main thread and completes the
-selection. See `.agents/skills/transit-body-driven-cluster-routing/SKILL.md`
-for the full phase-ordering rationale.
+returns a `ClusterLBCompletion` and installs an `OnResolve` callback on that
+pending. When the body arrives, `classify.bodyHandler` parses the model and
+resolves the pending; the callback fires inline, hops back to the cluster's
+main thread via `handle.Schedule`, and completes the selection. No
+per-request goroutine is parked. See
+`.agents/skills/transit-body-driven-cluster-routing/SKILL.md` for the full
+phase-ordering rationale.
+
+Per-stream cleanup is owned by `classify`'s `OnStreamComplete` hook: it
+removes the token from the registry and resolves the pending with
+`orange.stream_terminated` (a CAS, so a real body-resolved result wins).
+That guarantees the registry and the `OnResolve` callback drain even when
+the body handler never runs (downstream disconnect, idle timeout, foreign
+local reply).
 
 ## Per-provider TLS without a cluster explosion
 
@@ -60,21 +69,23 @@ time"* for why.
 lazily via the `ORANGE_CONFIG` env var (set by `make run`/`make demo`).
 
 ```yaml
-upstreams:
+providers:
   openai_direct:
     kind: openai
     endpoint: https://api.openai.com
+    path_prefix: "/v1"
     auth: { type: bearer, secret: env://OPENAI_API_KEY }
   anthropic_direct:
     kind: anthropic
     endpoint: https://api.anthropic.com
+    path_prefix: "/v1"
     anthropic_version: "2023-06-01"
     auth: { type: x-api-key, secret: env://ANTHROPIC_API_KEY }
 
 models:
-  - { match: "gpt-4o*",  upstream: openai_direct }
-  - { match: "gpt-4.1*", upstream: openai_direct }
-  - { match: "claude-*", upstream: anthropic_direct }
+  - { match: "gpt-4o*",  provider: openai_direct }
+  - { match: "gpt-4.1*", provider: openai_direct }
+  - { match: "claude-*", provider: anthropic_direct }
 ```
 
 Missing env vars / unreadable files fail Envoy boot loudly — secrets aren't
@@ -126,17 +137,17 @@ curl -i :8080/v1/chat/completions -H 'content-type: application/json' \
 # curl; cx_connect_fail should stay 0.
 curl -s :9901/clusters | grep orange_default:: | grep -E 'cx_(total|connect_fail)'
 
-# Routing decisions are logged by classify / hostpick / credinject at info.
+# Routing decisions are logged by classify / hostpick / translate at info.
 # Watch the `make demo` foreground; look for:
 #   orange-classify body: resolved model=… upstream=… host=… kind=…
 #   orange-hostpick: token=… completing with host upstream=…
-#   orange-credinject: upstream=… authority=… kind=…
+#   orange-translate: upstream=… authority=… kind=…
 ```
 
 ## Tests
 
 ```bash
-make test     # unit tests (config + classify + credinject + hostpick + pending)
+make test     # unit tests (config + classify + translate + hostpick + pending)
 make build    # cgo c-shared build of liborange.so
 ```
 
@@ -144,13 +155,13 @@ make build    # cgo c-shared build of liborange.so
 
 ```
 classify/    downstream filter: body parse + pending resolve
-credinject/  upstream filter: strip + inject per provider
+translate/  upstream filter: strip + inject per provider
 hostpick/    cluster extension: async ChooseHost via ClusterLBCompletion
 pending/     process-wide token → Pending registry
 config/      orange.yaml loader (env:// secret resolution)
 cmd/         c-shared entrypoint (registers all three modules)
 envoy.tmpl.yaml  Envoy config, ${ORANGE_TRUSTED_CA} substituted by make
-orange.yaml      runtime config (upstreams, models, classify, credinject)
+orange.yaml      runtime config (providers, models, classify, translate)
 ```
 
 ## Status
@@ -160,8 +171,8 @@ orange.yaml      runtime config (upstreams, models, classify, credinject)
 | M0 — skeleton + plumbing | done |
 | M1 — classify (body → upstream) | done |
 | M2 — hostpick (cluster extension) | done |
-| M3a — credinject OpenAI Bearer | done |
-| M3b — credinject Anthropic x-api-key + version | done |
+| M3a — translate OpenAI Bearer | done |
+| M3b — translate Anthropic x-api-key + version | done |
 | M3c — body-driven routing via `ClusterLBCompletion` | done |
 | M3d — per-provider TLS via `transport_socket_matches` | done |
 | M4 — streaming (SSE) passthrough | done |

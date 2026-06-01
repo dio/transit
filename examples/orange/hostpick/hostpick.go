@@ -6,11 +6,12 @@
 //
 // ChooseHost reads the per-request token classify wrote to filter state
 // (classify.StateToken), looks up the matching pending.Pending in the
-// process-wide registry, and returns an async ClusterLBCompletion. A
-// goroutine waits on the Pending; once classify resolves it (from
-// classify.bodyHandler after parsing the OpenAI `model` field), the
-// goroutine hops back to the cluster's main thread via handle.Schedule and
-// calls completion.Complete(host, "").
+// process-wide registry, and returns an async ClusterLBCompletion. It
+// registers a callback via pending.Pending.OnResolve; when classify resolves
+// the Pending (from bodyHandler after parsing the OpenAI `model` field, or
+// from onStreamComplete on stream teardown), the callback hops back to the
+// cluster's main thread via handle.Schedule and calls completion.Complete.
+// No per-request goroutine is parked.
 //
 // See .agents/skills/transit-body-driven-cluster-routing/SKILL.md for the
 // rationale (header iteration finishes across all filters before the body
@@ -64,11 +65,11 @@ func (c *cluster) Init(h up.ClusterHandle) {
 	c.handle = h
 	cfg := orangecfg.Get()
 
-	out := make(map[string]up.HostPtr, len(cfg.Upstreams))
+	out := make(map[string]up.HostPtr, len(cfg.Providers))
 	ctx, cancel := context.WithTimeout(context.Background(), defaultResolveTimeout)
 	defer cancel()
-	for name, ups := range cfg.Upstreams {
-		addr, err := resolveUpstream(ctx, ups.Endpoint)
+	for name, p := range cfg.Providers {
+		addr, err := resolveUpstream(ctx, p.Endpoint)
 		if err != nil {
 			continue
 		}
@@ -77,7 +78,7 @@ func (c *cluster) Init(h up.ClusterHandle) {
 		// in the cluster would share a single TLS context and we'd be back to the
 		// hardcoded-sni demo limitation.
 		spec := up.HostSpec{Address: addr}
-		if host := ups.Host(); host != "" {
+		if host := p.Host(); host != "" {
 			spec.Metadata = map[string]string{"sni": host}
 		}
 		ptrs := h.AddHosts([]up.HostSpec{spec})
@@ -93,7 +94,7 @@ func (c *cluster) Init(h up.ClusterHandle) {
 
 func (c *cluster) ServerInitialized(_ up.ClusterHandle) {}
 func (c *cluster) NewClusterLB() up.ClusterLB {
-	return &lb{owner: c, waiters: make(map[*up.ClusterLBCompletion]struct{})}
+	return &lb{owner: c, cancelled: make(map[*up.ClusterLBCompletion]struct{})}
 }
 func (c *cluster) DrainStarted(_ up.ClusterHandle)          {}
 func (c *cluster) Shutdown(_ up.ClusterHandle, done func()) { done() }
@@ -103,11 +104,12 @@ type lb struct {
 	up.EmptyClusterLB
 	owner *cluster
 
-	// waiters tracks in-flight async ChooseHost completions so
-	// CancelHostSelection can mark them dead before the resolver goroutine
-	// tries to Complete. Map presence == "still active".
-	mu      sync.Mutex
-	waiters map[*up.ClusterLBCompletion]struct{}
+	// cancelled tracks ChooseHost completions Envoy cancelled before they
+	// completed. The scheduled completion callback consults this map on the
+	// cluster main thread and skips Complete when the entry is present. Empty
+	// in the happy path: entries only appear on the cancel path.
+	mu        sync.Mutex
+	cancelled map[*up.ClusterLBCompletion]struct{}
 }
 
 func (l *lb) ChooseHost(_ up.ClusterLBHandle, ctx up.ClusterLBContext) (up.HostPtr, *up.ClusterLBCompletion) {
@@ -121,49 +123,48 @@ func (l *lb) ChooseHost(_ up.ClusterLBHandle, ctx up.ClusterLBContext) (up.HostP
 	}
 
 	completion := ctx.NewCompletion()
-	l.mu.Lock()
-	l.waiters[completion] = struct{}{}
-	l.mu.Unlock()
-
-	go l.waitAndComplete(p, completion)
+	p.OnResolve(func(res pending.Result) {
+		// May be invoked inline on the body/onStreamComplete thread (worker)
+		// or inline here if the Pending is already resolved. Either way we
+		// must run completion.Complete on the cluster main thread.
+		l.owner.handle.Schedule(func() { l.complete(completion, res) })
+	})
 	return nil, completion
 }
 
-func (l *lb) waitAndComplete(p *pending.Pending, completion *up.ClusterLBCompletion) {
-	<-p.Done()
-
+// complete finalises a host selection on the cluster main thread. It is the
+// single place that calls completion.Complete: kept here so the
+// cancelled-check, the host lookup and the Complete call cannot race with
+// CancelHostSelection.
+func (l *lb) complete(completion *up.ClusterLBCompletion, res pending.Result) {
 	l.mu.Lock()
-	_, alive := l.waiters[completion]
-	delete(l.waiters, completion)
+	_, cancelled := l.cancelled[completion]
+	if cancelled {
+		delete(l.cancelled, completion)
+	}
 	l.mu.Unlock()
-	if !alive {
+	if cancelled {
 		return
 	}
 
-	res, _ := p.Result()
 	if res.Err != "" {
-		l.owner.handle.Schedule(func() {
-			completion.Complete(nil, res.Err)
-		})
+		completion.Complete(nil, res.Err)
 		return
 	}
-
 	var host up.HostPtr
 	if m := l.owner.hosts.Load(); m != nil {
-		host = (*m)[res.Upstream]
+		host = (*m)[res.Provider]
 	}
-	l.owner.handle.Schedule(func() {
-		if host == nil {
-			completion.Complete(nil, "orange.unknown_upstream")
-			return
-		}
-		completion.Complete(host, "")
-	})
+	if host == nil {
+		completion.Complete(nil, "orange.unknown_upstream")
+		return
+	}
+	completion.Complete(host, "")
 }
 
 func (l *lb) CancelHostSelection(completion *up.ClusterLBCompletion) {
 	l.mu.Lock()
-	delete(l.waiters, completion)
+	l.cancelled[completion] = struct{}{}
 	l.mu.Unlock()
 }
 

@@ -13,16 +13,16 @@ func TestLoadFile_minimal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadFile: %v", err)
 	}
-	if got := cfg.Upstreams["openai_direct"].Endpoint; got != "https://api.openai.com" {
+	if got := cfg.Providers["openai_direct"].Endpoint; got != "https://api.openai.com" {
 		t.Fatalf("openai endpoint: %q", got)
 	}
-	if got := cfg.Upstreams["anthropic_direct"].AnthropicVersion; got != "2023-06-01" {
+	if got := cfg.Providers["anthropic_direct"].AnthropicVersion; got != "2023-06-01" {
 		t.Fatalf("anthropic version: %q", got)
 	}
-	if got := cfg.UpstreamSecret("openai_direct"); got != "sk-test-openai" {
+	if got := cfg.ProviderSecret("openai_direct"); got != "sk-test-openai" {
 		t.Fatalf("openai secret: %q", got)
 	}
-	if got := cfg.UpstreamSecret("anthropic_direct"); got != "sk-test-anthropic" {
+	if got := cfg.ProviderSecret("anthropic_direct"); got != "sk-test-anthropic" {
 		t.Fatalf("anthropic secret: %q", got)
 	}
 	// Defaults applied.
@@ -48,8 +48,8 @@ func TestLoadFile_missingEnvVar(t *testing.T) {
 
 func TestLookupModel(t *testing.T) {
 	cfg := &Config{Models: []ModelMatch{
-		{Match: "gpt-4o*", Upstream: "openai_direct"},
-		{Match: "claude-*", Upstream: "anthropic_direct"},
+		{Match: "gpt-4o*", Provider: "openai_direct"},
+		{Match: "claude-*", Provider: "anthropic_direct"},
 	}}
 	cases := []struct {
 		in, want string
