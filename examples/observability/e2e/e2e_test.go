@@ -17,24 +17,25 @@
 package e2e
 
 import (
-	"context"       // context.WithTimeout() for WaitForSpan/WaitForMetric/WaitForRecord
-	_ "embed"       // embed.FS for //go:embed envoy.tmpl.yaml
-	"fmt"           // fmt.Sprintf, fmt.Fprintf for test logging
-	"io"            // io.ReadAll for response body reading
-	"net"           // net.Listener for backend server in startBackend()
-	"net/http"      // http.Get, http.Post, http.Server for requests and upstream mock
-	"os"            // os.Environ, os.Exit, os.Remove for env setup and file cleanup
-	"path/filepath" // filepath.Join for constructing paths
-	"runtime"       // runtime.Caller to locate this file and find examplesRoot
-	"testing"       // testing.T for test functions
-	"time"          // time.Second for context timeout durations
+	"context"
+	_ "embed"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
+	"testing"
+	"time"
 
-	otlplogs "go.opentelemetry.io/proto/otlp/logs/v1"       // LogRecord for log assertions
-	otlpmetrics "go.opentelemetry.io/proto/otlp/metrics/v1" // Metric for metric assertions
-	otlptrace "go.opentelemetry.io/proto/otlp/trace/v1"     // Span for trace assertions
+	otlplogs "go.opentelemetry.io/proto/otlp/logs/v1"
+	otlpmetrics "go.opentelemetry.io/proto/otlp/metrics/v1"
+	otlptrace "go.opentelemetry.io/proto/otlp/trace/v1"
 
-	"github.com/dio/transit/examples/internal/e2etest"  // EnvoyBin, FreePort, StartEnvoy, etc.
-	"github.com/dio/transit/examples/internal/otelsink" // Sink for in-memory OTLP receiver
+	"github.com/dio/transit/examples/internal/e2etest"
+	"github.com/dio/transit/examples/internal/otelsink"
+	"github.com/stretchr/testify/require"
 )
 
 //go:embed testdata/envoy.tmpl.yaml
@@ -104,40 +105,29 @@ func TestMain(m *testing.M) {
 // TestGet_noModel_responds200 verifies that a plain request passes through unmodified.
 func TestGet_noModel_responds200(t *testing.T) {
 	resp, err := http.Get(proxyURL + "/")
-	if err != nil {
-		t.Fatalf("GET /: %v", err)
-	}
+	require.NoError(t, err)
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("want 200, got %d (body: %s)", resp.StatusCode, body)
-	}
+	require.Equal(t, http.StatusOK, resp.StatusCode, "body: %s", body)
 }
 
 // TestGet_withModel_responds200 verifies that x-model header requests pass through.
 func TestGet_withModel_responds200(t *testing.T) {
-	req, _ := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
+	req, err := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
+	require.NoError(t, err)
 	req.Header.Set("x-model", "claude-sonnet-4-5")
 	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET / with x-model: %v", err)
-	}
+	require.NoError(t, err)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("want 200, got %d", resp.StatusCode)
-	}
+	require.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
 // TestPost_responds200 verifies that POST requests pass through correctly.
 func TestPost_responds200(t *testing.T) {
 	resp, err := http.Post(proxyURL+"/", "application/json", nil)
-	if err != nil {
-		t.Fatalf("POST /: %v", err)
-	}
+	require.NoError(t, err)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("want 200, got %d", resp.StatusCode)
-	}
+	require.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
 // ── Trace tests ───────────────────────────────────────────────────────────────
@@ -146,207 +136,154 @@ func TestPost_responds200(t *testing.T) {
 // is created for each request.
 func TestTrace_spanOperation(t *testing.T) {
 	resp, err := http.Get(proxyURL + "/")
-	if err != nil {
-		t.Fatalf("GET /: %v", err)
-	}
+	require.NoError(t, err)
 	resp.Body.Close()
 
-	if !waitForSpan(t, func(s *otlptrace.Span) bool {
+	require.True(t, waitForSpan(t, func(s *otlptrace.Span) bool {
 		return s.Name == "http.request"
-	}) {
-		t.Error("timed out waiting for span with name=http.request")
-	}
+	}), "timed out waiting for span with name=http.request")
 }
 
 // TestTrace_httpMethodTag verifies that the http.method attribute is set.
 func TestTrace_httpMethodTag(t *testing.T) {
 	resp, err := http.Get(proxyURL + "/path/to/resource")
-	if err != nil {
-		t.Fatalf("GET /path/to/resource: %v", err)
-	}
+	require.NoError(t, err)
 	resp.Body.Close()
 
-	if !waitForSpan(t, func(s *otlptrace.Span) bool {
+	require.True(t, waitForSpan(t, func(s *otlptrace.Span) bool {
 		return spanHasAttr(s, "http.method", "GET")
-	}) {
-		t.Error("timed out waiting for span with http.method=GET")
-	}
+	}), "timed out waiting for span with http.method=GET")
 }
 
 // TestTrace_httpPathTag verifies that the http.path attribute is set correctly.
 func TestTrace_httpPathTag(t *testing.T) {
 	resp, err := http.Get(proxyURL + "/test/path")
-	if err != nil {
-		t.Fatalf("GET /test/path: %v", err)
-	}
+	require.NoError(t, err)
 	resp.Body.Close()
 
-	if !waitForSpan(t, func(s *otlptrace.Span) bool {
+	require.True(t, waitForSpan(t, func(s *otlptrace.Span) bool {
 		return spanHasAttr(s, "http.path", "/test/path")
-	}) {
-		t.Error("timed out waiting for span with http.path=/test/path")
-	}
+	}), "timed out waiting for span with http.path=/test/path")
 }
 
 // TestTrace_llmModelTag_present verifies that llm.model is set when x-model header is sent.
 func TestTrace_llmModelTag_present(t *testing.T) {
 	req, err := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
+	require.NoError(t, err)
 	req.Header.Set("x-model", "claude-opus-4-1")
 	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET / with x-model: %v", err)
-	}
+	require.NoError(t, err)
 	resp.Body.Close()
 
-	if !waitForSpan(t, func(s *otlptrace.Span) bool {
+	require.True(t, waitForSpan(t, func(s *otlptrace.Span) bool {
 		return spanHasAttr(s, "llm.model", "claude-opus-4-1")
-	}) {
-		t.Error("timed out waiting for span with llm.model=claude-opus-4-1")
-	}
+	}), "timed out waiting for span with llm.model=claude-opus-4-1")
 }
 
 // TestTrace_llmModelTag_absent verifies that llm.model is not set when x-model header is absent.
 func TestTrace_llmModelTag_absent(t *testing.T) {
 	resp, err := http.Get(proxyURL + "/")
-	if err != nil {
-		t.Fatalf("GET /: %v", err)
-	}
+	require.NoError(t, err)
 	resp.Body.Close()
 
-	if !waitForSpan(t, func(s *otlptrace.Span) bool {
+	require.True(t, waitForSpan(t, func(s *otlptrace.Span) bool {
 		return s.Name == "http.request" && !spanHasAttrAny(s, "llm.model")
-	}) {
-		t.Error("timed out waiting for span without llm.model attribute")
-	}
+	}), "timed out waiting for span without llm.model attribute")
 }
 
 // TestTrace_httpStatusCodeTag verifies that http.status_code is set on the span.
 func TestTrace_httpStatusCodeTag(t *testing.T) {
 	resp, err := http.Get(proxyURL + "/")
-	if err != nil {
-		t.Fatalf("GET /: %v", err)
-	}
+	require.NoError(t, err)
 	resp.Body.Close()
 
-	if !waitForSpan(t, func(s *otlptrace.Span) bool {
+	require.True(t, waitForSpan(t, func(s *otlptrace.Span) bool {
 		return spanHasAttr(s, "http.status_code", "200")
-	}) {
-		t.Error("timed out waiting for span with http.status_code=200")
-	}
+	}), "timed out waiting for span with http.status_code=200")
 }
 
 // ── Metric tests ──────────────────────────────────────────────────────────────
 
-// TODO: TestMetric_requestsCounterIncremented disabled pending investigation.
-// Transit SDK custom metrics (observability_requests_total) are incremented in the
-// filter but not currently exported via OTLP. Investigation needed:
-// - Check if Transit SDK metrics are registered with Envoy stats system
-// - Verify stats sink exports all stats including dynamic module metrics
-// - Determine if custom metric export requires separate configuration
-// Investigation tools available in spike/README.md
-//
-// func TestMetric_requestsCounterIncremented(t *testing.T) {
-// 	resp, err := http.Get(proxyURL + "/")
-// 	if err != nil {
-// 		t.Fatalf("GET /: %v", err)
-// 	}
-// 	resp.Body.Close()
-//
-// 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-// 	defer cancel()
-//
-// 	if !waitForMetric(t, ctx, func(m *otlpmetrics.Metric) bool {
-// 		return metricNamed(m, "observability_requests_total")
-// 	}) {
-// 		t.Error("timed out waiting for observability_requests_total metric")
-// 	}
-// }
+// TestMetric_requestsCounterIncremented verifies that the requests counter is
+// exported via OTLP as "dynamicmodulescustom.observability.requests_total".
+// Envoy prepends "dynamicmodulescustom." to every metric defined by a dynamic
+// module; the dot-separated name we register ("observability.requests_total")
+// becomes the sub-hierarchy within that prefix.
+func TestMetric_requestsCounterIncremented(t *testing.T) {
+	resp, err := http.Get(proxyURL + "/")
+	require.NoError(t, err)
+	resp.Body.Close()
 
-// TODO: TestMetric_responsesCounterIncremented disabled pending investigation.
-// See TestMetric_requestsCounterIncremented TODO above.
-//
-// func TestMetric_responsesCounterIncremented(t *testing.T) {
-// 	resp, err := http.Get(proxyURL + "/")
-// 	if err != nil {
-// 		t.Fatalf("GET /: %v", err)
-// 	}
-// 	resp.Body.Close()
-//
-// 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-// 	defer cancel()
-//
-// 	if !waitForMetric(t, ctx, func(m *otlpmetrics.Metric) bool {
-// 		return metricNamed(m, "observability_responses_total")
-// 	}) {
-// 		t.Error("timed out waiting for observability_responses_total metric")
-// 	}
-// }
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	require.True(t, waitForMetric(t, ctx, func(m *otlpmetrics.Metric) bool {
+		return metricNamed(m, "dynamicmodulescustom.observability.requests_total")
+	}), "timed out waiting for dynamicmodulescustom.observability.requests_total metric")
+}
+
+// TestMetric_responsesCounterIncremented verifies that the responses counter is
+// exported via OTLP as "dynamicmodulescustom.observability.responses_total".
+func TestMetric_responsesCounterIncremented(t *testing.T) {
+	resp, err := http.Get(proxyURL + "/")
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	require.True(t, waitForMetric(t, ctx, func(m *otlpmetrics.Metric) bool {
+		return metricNamed(m, "dynamicmodulescustom.observability.responses_total")
+	}), "timed out waiting for dynamicmodulescustom.observability.responses_total metric")
+}
 
 // ── Log tests ────────────────────────────────────────────────────────────────
 
 // TestLog_statusCodeInMetadata verifies that status_code appears in log records.
 func TestLog_statusCodeInMetadata(t *testing.T) {
 	resp, err := http.Get(proxyURL + "/")
-	if err != nil {
-		t.Fatalf("GET /: %v", err)
-	}
+	require.NoError(t, err)
 	resp.Body.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	if !waitForRecord(t, ctx, func(r *otlplogs.LogRecord) bool {
+	require.True(t, waitForRecord(t, ctx, func(r *otlplogs.LogRecord) bool {
 		return recordHasAttr(r, "status_code", "200")
-	}) {
-		t.Error("timed out waiting for log record with status_code=200")
-	}
+	}), "timed out waiting for log record with status_code=200")
 }
 
 // TestLog_modelPresentWhenHeaderSet verifies that model attribute is set in logs
 // when x-model header is sent.
 func TestLog_modelPresentWhenHeaderSet(t *testing.T) {
 	req, err := http.NewRequest(http.MethodGet, proxyURL+"/", nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
+	require.NoError(t, err)
 	req.Header.Set("x-model", "claude-sonnet-4-1")
 	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET / with x-model: %v", err)
-	}
+	require.NoError(t, err)
 	resp.Body.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	if !waitForRecord(t, ctx, func(r *otlplogs.LogRecord) bool {
+	require.True(t, waitForRecord(t, ctx, func(r *otlplogs.LogRecord) bool {
 		return recordHasAttr(r, "model", "claude-sonnet-4-1")
-	}) {
-		t.Error("timed out waiting for log record with model=claude-sonnet-4-1")
-	}
+	}), "timed out waiting for log record with model=claude-sonnet-4-1")
 }
 
 // TestLog_modelAbsentWhenNoHeader verifies that log records are created
 // when x-model header is not sent. (The model field may be empty or absent.)
 func TestLog_modelAbsentWhenNoHeader(t *testing.T) {
 	resp, err := http.Get(proxyURL + "/modeltest")
-	if err != nil {
-		t.Fatalf("GET /modeltest: %v", err)
-	}
+	require.NoError(t, err)
 	resp.Body.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if !waitForRecord(t, ctx, func(r *otlplogs.LogRecord) bool {
-		// Just verify we get a log record. The model attribute will be empty or absent.
+	require.True(t, waitForRecord(t, ctx, func(r *otlplogs.LogRecord) bool {
 		return recordHasAttr(r, "status_code", "200")
-	}) {
-		t.Error("timed out waiting for log record with status_code=200")
-	}
+	}), "timed out waiting for log record with status_code=200")
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

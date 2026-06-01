@@ -3,14 +3,18 @@
 //
 // Usage:
 //   go build -o otel-monitor ./monitor_otlp.go
-//   ./otel-monitor
+//   ./otel-monitor                          # only dynamicmodulescustom.* metrics
+//   ./otel-monitor -filter ""               # all metrics
+//   ./otel-monitor -traces -logs            # also print traces and logs
 //
 package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 
 	otlpcollectorlogs "go.opentelemetry.io/proto/otlp/collector/logs/v1"
@@ -18,6 +22,12 @@ import (
 	otlpcollectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	otlpmetrics "go.opentelemetry.io/proto/otlp/metrics/v1"
 	"google.golang.org/grpc"
+)
+
+var (
+	metricsFilter = flag.String("filter", "dynamicmodulescustom", "show only metrics whose name contains this substring (empty = all)")
+	showTraces    = flag.Bool("traces", false, "print trace spans")
+	showLogs      = flag.Bool("logs", false, "print log records")
 )
 
 type traceSvc struct {
@@ -36,6 +46,9 @@ type logsSvc struct {
 }
 
 func (t *traceSvc) Export(ctx context.Context, req *otlpcollectortrace.ExportTraceServiceRequest) (*otlpcollectortrace.ExportTraceServiceResponse, error) {
+	if !*showTraces {
+		return &otlpcollectortrace.ExportTraceServiceResponse{}, nil
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	count := 0
@@ -57,21 +70,29 @@ func (t *traceSvc) Export(ctx context.Context, req *otlpcollectortrace.ExportTra
 func (m *metricsSvc) Export(ctx context.Context, req *otlpcollectormetrics.ExportMetricsServiceRequest) (*otlpcollectormetrics.ExportMetricsServiceResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	count := 0
+	printed := 0
 	for _, rm := range req.ResourceMetrics {
 		for _, sm := range rm.ScopeMetrics {
 			for _, metric := range sm.Metrics {
-				count++
-				fmt.Printf("[METRICS] Metric: %s\n", metric.Name)
+				if *metricsFilter != "" && !strings.Contains(metric.Name, *metricsFilter) {
+					continue
+				}
+				printed++
+				fmt.Printf("[METRICS] %s\n", metric.Name)
 				printMetricData(metric)
 			}
 		}
 	}
-	fmt.Printf("[METRICS] Exported %d metrics\n\n", count)
+	if printed > 0 {
+		fmt.Printf("[METRICS] matched %d metric(s)\n\n", printed)
+	}
 	return &otlpcollectormetrics.ExportMetricsServiceResponse{}, nil
 }
 
 func (l *logsSvc) Export(ctx context.Context, req *otlpcollectorlogs.ExportLogsServiceRequest) (*otlpcollectorlogs.ExportLogsServiceResponse, error) {
+	if !*showLogs {
+		return &otlpcollectorlogs.ExportLogsServiceResponse{}, nil
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	count := 0
@@ -117,6 +138,8 @@ func printMetricData(metric *otlpmetrics.Metric) {
 }
 
 func main() {
+	flag.Parse()
+
 	lis, err := net.Listen("tcp", "127.0.0.1:9093")
 	if err != nil {
 		fmt.Printf("Failed to listen: %v\n", err)
@@ -129,8 +152,12 @@ func main() {
 	otlpcollectorlogs.RegisterLogsServiceServer(srv, &logsSvc{})
 
 	fmt.Println("OTLP Monitor listening on 127.0.0.1:9093")
-	fmt.Println("Waiting for telemetry from Envoy...")
-	fmt.Println("")
+	if *metricsFilter != "" {
+		fmt.Printf("metrics filter: %q (use -filter \"\" to see all)\n", *metricsFilter)
+	} else {
+		fmt.Println("metrics filter: none (all metrics)")
+	}
+	fmt.Printf("traces: %v  logs: %v\n\n", *showTraces, *showLogs)
 
 	srv.Serve(lis)
 }

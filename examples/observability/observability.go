@@ -13,9 +13,25 @@
 //   - Tags the span with the HTTP response code
 //   - Increments a response counter
 //   - Writes the response code to dynamic metadata
+//
+// # Metric naming
+//
+// Metrics are defined with dot-separated names following Envoy's stats
+// hierarchy convention. Envoy automatically prepends "dynamicmodulescustom."
+// to every metric registered by a dynamic module, so the names visible in
+// /stats and exported via the OTel stats sink are:
+//
+//	dynamicmodulescustom.observability.requests_total   (counter)
+//	dynamicmodulescustom.observability.responses_total  (counter)
+//
+// Use dots — not underscores — to express hierarchy within your filter name
+// so that the full stat path reads as three distinct levels:
+//
+//	dynamicmodulescustom . <filter-name> . <metric-name>
 package observability
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/dio/transit/up"
@@ -35,11 +51,11 @@ func init() {
 		ExtensionName,
 		func(h up.ConfigHandle) error {
 			var err error
-			requestsID, err = h.DefineCounter("observability_requests_total")
+			requestsID, err = h.DefineCounter("observability.requests_total")
 			if err != nil {
 				return err
 			}
-			responsesID, err = h.DefineCounter("observability_responses_total")
+			responsesID, err = h.DefineCounter("observability.responses_total")
 			return err
 		},
 		onRequest,
@@ -80,10 +96,7 @@ func onResponse(w *up.Writer, chunk *up.ResponseChunk) {
 		// Response headers phase: tag status code on the span.
 		span := w.GetActiveSpan()
 		if span != nil {
-			code, ok := w.GetAttributeString(up.AttributeIDResponseCode)
-			if ok {
-				span.SetTag("http.status_code", code.String())
-			}
+			span.SetTag("http.status_code", strconv.Itoa(int(chunk.StatusCode)))
 		}
 		w.SetMetadata(ExtensionName, "status_code", chunk.StatusCode)
 	}
