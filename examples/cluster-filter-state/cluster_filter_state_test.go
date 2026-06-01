@@ -97,6 +97,7 @@ func (c *fakeClusterLBContext) ShouldSelectAnotherHost(_ up.ClusterLBHandle, _ u
 	return false
 }
 func (c *fakeClusterLBContext) NewCompletion() *up.ClusterLBCompletion { return nil }
+func (c *fakeClusterLBContext) GetStreamObject(_ string) (any, bool)   { return nil, false }
 
 type fakeClusterLBHandle struct {
 	healthyHosts []up.HostPtr
