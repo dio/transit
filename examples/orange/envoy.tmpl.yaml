@@ -5,7 +5,7 @@
 ## an OS-aware default but you can override it from the env.
 ##
 ## - Downstream HCM hosts the classify filter.
-## - Upstream HTTP filter chain hosts credinject.
+## - Upstream HTTP filter chain hosts translate.
 ## - The cluster uses the dynamic-modules cluster type (hostpick).
 ##
 ## Modules load orange.yaml lazily via the ORANGE_CONFIG env var (see Makefile
@@ -94,12 +94,12 @@ static_resources:
           explicit_http_config:
             http_protocol_options: {}
           http_filters:
-            - name: orange-credinject
+            - name: orange-translate
               typed_config:
                 "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
                 dynamic_module_config:
                   name: orange
-                filter_name: orange-credinject
+                filter_name: orange-translate
                 filter_config:
                   "@type": type.googleapis.com/google.protobuf.StringValue
                   value: '{}'
