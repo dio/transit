@@ -61,6 +61,7 @@ jobs:
           make -C examples/request-ui test
           make -C examples/lb-policy test
           make -C examples/cluster test
+          make -C examples/cluster-async-router test
           make -C examples/cluster-dfp test
           make -C examples/cluster-router test
           make -C examples/cluster-shard-router test
@@ -102,6 +103,7 @@ jobs:
       - run: make -C examples/async-callout e2e
       - run: make -C examples/body-transform e2e
       - run: make -C examples/cluster e2e
+      - run: make -C examples/cluster-async-router e2e
       - run: make -C examples/cluster-dfp e2e
       - run: make -C examples/cluster-group e2e
       - run: make -C examples/cluster-least-conn e2e
@@ -137,6 +139,9 @@ jobs:
           - integration: cluster-router-eg
             image-prefix: transit-cluster-router-eg
             control-image-prefix: transit-cluster-router-eg-control
+          - integration: cluster-async-router-eg
+            image-prefix: transit-cluster-async-router-eg
+            control-image-prefix: transit-cluster-async-router-eg-demo
           - integration: tiered-router-eg
             image-prefix: transit-tiered-router-eg
             control-image-prefix: transit-tiered-router-eg-control
