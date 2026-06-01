@@ -7,7 +7,7 @@ set -e
 cd "$(dirname "$0")/.."
 
 echo "Building observability filter..."
-CGO_ENABLED=1 go build -trimpath -buildmode=c-shared -o libobservability.so ./cmd
+make build
 
 PROXY_PORT=9090
 ADMIN_PORT=9901
@@ -149,4 +149,4 @@ echo ""
 
 trap "kill $BACKEND_PID 2>/dev/null || true" EXIT
 
-exec /Users/dio/src/dio/transit2/.bin/envoy -c /tmp/envoy_obs_spike.yaml -l info
+exec env GODEBUG=cgocheck=0 /Users/dio/src/dio/transit2/.bin/envoy -c /tmp/envoy_obs_spike.yaml -l info
