@@ -2,11 +2,11 @@
 // Run alongside run_envoy.sh to see what telemetry is being sent.
 //
 // Usage:
-//   go build -o otel-monitor ./monitor_otlp.go
-//   ./otel-monitor                          # only dynamicmodulescustom.* metrics
-//   ./otel-monitor -filter ""               # all metrics
-//   ./otel-monitor -traces -logs            # also print traces and logs
 //
+//	go build -o otel-monitor ./monitor_otlp.go
+//	./otel-monitor                          # only dynamicmodulescustom.* metrics
+//	./otel-monitor -filter ""               # all metrics
+//	./otel-monitor -traces -logs            # also print traces and logs
 package main
 
 import (

@@ -35,8 +35,9 @@ const (
 
 // HostSpec describes a host to be added to a cluster.
 type HostSpec struct {
-	Address string // "ip:port", e.g. "10.0.0.1:8080"
-	Weight  uint32 // load-balancing weight 1–128; 0 is treated as 1
+	Address  string            // "ip:port", e.g. "10.0.0.1:8080"
+	Weight   uint32            // load-balancing weight 1–128; 0 is treated as 1
+	Metadata map[string]string // per-host endpoint metadata under the envoy.transport_socket_match namespace; used for transport_socket_matches selection
 }
 
 // =============================================================================

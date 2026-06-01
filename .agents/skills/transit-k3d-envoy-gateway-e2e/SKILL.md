@@ -457,6 +457,79 @@ these conditions (60s deadline, 500ms poll). If it times out, one of the six L2
 EPP patches did not land — inspect the patch paths against the running Envoy
 version's xDS schema.
 
+### EnvoyPatchPolicy shape for per-host TLS via dynamic-modules cluster
+
+Term collision: in this repo **EPP = EnvoyPatchPolicy**, not the Gateway API
+Inference Extension EndpointPicker. We don't use the inference extension.
+
+To attach per-host TLS to a dynamic-modules cluster (so `HostSpec.Metadata`
+in Go drives which `UpstreamTlsContext` Envoy applies), the EnvoyPatchPolicy
+must include all of:
+
+- `lb_policy: CLUSTER_PROVIDED` — required by `envoy.clusters.dynamic_modules`.
+- `typed_extension_protocol_options` with `HttpProtocolOptions.explicit_http_config`
+  (e.g. `http_protocol_options: {}` for HTTP/1.1). Without it, Envoy falls
+  back to inferring the upstream HTTP protocol from legacy cluster fields;
+  for dynamic-modules clusters that inference path can produce a config
+  that fails validation. Restate it explicitly so inference is not in play.
+- `transport_socket_matches[]` — one entry per TLS personality. The `match`
+  key is read from the `envoy.transport_socket_match` metadata namespace.
+  The SDK's `HostSpec.Metadata{"sni": "..."}` writes that namespace, so
+  matching on `sni: <value>` is the natural shape.
+- `cluster_type: envoy.clusters.dynamic_modules` with `cluster_config` JSON
+  whose hosts include the same `sni` field on TLS hosts and omit it on
+  plaintext hosts (which fall through to the cluster's default
+  `transport_socket`, i.e. plaintext).
+
+No inference is involved at runtime — it's a literal metadata-key compare.
+Plaintext hosts work by *omitting* sni metadata, not by adding a
+plaintext-matching entry.
+
+CA bundle: Envoy needs the trust anchor at a known path
+(e.g. `/etc/envoy/tls/ca.pem`). Mount it via `EnvoyProxy.spec.provider.
+kubernetes.envoyDeployment.container.volumeMounts` + `.pod.volumes` from a
+Secret in `envoy-gateway-system` (see next subsection).
+
+Reference: `integrations/cluster-async-router-eg/k8s/epp.tmpl.yaml`.
+
+### EnvoyProxy Secret mounts resolve in envoy-gateway-system
+
+When an `EnvoyProxy` template mounts a Secret (e.g. a CA bundle at
+`/etc/envoy/tls/ca.pem`), the volume reference is resolved by kubelet against
+the **Envoy pod's** namespace, not the Gateway's. EG generates that pod in
+`envoy-gateway-system`. Creating the Secret in `default` next to the Gateway
+leaves the pod stuck in `ContainerCreating` with
+`MountVolume.SetUp failed for volume "<name>" : secret "<name>" not found`,
+and the Gateway sits at `Accepted=True, Programmed=False:NoResources`
+indefinitely.
+
+Rule: any Secret an `EnvoyProxy` mounts must be created in
+`envoy-gateway-system`. Per-workload Secrets (mounted by upstream Pods) stay
+in the workload's namespace. The `cluster-async-router-eg` e2e splits them
+this way: `cluster-async-router-ca` in `envoy-gateway-system`,
+`tls-host-c` / `tls-host-d` in `default`.
+
+### config_dump assertion for patched dynamic-module clusters
+
+When an `EnvoyPatchPolicy` replaces an EG-generated cluster with a
+`CLUSTER_PROVIDED` + `envoy.clusters.dynamic_modules` cluster, black-box
+routing assertions can still pass while the cluster shape silently regresses
+(missing `transport_socket_matches`, wrong `lb_policy`, hosts dropped from
+`cluster_config`). Add a structural assertion that pulls the patched cluster
+from `/config_dump?resource=dynamic_active_clusters` right after
+`waitEnvoyPatchPolicyProgrammed` while the admin port-forward is still open.
+Verify:
+
+- cluster exists under the discovered XDSNameSchemeV2 name
+- `lb_policy: CLUSTER_PROVIDED`
+- `cluster_type.name: envoy.clusters.dynamic_modules`
+- every expected `transport_socket_matches` entry (name + match.sni)
+- `cluster_config.value` parses and contains every host with the expected
+  metadata (e.g. `sni` field on the TLS hosts)
+
+See `assertPatchedClusterShape` in
+`integrations/cluster-async-router-eg/e2e/e2e_test.go` for the pattern.
+
 ## Make targets
 
 All Go e2e targets must use `-count=1` so a cached test result cannot skip a

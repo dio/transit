@@ -89,6 +89,7 @@ func (h *clusterHandleImpl) AddHosts(specs []down.HostSpec) []down.HostPtr {
 	results := make([]C.envoy_dynamic_module_type_cluster_host_envoy_ptr, n)
 
 	rawAddrs := make([]string, n)
+	maxPairs := 0
 	for i, s := range specs {
 		rawAddrs[i] = s.Address
 		addrs[i] = stringToModuleBuffer(rawAddrs[i])
@@ -97,17 +98,49 @@ func (h *clusterHandleImpl) AddHosts(specs []down.HostSpec) []down.HostPtr {
 			w = 1
 		}
 		weights[i] = C.uint32_t(w)
+		if len(s.Metadata) > maxPairs {
+			maxPairs = len(s.Metadata)
+		}
+	}
+
+	// Build flat (filter_name, key, value) triples for transport_socket_matches.
+	// All hosts share the same metadata_pairs_per_host count; hosts with fewer
+	// entries are padded with zero-length buffers (already zero from make).
+	var (
+		metaBufs []C.envoy_dynamic_module_type_module_buffer
+		rawMeta  []string
+		metaPtr  *C.envoy_dynamic_module_type_module_buffer
+	)
+	if maxPairs > 0 {
+		total := n * maxPairs * 3
+		metaBufs = make([]C.envoy_dynamic_module_type_module_buffer, total)
+		rawMeta = make([]string, total)
+		for i, s := range specs {
+			j := 0
+			for k, v := range s.Metadata {
+				base := (i*maxPairs + j) * 3
+				rawMeta[base] = "envoy.transport_socket_match"
+				rawMeta[base+1] = k
+				rawMeta[base+2] = v
+				metaBufs[base] = stringToModuleBuffer(rawMeta[base])
+				metaBufs[base+1] = stringToModuleBuffer(rawMeta[base+1])
+				metaBufs[base+2] = stringToModuleBuffer(rawMeta[base+2])
+				j++
+			}
+		}
+		metaPtr = &metaBufs[0]
 	}
 
 	C.envoy_dynamic_module_callback_cluster_add_hosts(
 		h.envoyPtr, 0,
 		&addrs[0], &weights[0],
 		&empty[0], &empty[0], &empty[0],
-		nil, 0,
+		metaPtr, C.size_t(maxPairs),
 		C.size_t(n),
 		&results[0],
 	)
 	runtime.KeepAlive(rawAddrs)
+	runtime.KeepAlive(rawMeta)
 
 	out := make([]down.HostPtr, n)
 	for i, r := range results {
