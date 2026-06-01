@@ -1,0 +1,24 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: cluster-async-router-eg
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: cluster-async-router
+  namespace: default
+spec:
+  gatewayClassName: cluster-async-router-eg
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: cluster-async-router-proxy
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+    hostname: cluster-async-router.example.com

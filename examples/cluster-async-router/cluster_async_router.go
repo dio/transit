@@ -19,11 +19,14 @@
 package clusterasyncrouter
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/dio/transit/up"
 )
@@ -176,6 +179,7 @@ type clusterConfig struct {
 type hostEntry struct {
 	Name    string `json:"name"`
 	Address string `json:"address"`
+	SNI     string `json:"sni,omitempty"` // if set, host metadata "sni" is populated so transport_socket_matches can select the right UpstreamTlsContext
 }
 
 type factory struct{}
@@ -209,16 +213,21 @@ func (f *cfgFactory) NewCluster(_ up.ClusterHandle) up.Cluster {
 func (f *cfgFactory) Close() {}
 
 type cluster struct {
-	handle   up.ClusterHandle
-	hosts    []hostEntry
-	byName   map[string]up.HostPtr
+	handle up.ClusterHandle
+	hosts  []hostEntry
+	byName map[string]up.HostPtr
 }
 
 func (c *cluster) Init(h up.ClusterHandle) {
 	c.handle = h
 	c.byName = make(map[string]up.HostPtr, len(c.hosts))
 	for _, he := range c.hosts {
-		ptrs := h.AddHosts([]up.HostSpec{{Address: he.Address}})
+		addr := resolveHostAddr(he.Address)
+		spec := up.HostSpec{Address: addr}
+		if he.SNI != "" {
+			spec.Metadata = map[string]string{"sni": he.SNI}
+		}
+		ptrs := h.AddHosts([]up.HostSpec{spec})
 		if len(ptrs) == 0 {
 			continue
 		}
@@ -228,10 +237,30 @@ func (c *cluster) Init(h up.ClusterHandle) {
 	h.PreInitComplete()
 }
 
-func (c *cluster) ServerInitialized(_ up.ClusterHandle)      {}
-func (c *cluster) DrainStarted(_ up.ClusterHandle)           {}
-func (c *cluster) Shutdown(_ up.ClusterHandle, done func())  { done() }
-func (c *cluster) Close()                                    {}
+// resolveHostAddr resolves a "hostname:port" address to "ip:port" for Envoy's
+// dynamic-module cluster, which expects numeric IPs. Returns addr unchanged if
+// the host is already an IP or if resolution fails.
+func resolveHostAddr(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	if net.ParseIP(host) != nil {
+		return addr
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	ips, err := net.DefaultResolver.LookupHost(ctx, host)
+	if err != nil || len(ips) == 0 {
+		return addr
+	}
+	return net.JoinHostPort(ips[0], port)
+}
+
+func (c *cluster) ServerInitialized(_ up.ClusterHandle)     {}
+func (c *cluster) DrainStarted(_ up.ClusterHandle)          {}
+func (c *cluster) Shutdown(_ up.ClusterHandle, done func()) { done() }
+func (c *cluster) Close()                                   {}
 
 func (c *cluster) NewClusterLB() up.ClusterLB {
 	return &lb{

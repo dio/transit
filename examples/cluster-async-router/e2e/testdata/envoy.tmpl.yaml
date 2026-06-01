@@ -35,6 +35,65 @@ static_resources:
     - name: upstream
       connect_timeout: 5s
       lb_policy: CLUSTER_PROVIDED
+      transport_socket_matches:
+        - name: host-c
+          match:
+            sni: host-c.test
+          transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+              sni: host-c.test
+              common_tls_context:
+                validation_context:
+                  trusted_ca: { filename: {{.CAFile}} }
+                  match_typed_subject_alt_names:
+                    - san_type: DNS
+                      matcher: { exact: host-c.test }
+        - name: host-d
+          match:
+            sni: host-d.test
+          transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+              sni: host-d.test
+              common_tls_context:
+                validation_context:
+                  trusted_ca: { filename: {{.CAFile}} }
+                  match_typed_subject_alt_names:
+                    - san_type: DNS
+                      matcher: { exact: host-d.test }
+{{- if .Public}}
+        - name: httpbin
+          match:
+            sni: httpbin.org
+          transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+              sni: httpbin.org
+              common_tls_context:
+                validation_context:
+                  trusted_ca: { filename: {{.SystemCAFile}} }
+                  match_typed_subject_alt_names:
+                    - san_type: DNS
+                      matcher: { exact: httpbin.org }
+        - name: example
+          match:
+            sni: example.com
+          transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+              sni: example.com
+              common_tls_context:
+                validation_context:
+                  trusted_ca: { filename: {{.SystemCAFile}} }
+                  match_typed_subject_alt_names:
+                    - san_type: DNS
+                      matcher: { exact: example.com }
+{{- end}}
       cluster_type:
         name: envoy.clusters.dynamic_modules
         typed_config:
@@ -44,7 +103,7 @@ static_resources:
           cluster_name: body-router-cluster
           cluster_config:
             "@type": type.googleapis.com/google.protobuf.StringValue
-            value: '{"hosts":[{"name":"a","address":"127.0.0.1:{{.UpstreamAPort}}"},{"name":"b","address":"127.0.0.1:{{.UpstreamBPort}}"}]}'
+            value: '{"hosts":[{"name":"a","address":"127.0.0.1:{{.UpstreamAPort}}"},{"name":"b","address":"127.0.0.1:{{.UpstreamBPort}}"},{"name":"c","address":"127.0.0.1:{{.UpstreamCPort}}","sni":"host-c.test"},{"name":"d","address":"127.0.0.1:{{.UpstreamDPort}}","sni":"host-d.test"}{{if .Public}},{"name":"httpbin","address":"httpbin.org:443","sni":"httpbin.org"},{"name":"example","address":"example.com:443","sni":"example.com"}{{end}}]}'
 
 admin:
   address:

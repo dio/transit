@@ -1,0 +1,22 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: cluster-async-router
+  namespace: default
+spec:
+  parentRefs:
+  - name: cluster-async-router
+  hostnames:
+  - cluster-async-router.example.com
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    # cluster-async-router-backend is a stand-in: EG generates a cluster for it,
+    # then EnvoyPatchPolicy replaces that cluster with CLUSTER_PROVIDED +
+    # dynamic-modules. The Service itself just needs to exist and be Ready so
+    # EG admits the route as Programmed.
+    - name: cluster-async-router-backend
+      port: 8080
