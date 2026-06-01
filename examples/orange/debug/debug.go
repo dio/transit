@@ -18,7 +18,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/dio/transit/examples/orange/pending"
+	"github.com/dio/transit/down"
 )
 
 func init() {
@@ -29,7 +29,7 @@ func init() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/pending/size", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]int{"size": pending.Size()})
+		_ = json.NewEncoder(w).Encode(map[string]int{"size": down.StreamObjectBagCount()})
 	})
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok\n"))

@@ -30,9 +30,9 @@ func readPendingSize(t *testing.T) int {
 	return got.Size
 }
 
-// waitForPendingSize polls the debug endpoint until pending.Size() returns
-// to want, giving Envoy a brief window to invoke OnStreamComplete on the
-// disconnect path. Returns the last observed size.
+// waitForPendingSize polls the debug endpoint until the stream-object bag
+// count returns to want, giving Envoy a brief window to invoke OnStreamComplete
+// on the disconnect path. Returns the last observed size.
 func waitForPendingSize(t *testing.T, want int, timeout time.Duration) int {
 	t.Helper()
 	deadline := time.Now().Add(timeout)

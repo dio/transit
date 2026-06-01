@@ -4,9 +4,9 @@
 // On Init it resolves every upstream listed in orange.yaml, registers each
 // host with the cluster, and remembers the HostPtr by upstream name.
 //
-// ChooseHost reads the per-request token classify wrote to filter state
-// (classify.StateToken), looks up the matching pending.Pending in the
-// process-wide registry, and returns an async ClusterLBCompletion. It
+// ChooseHost reads the *pending.Pending classify stored in the per-stream
+// object bag (via ClusterLBContext.GetStreamObject with key
+// classify.StreamObjectKey), and returns an async ClusterLBCompletion. It
 // registers a callback via pending.Pending.OnResolve; when classify resolves
 // the Pending (from bodyHandler after parsing the OpenAI `model` field, or
 // from onStreamComplete on stream teardown), the callback hops back to the
@@ -33,6 +33,7 @@ import (
 	"github.com/dio/transit/examples/orange/pending"
 	"github.com/dio/transit/up"
 )
+
 
 const (
 	ClusterName = "orange-hostpick"
@@ -113,14 +114,13 @@ type lb struct {
 }
 
 func (l *lb) ChooseHost(_ up.ClusterLBHandle, ctx up.ClusterLBContext) (up.HostPtr, *up.ClusterLBCompletion) {
-	token, ok := ctx.GetFilterState(classify.StateToken)
-	if !ok || token == "" {
+	v, ok := ctx.GetStreamObject(classify.StreamObjectKey)
+	if !ok {
 		return nil, nil
 	}
-	p := pending.Lookup(token)
-	if p == nil {
-		return nil, nil
-	}
+	// Type-assert: a non-*pending.Pending value under this key is a programmer
+	// error, so panic is the right response — it surfaces the bug immediately.
+	p := v.(*pending.Pending)
 
 	completion := ctx.NewCompletion()
 	p.OnResolve(func(res pending.Result) {

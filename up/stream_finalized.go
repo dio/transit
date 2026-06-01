@@ -11,9 +11,19 @@ import (
 // streamFinalizedEntry holds the per-stream wiring used by the SDK-internal
 // access logger to deliver [FinalizedInfo] back to the filter that asked for
 // it via [WithOnStreamFinalized].
+//
+// streamObjectNonce is a pointer into the filter's streamObjectNonce field.
+// It is read by the access logger after all filter callbacks complete, at
+// which point the nonce is final. After entry.fn fires, the access logger
+// drains the Primitive A bag so that the B callback can call GetStreamObject
+// and see its values — drain order:
+//
+//	user OnStreamComplete → user OnStreamFinalized → dropBag
 type streamFinalizedEntry struct {
-	fn  OnStreamFinalizedFunc
-	ctx *any
+	fn                OnStreamFinalizedFunc
+	ctx               *any
+	streamObjectNonce *string // pointer into filter.streamObjectNonce; may point to ""
+	localReplyBody    *string // pointer into filter.localReplyBody; may point to ""
 }
 
 // streamFinalizedRegistry is a process-wide map keyed by (filter name,
@@ -99,8 +109,10 @@ func (f *filter) registerFinalized(w *Writer) {
 	key := streamFinalizedKey(f.name, streamKey)
 	f.finalizedKey = key
 	putFinalizedEntry(key, &streamFinalizedEntry{
-		fn:  f.onStreamFinalized,
-		ctx: &f.context,
+		fn:                f.onStreamFinalized,
+		ctx:               &f.context,
+		streamObjectNonce: &f.streamObjectNonce,
+		localReplyBody:    &f.localReplyBody,
 	})
 }
 
@@ -188,7 +200,16 @@ func (l *finalizedLogger) OnLog(h AccessLoggerHandle, logType AccessLogType) {
 	}
 	if v, ok := h.GetLocalReplyBody(); ok && v.Len > 0 {
 		info.LocalReplyBody = v.ToString()
+	} else if entry.localReplyBody != nil {
+		info.LocalReplyBody = *entry.localReplyBody
 	}
 
 	entry.fn(entry.ctx, info)
+	// Drain the Primitive A bag AFTER the user callback runs so that the
+	// B callback (entry.fn above) can call GetStreamObject and see its values.
+	// This establishes the guaranteed order:
+	//   user OnStreamComplete → user OnStreamFinalized → dropBag
+	if entry.streamObjectNonce != nil {
+		dropBag(*entry.streamObjectNonce)
+	}
 }

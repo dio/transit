@@ -1,9 +1,10 @@
 // Package classify is the downstream HTTP filter for orange.
 //
 // On a POST to /v1/chat/completions or /v1/messages it:
-//   - mints a per-request token at headers phase and publishes it via filter
-//     state (StateToken). hostpick reads this token in ChooseHost and waits on
-//     a Pending until classify resolves it,
+//   - stores a new [pending.Pending] in the per-stream object bag
+//     (via Writer.SetStreamObject) at headers phase. hostpick reads it in
+//     ChooseHost via ClusterLBContext.GetStreamObject and waits until classify
+//     resolves it.
 //   - in the body phase, parses the `model` field out of the JSON body,
 //     looks up the upstream from config.models[], rewrites :authority to the
 //     provider host (so auto_sni/auto_san_validation see the right name when
@@ -18,8 +19,6 @@ package classify
 
 import (
 	"encoding/json"
-	"strconv"
-	"sync/atomic"
 
 	"github.com/dio/transit/examples/orange/config"
 	"github.com/dio/transit/examples/orange/pending"
@@ -36,16 +35,15 @@ type errorBody struct {
 const (
 	FilterName = "orange-classify"
 
+	// StreamObjectKey is the per-stream bag key under which classify stores the
+	// *pending.Pending. hostpick imports this constant to look up the Pending
+	// via ClusterLBContext.GetStreamObject — no string literal duplication.
+	StreamObjectKey = "orange.pending"
+
 	// Filter state — only the cluster LB can read this.
 	StateUpstream = "orange.upstream"
 	StateProvider = "orange.provider"
 	StateModel    = "orange.model"
-
-	// StateToken is the per-request handoff key hostpick reads to find the
-	// matching pending.Pending. Kept distinct from StateUpstream so a future
-	// synchronous classify variant could populate StateUpstream without
-	// colliding with the async path.
-	StateToken = "orange.cls-token"
 
 	// Dynamic metadata — readable by upstream HTTP filters (translate).
 	MetadataNamespace   = "orange"
@@ -75,21 +73,9 @@ func init() {
 }
 
 // streamState is stashed in the per-stream context slot at headers phase so
-// the body handler can find the same token + pending without re-parsing
-// anything.
+// the body handler can find the same Pending without re-parsing anything.
 type streamState struct {
-	token string
-	p     *pending.Pending
-}
-
-var tokenSeq atomic.Uint64
-
-// mintToken returns a process-unique token. We don't use x-request-id because
-// it's not guaranteed to be unique under our control (it can be forwarded,
-// rewritten by tracing, etc.) — minting our own keeps the routing key
-// hermetic.
-func mintToken() string {
-	return "orange-" + strconv.FormatUint(tokenSeq.Add(1), 36)
+	p *pending.Pending
 }
 
 func requestHandler(w *up.Writer, r *up.Request) {
@@ -102,14 +88,14 @@ func requestHandler(w *up.Writer, r *up.Request) {
 		return
 	}
 
-	token := mintToken()
-	p := pending.Register(token)
+	p := pending.New()
 	if r.Context != nil {
-		*r.Context = &streamState{token: token, p: p}
+		*r.Context = &streamState{p: p}
 	}
-	// hostpick reads this in ChooseHost and waits on p.
-	w.SetFilterState(StateToken, token)
-	w.Log(up.LogInfo, "orange-classify headers: token=%s authority_in=%s", token, r.Host)
+	// Store the *Pending in the per-stream object bag (Primitive A).
+	// hostpick reads it in ChooseHost via ClusterLBContext.GetStreamObject.
+	w.SetStreamObject(StreamObjectKey, p)
+	w.Log(up.LogInfo, "orange-classify headers: authority_in=%s", r.Host)
 }
 
 func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
@@ -125,9 +111,10 @@ func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 	if !ok || st == nil {
 		return
 	}
-	// Cleanup (pending.Delete + a terminal Resolve) is owned by
-	// onStreamComplete so it runs even when this handler doesn't —
-	// downstream disconnect after headers, idle timeout, foreign local reply.
+	// Cleanup (a terminal Resolve) is owned by onStreamComplete so it runs
+	// even when this handler doesn't — downstream disconnect after headers,
+	// idle timeout, foreign local reply. The SDK's Primitive A owns bag
+	// lifetime; no manual Delete is needed here.
 
 	cfg := config.Get()
 	field := cfg.Classify.ModelField
@@ -178,13 +165,12 @@ func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 }
 
 // onStreamComplete is the single owner of per-stream cleanup. It runs once
-// per stream regardless of how Envoy terminated it, so it is the only place
-// guaranteed to fire for every token that requestHandler minted.
+// per stream regardless of how Envoy terminated it. The SDK's Primitive A
+// drains the stream-object bag unconditionally; this callback only needs to
+// publish the terminal ErrStreamTerminated so hostpick can complete cleanly.
 //
 // Resolve is a CAS — when bodyHandler already published a real Result this is
-// a no-op. When bodyHandler never ran, it unblocks the hostpick goroutine
-// waiting on Pending.Done() with ErrStreamTerminated so it exits cleanly
-// instead of leaking. pending.Delete is idempotent.
+// a no-op.
 func onStreamComplete(ctx *any) {
 	if ctx == nil || *ctx == nil {
 		return
@@ -196,7 +182,8 @@ func onStreamComplete(ctx *any) {
 	if st.p != nil {
 		st.p.Resolve(pending.Result{Err: ErrStreamTerminated})
 	}
-	pending.Delete(st.token)
+	// No pending.Delete here: the stream-object bag is owned and drained
+	// by the SDK (Primitive A / dropBag in filter.OnStreamComplete).
 }
 
 func sendError(w *up.Writer, status int, code, msg string) {

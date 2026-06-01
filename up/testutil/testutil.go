@@ -7,6 +7,8 @@ import (
 
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared/fake"
+
+	"github.com/dio/transit/down"
 )
 
 // LocalResponse records a single SendLocalResponse call for test assertions.
@@ -60,6 +62,7 @@ func NewFilterHandle(opts ...FilterHandleOption) *FakeFilterHandle {
 		reqBody:          fake.NewFakeBodyBuffer(nil),
 		respBody:         fake.NewFakeBodyBuffer(nil),
 		metadata:         make(map[string]map[string]any),
+		filterState:      make(map[string][]byte),
 		ContinueRequestC: make(chan struct{}),
 		LocalResponseC:   make(chan struct{}),
 	}
@@ -71,7 +74,8 @@ func NewFilterHandle(opts ...FilterHandleOption) *FakeFilterHandle {
 
 // FakeFilterHandle implements shared.HttpFilterHandle for unit tests.
 // SendLocalResponse records calls into LocalResponses for assertions.
-// All other methods are no-ops returning zero values.
+// Filter state is stored in a real map so SetStreamObject / GetStreamObject
+// round-trips work in tests (the nonce is written to filter state on first Set).
 type FakeFilterHandle struct {
 	mu sync.Mutex
 
@@ -80,6 +84,7 @@ type FakeFilterHandle struct {
 	reqBody     *fake.FakeBodyBuffer
 	respBody    *fake.FakeBodyBuffer
 	metadata    map[string]map[string]any
+	filterState map[string][]byte // stores per-stream filter state for test round-trips
 
 	// LocalResponses records every SendLocalResponse call.
 	LocalResponses   []LocalResponse
@@ -269,13 +274,42 @@ func (h *FakeFilterHandle) GetAttributeBool(_ shared.AttributeID) (bool, bool) {
 
 // -- Filter state --
 
-func (h *FakeFilterHandle) GetFilterState(_ string) (shared.UnsafeEnvoyBuffer, bool) {
-	return shared.UnsafeEnvoyBuffer{}, false
+// SetFilterState stores the value under key. Enables SetStreamObject /
+// GetStreamObject round-trips in tests (the nonce is written here on first Set).
+func (h *FakeFilterHandle) SetFilterState(key string, value []byte) {
+	h.mu.Lock()
+	if h.filterState == nil {
+		h.filterState = make(map[string][]byte)
+	}
+	cp := make([]byte, len(value))
+	copy(cp, value)
+	h.filterState[key] = cp
+	h.mu.Unlock()
 }
-func (h *FakeFilterHandle) SetFilterState(_ string, _ []byte)           {}
+
+// GetFilterState returns the value previously set by SetFilterState.
+func (h *FakeFilterHandle) GetFilterState(key string) (shared.UnsafeEnvoyBuffer, bool) {
+	h.mu.Lock()
+	v, ok := h.filterState[key]
+	h.mu.Unlock()
+	if !ok || len(v) == 0 {
+		return shared.UnsafeEnvoyBuffer{}, ok
+	}
+	return shared.UnsafeEnvoyBuffer{Ptr: &v[0], Len: uint64(len(v))}, true
+}
+
 func (h *FakeFilterHandle) SetFilterStateTyped(_ string, _ []byte) bool { return false }
 func (h *FakeFilterHandle) GetFilterStateTyped(_ string) (shared.UnsafeEnvoyBuffer, bool) {
 	return shared.UnsafeEnvoyBuffer{}, false
+}
+
+// FilterStateString returns the filter state value for key as a string.
+// Convenience helper for test assertions.
+func (h *FakeFilterHandle) FilterStateString(key string) (string, bool) {
+	h.mu.Lock()
+	v, ok := h.filterState[key]
+	h.mu.Unlock()
+	return string(v), ok
 }
 
 // -- Cross-phase data --
@@ -366,3 +400,76 @@ func (h *FakeFilterHandle) GetSocketOptionInt(_, _ int64, _ shared.SocketOptionS
 func (h *FakeFilterHandle) GetSocketOptionBytes(_, _ int64, _ shared.SocketOptionState, _ shared.SocketDirection) (shared.UnsafeEnvoyBuffer, bool) {
 	return shared.UnsafeEnvoyBuffer{}, false
 }
+
+// =============================================================================
+// FakeClusterLBContext — implements down.ClusterLBContext for unit tests
+// =============================================================================
+
+// FakeClusterLBContext is a minimal ClusterLBContext for unit tests.
+// It reads the stream-object nonce from the same FakeFilterHandle used by
+// the Writer under test, so SetStreamObject / GetStreamObject round-trips
+// work end-to-end in tests without real Envoy.
+//
+// After the Writer flushes (or in directWrite mode, immediately), call
+// SyncFilterStateFrom(handle) to copy the handle's current filter state into
+// this context. Then GetStreamObject will return the correct bag entry.
+type FakeClusterLBContext struct {
+	mu          sync.Mutex
+	filterState map[string]string
+	headers     map[string]string
+}
+
+// NewFakeClusterLBContext returns a FakeClusterLBContext pre-loaded with the
+// filter state from handle. Call it AFTER the Writer has flushed so the
+// stream-object nonce is present in the handle.
+func NewFakeClusterLBContext(handle *FakeFilterHandle) *FakeClusterLBContext {
+	ctx := &FakeClusterLBContext{
+		filterState: make(map[string]string),
+		headers:     make(map[string]string),
+	}
+	ctx.SyncFilterStateFrom(handle)
+	return ctx
+}
+
+// SyncFilterStateFrom copies the current filter state from handle into this
+// context. Use after calling Writer methods that queue filter-state mutations
+// and after any flush (or when directWrite=true).
+func (c *FakeClusterLBContext) SyncFilterStateFrom(handle *FakeFilterHandle) {
+	handle.mu.Lock()
+	for k, v := range handle.filterState {
+		c.filterState[k] = string(v)
+	}
+	handle.mu.Unlock()
+}
+
+func (c *FakeClusterLBContext) GetFilterState(key string) (string, bool) {
+	c.mu.Lock()
+	v, ok := c.filterState[key]
+	c.mu.Unlock()
+	return v, ok
+}
+
+func (c *FakeClusterLBContext) GetStreamObject(key string) (any, bool) {
+	nonce, ok := c.GetFilterState(down.StreamObjectIDKey)
+	if !ok || nonce == "" {
+		return nil, false
+	}
+	bag, ok := down.LookupStreamObjectBag(nonce)
+	if !ok {
+		return nil, false
+	}
+	return bag.Get(key)
+}
+
+// Remaining ClusterLBContext methods — all no-ops for test use.
+func (c *FakeClusterLBContext) GetAllHeaders() [][2]string                                 { return nil }
+func (c *FakeClusterLBContext) GetFilterStateTyped(_ string) (string, bool)                { return "", false }
+func (c *FakeClusterLBContext) GetOverrideHost() (string, bool)                            { return "", false }
+func (c *FakeClusterLBContext) GetHeader(_ string) (string, bool)                          { return "", false }
+func (c *FakeClusterLBContext) GetDownstreamSNI() (string, bool)                           { return "", false }
+func (c *FakeClusterLBContext) ComputeHashKey() (uint64, bool)                             { return 0, false }
+func (c *FakeClusterLBContext) GetHostSelectionRetryCount() uint32                         { return 0 }
+func (c *FakeClusterLBContext) ShouldSelectAnotherHost(_ down.ClusterLBHandle, _ uint32, _ int) bool {
+	return false
+}
+func (c *FakeClusterLBContext) NewCompletion() *down.ClusterLBCompletion { return nil }

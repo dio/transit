@@ -1,11 +1,15 @@
-// Package pending is the process-wide token-keyed handoff between
-// classify.bodyHandler (which decides the upstream after parsing the request
-// body) and hostpick.ChooseHost (which has to suspend until that decision
-// lands).
+// Package pending is the single-shot async handoff primitive for orange.
 //
-// The pattern is documented in detail in
-// docs/envoy-dynamic-module-upstream-selection.md and in
-// .agents/skills/transit-body-driven-cluster-routing/SKILL.md.
+// It provides [Pending], a CAS-based one-shot async result carrier with an
+// [OnResolve] callback. Two extensions on the same stream (classify and
+// hostpick) communicate through it: classify resolves the Pending after
+// parsing the request body, and hostpick installs an OnResolve callback to
+// learn the result and complete host selection.
+//
+// The cross-extension handoff (passing the *Pending itself from classify to
+// hostpick) is done via the SDK's Primitive A typed per-stream object store:
+// classify stores the *Pending via Writer.SetStreamObject; hostpick reads it
+// via ClusterLBContext.GetStreamObject. There is no process-wide registry.
 package pending
 
 import "sync"
@@ -37,8 +41,7 @@ type Pending struct {
 	fired bool
 }
 
-// New returns an unresolved Pending. Callers usually go through Register so
-// the Pending is discoverable by token.
+// New returns an unresolved Pending.
 func New() *Pending { return &Pending{} }
 
 // Resolve publishes r. The first call wins; later calls are no-ops and return
@@ -100,42 +103,4 @@ func (p *Pending) Result() (Result, bool) {
 		return Result{}, false
 	}
 	return *p.res, true
-}
-
-var registry sync.Map // token (string) -> *Pending
-
-// Register associates a new Pending with token. If token is already present
-// (token collision), the existing Pending is returned — Resolve is single-shot
-// so the second classify run would just no-op, which is the safe behavior.
-func Register(token string) *Pending {
-	p := New()
-	actual, loaded := registry.LoadOrStore(token, p)
-	if loaded {
-		return actual.(*Pending)
-	}
-	return p
-}
-
-// Lookup returns the Pending for token, or nil if absent.
-func Lookup(token string) *Pending {
-	v, ok := registry.Load(token)
-	if !ok {
-		return nil
-	}
-	return v.(*Pending)
-}
-
-// Delete removes token from the registry. Safe to call multiple times.
-func Delete(token string) { registry.Delete(token) }
-
-// Size returns the current number of entries in the registry. It walks the
-// underlying sync.Map and is intended for diagnostics / leak tests, not hot
-// paths.
-func Size() int {
-	n := 0
-	registry.Range(func(_, _ any) bool {
-		n++
-		return true
-	})
-	return n
 }

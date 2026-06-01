@@ -180,6 +180,13 @@ type ClusterLBContext interface {
 	// NewCompletion creates an async handle pre-loaded with the Envoy pointers
 	// needed to call Complete later. Use for async ChooseHost paths.
 	NewCompletion() *ClusterLBCompletion
+
+	// GetStreamObject returns the typed value stored under key for this stream
+	// by an HTTP filter via Writer.SetStreamObject (Primitive A). Returns
+	// (nil, false) if the key was never set or the bag does not exist for this
+	// stream. The nonce is read from filter state under the reserved key
+	// "up.stream_object_id".
+	GetStreamObject(key string) (any, bool)
 }
 
 // ClusterLBHandle gives a ClusterLB access to its cluster's host set.

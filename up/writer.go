@@ -133,6 +133,7 @@ func (w *Writer) Log(level LogLevel, format string, args ...any) {
 func (w *Writer) SendLocalResponse(status int, body []byte, headers ...[2]string) {
 	if w.queued() {
 		if w.f.localReply == nil {
+			w.f.localReplyBody = string(body)
 			w.f.localReply = &localResponse{status: uint32(status), headers: headers, body: body}
 		}
 		w.f.stopped = true
@@ -141,6 +142,7 @@ func (w *Writer) SendLocalResponse(status int, body []byte, headers ...[2]string
 	if w.f.stopped {
 		return
 	}
+	w.f.localReplyBody = string(body)
 	w.f.handle.SendLocalResponse(uint32(status), headers, body, "")
 	w.f.stopped = true
 }
@@ -203,6 +205,38 @@ func (w *Writer) SetFilterState(key, value string) {
 		return
 	}
 	w.f.handle.SetFilterState(key, []byte(value))
+}
+
+// SetStreamObject stores v under key in the per-stream typed-value bag
+// (Primitive A). Must be called on the worker thread — same constraint as
+// SetFilterState.
+//
+// On the first call for a stream, getOrCreateBag mints a short random nonce,
+// queues a SetFilterState write of that nonce under the reserved key
+// "up.stream_object_id" (via the same queued-mutation path as SetFilterState),
+// and creates the bag. Subsequent calls for the same stream reuse the bag.
+//
+// The nonce in filter state lets ClusterLBContext.GetStreamObject look up the
+// bag. The bag is drained by OnStreamComplete (or finalizedLogger.OnLog for
+// filters using WithOnStreamFinalized) after all user callbacks have run.
+func (w *Writer) SetStreamObject(key string, v any) {
+	bag := getOrCreateBag(w)
+	bag.Set(key, v)
+}
+
+// GetStreamObject returns the value stored under key for this stream, or
+// (nil, false) if the key was never set. Must be called on the worker thread.
+// If SetStreamObject was never called on this stream no allocation occurs and
+// no nonce is minted.
+func (w *Writer) GetStreamObject(key string) (any, bool) {
+	if w.f.streamObjectNonce == "" {
+		return nil, false
+	}
+	bag, ok := lookupBag(w.f.streamObjectNonce)
+	if !ok {
+		return nil, false
+	}
+	return bag.Get(key)
 }
 
 // SetUpstreamOverrideHost queues (or immediately sets) an upstream host override.

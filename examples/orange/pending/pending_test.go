@@ -96,28 +96,6 @@ func TestOnResolve_replaceBeforeResolve(t *testing.T) {
 	}
 }
 
-func TestRegisterLookupDelete_roundTrip(t *testing.T) {
-	p := Register("tok-xyz")
-	if Lookup("tok-xyz") != p {
-		t.Fatal("Lookup did not return the registered Pending")
-	}
-	Delete("tok-xyz")
-	if Lookup("tok-xyz") != nil {
-		t.Fatal("Delete did not remove the Pending")
-	}
-	// Idempotent.
-	Delete("tok-xyz")
-}
-
-func TestRegister_tokenCollisionReturnsExisting(t *testing.T) {
-	t.Cleanup(func() { Delete("tok-collide") })
-	a := Register("tok-collide")
-	b := Register("tok-collide")
-	if a != b {
-		t.Fatal("Register on collision must return the existing Pending")
-	}
-}
-
 func TestPending_concurrentResolveOnlyOneWins(t *testing.T) {
 	p := New()
 	const N = 32

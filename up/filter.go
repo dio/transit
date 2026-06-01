@@ -149,6 +149,11 @@ type filter struct {
 	// OnStreamComplete as a safety net if the access logger did not fire.
 	finalizedKey string
 
+	// streamObjectNonce is the per-stream nonce written to filter state under
+	// streamObjectIDKey on the first SetStreamObject call. Empty until then.
+	// Drained by OnStreamComplete via dropBag after user callbacks run.
+	streamObjectNonce string
+
 	// captured from headers callbacks for body callbacks
 	requestContentType      string
 	requestContentEncoding  string
@@ -228,6 +233,12 @@ type filter struct {
 	// streamDone is set by OnStreamComplete to prevent a late OnHttpCalloutDone
 	// from calling flush on a terminated stream.
 	streamDone atomic.Bool
+
+	// localReplyBody is the body passed to this filter's SendLocalResponse.
+	// Envoy's access-log GetLocalReplyBody currently returns empty on the
+	// reachable local-reply paths, so finalizedLogger uses this as a narrow
+	// fallback for Transit-generated local replies from the same filter.
+	localReplyBody string
 }
 
 // flush applies all queued request-phase mutations and optionally resumes the stream.
@@ -551,6 +562,18 @@ func (f *filter) OnStreamComplete() {
 		// observes ctx.Done() only after the filter has had a chance to clean up
 		// its registry entries. Mutations are no-ops at this point.
 		f.onStreamComplete(&f.context)
+	}
+	// Drain the Primitive A stream-object bag.
+	// When onStreamFinalized is NOT configured, OnStreamComplete is the last
+	// hook that fires for this stream, so drain here unconditionally.
+	// When onStreamFinalized IS configured, the drain is deferred to
+	// finalizedLogger.OnLog (stream_finalized.go), which fires AFTER this hook,
+	// so the B callback can still call GetStreamObject and read bag values.
+	// If the access logger never fires (listener YAML misconfiguration) the bag
+	// leaks for the process lifetime — same as the existing finalized-entry
+	// leak documented in the comment below; that is a configuration error.
+	if f.onStreamFinalized == nil {
+		dropBag(f.streamObjectNonce)
 	}
 	// Note: do not drain the finalized-registry entry here. In this Envoy
 	// version, OnStreamComplete fires before the access logger's OnLog at

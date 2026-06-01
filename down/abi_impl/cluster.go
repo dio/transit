@@ -500,6 +500,19 @@ func (c *dymClusterLBContext) ShouldSelectAnotherHost(lb down.ClusterLBHandle, p
 		h.lbPtr, c.ctxPtr, C.uint32_t(priority), C.size_t(index)))
 }
 
+func (c *dymClusterLBContext) GetStreamObject(key string) (any, bool) {
+	// Read the per-stream nonce from filter state under the reserved key.
+	nonce, ok := c.GetFilterState(down.StreamObjectIDKey)
+	if !ok || nonce == "" {
+		return nil, false
+	}
+	bag, ok := down.LookupStreamObjectBag(nonce)
+	if !ok {
+		return nil, false
+	}
+	return bag.Get(key)
+}
+
 func (c *dymClusterLBContext) NewCompletion() *down.ClusterLBCompletion {
 	lbPtr := c.lbPtr
 	ctxPtr := c.ctxPtr

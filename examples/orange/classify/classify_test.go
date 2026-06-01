@@ -5,6 +5,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/dio/transit/down"
 	"github.com/dio/transit/examples/orange/config"
 	"github.com/dio/transit/examples/orange/pending"
 	"github.com/dio/transit/up"
@@ -52,19 +53,48 @@ func runFlow(t *testing.T, body []byte) (*testutil.FakeFilterHandle, *streamStat
 	return h, st
 }
 
-func TestHeaders_registersPendingAndToken(t *testing.T) {
+// streamObjectNonce reads the "up.stream_object_id" filter state from the
+// handle; returns "" if absent.
+func streamObjectNonce(h *testutil.FakeFilterHandle) string {
+	v, ok := h.FilterStateString(down.StreamObjectIDKey)
+	if !ok {
+		return ""
+	}
+	return v
+}
+
+func TestHeaders_storesPendingInStreamObjectBag(t *testing.T) {
 	loadTestConfig(t)
-	_, st := runFlow(t, nil)
-	if st == nil {
+	w, h, r, ctx := newPostStream(t)
+	requestHandler(w, r)
+
+	st, ok := (*ctx).(*streamState)
+	if !ok || st == nil {
 		t.Fatal("expected stream state to be stashed in r.Context")
 	}
-	if st.token == "" {
-		t.Error("token is empty")
+	if st.p == nil {
+		t.Error("pending is nil")
 	}
-	if pending.Lookup(st.token) != st.p {
-		t.Error("pending not registered under token")
+
+	// The Pending must be in the stream-object bag under StreamObjectKey.
+	nonce := streamObjectNonce(h)
+	if nonce == "" {
+		t.Fatal("stream-object nonce not written to filter state")
 	}
-	pending.Delete(st.token)
+	bag, ok := down.LookupStreamObjectBag(nonce)
+	if !ok {
+		t.Fatal("bag not found for nonce")
+	}
+	v, ok := bag.Get(StreamObjectKey)
+	if !ok {
+		t.Fatal("StreamObjectKey not in bag")
+	}
+	if v != st.p {
+		t.Error("bag entry is not the same *pending.Pending as streamState.p")
+	}
+
+	// Cleanup: drain the bag (normally done by OnStreamComplete).
+	down.DropStreamObjectBag(nonce)
 }
 
 func TestBody_knownModel_resolvesUpstream(t *testing.T) {
@@ -94,14 +124,24 @@ func TestBody_knownModel_resolvesUpstream(t *testing.T) {
 	if v, ok := h.Metadata(MetadataNamespace, MetadataKeyUpstream); !ok || v != "openai_direct" {
 		t.Errorf("metadata upstream = (%q, %v)", v, ok)
 	}
-	// Cleanup is owned by onStreamComplete now; the entry survives until then.
-	if pending.Lookup(st.token) != st.p {
-		t.Error("token unexpectedly missing from registry before stream complete")
+
+	// Bag entry must still be present before onStreamComplete (SDK owns the drain).
+	nonce := streamObjectNonce(h)
+	if nonce == "" {
+		t.Fatal("nonce missing from filter state")
 	}
+	if _, ok := down.LookupStreamObjectBag(nonce); !ok {
+		t.Error("bag entry unexpectedly missing before stream complete")
+	}
+
+	// Simulate OnStreamComplete: call onStreamComplete then drain the bag.
 	var ctx any = st
 	onStreamComplete(&ctx)
-	if pending.Lookup(st.token) != nil {
-		t.Error("token not deleted from registry after onStreamComplete")
+	down.DropStreamObjectBag(nonce)
+
+	// After drain, bag must be gone.
+	if _, ok := down.LookupStreamObjectBag(nonce); ok {
+		t.Error("bag entry not gone after stream complete + drain")
 	}
 	// Resolve must remain the bodyHandler's (CAS loses races silently).
 	if got, _ := st.p.Result(); got.Err != "" {
@@ -113,23 +153,37 @@ func TestOnStreamComplete_cleansUpWhenBodyNeverRan(t *testing.T) {
 	loadTestConfig(t)
 	// Headers-only flow: simulates downstream disconnect / timeout after
 	// headers and before the body handler runs.
-	_, st := runFlow(t, nil)
+	h, st := runFlow(t, nil)
 	if st == nil {
 		t.Fatal("expected stream state from headers phase")
+	}
+
+	nonce := streamObjectNonce(h)
+	if nonce == "" {
+		t.Fatal("nonce missing from filter state")
+	}
+
+	// Bag must be present before onStreamComplete.
+	if _, ok := down.LookupStreamObjectBag(nonce); !ok {
+		t.Error("bag entry missing before onStreamComplete")
 	}
 
 	var ctx any = st
 	onStreamComplete(&ctx)
 
-	if pending.Lookup(st.token) != nil {
-		t.Error("token not deleted from registry after onStreamComplete")
-	}
+	// onStreamComplete must have resolved the Pending with ErrStreamTerminated.
 	res, ok := st.p.Result()
 	if !ok {
 		t.Fatal("pending should be resolved by onStreamComplete")
 	}
 	if res.Err != ErrStreamTerminated {
 		t.Errorf("err = %q, want %q", res.Err, ErrStreamTerminated)
+	}
+
+	// SDK drains the bag; simulate that here.
+	down.DropStreamObjectBag(nonce)
+	if _, ok := down.LookupStreamObjectBag(nonce); ok {
+		t.Error("bag still present after drain")
 	}
 }
 
@@ -159,6 +213,10 @@ func TestBody_missingModel_400(t *testing.T) {
 	if res.Err != ErrModelRequired {
 		t.Errorf("pending err = %q", res.Err)
 	}
+
+	// Cleanup bag.
+	nonce := streamObjectNonce(h)
+	down.DropStreamObjectBag(nonce)
 }
 
 func TestBody_unknownModel_404(t *testing.T) {
@@ -178,6 +236,10 @@ func TestBody_unknownModel_404(t *testing.T) {
 	if res.Err != "orange.model_not_found" {
 		t.Errorf("pending err = %q", res.Err)
 	}
+
+	// Cleanup bag.
+	nonce := streamObjectNonce(h)
+	down.DropStreamObjectBag(nonce)
 }
 
 func TestHeaders_skipsNonMatchingPath(t *testing.T) {
@@ -196,4 +258,36 @@ func TestHeaders_skipsNonMatchingPath(t *testing.T) {
 	if len(h.LocalResponses) != 0 {
 		t.Fatalf("expected no local response, got %+v", h.LocalResponses)
 	}
+	// No stream object should have been stored.
+	nonce := streamObjectNonce(h)
+	if nonce != "" {
+		t.Errorf("unexpected nonce %q for non-matching request", nonce)
+		down.DropStreamObjectBag(nonce)
+	}
+}
+
+// TestHostpick_getStreamObject: verifies that a FakeClusterLBContext backed
+// by the same handle can retrieve the *pending.Pending via GetStreamObject.
+func TestHostpick_getStreamObject(t *testing.T) {
+	loadTestConfig(t)
+	w, h, r, _ := newPostStream(t)
+	requestHandler(w, r)
+
+	// Build a FakeClusterLBContext that reads the nonce from the same handle.
+	ctx := testutil.NewFakeClusterLBContext(h)
+	v, ok := ctx.GetStreamObject(StreamObjectKey)
+	if !ok {
+		t.Fatal("GetStreamObject returned false — nonce not propagated to filter state")
+	}
+	p, ok := v.(*pending.Pending)
+	if !ok {
+		t.Fatalf("type assertion failed: %T", v)
+	}
+	if p == nil {
+		t.Fatal("Pending is nil")
+	}
+
+	// Cleanup.
+	nonce := streamObjectNonce(h)
+	down.DropStreamObjectBag(nonce)
 }
