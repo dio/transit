@@ -253,7 +253,7 @@ func NewTransitFilter(router *CatalogRouter) (up.HandlerFunc, up.RequestBodyHand
 
 func RegisterTransitFilter(name string, config Config) {
 	handler, body := NewTransitFilter(New(config))
-	up.RegisterWithMutableBody(name, handler, body, nil)
+	up.Register(name, handler, up.WithMutableBody(body))
 }
 
 func SortedServerIDs(servers map[string]Server) []string {

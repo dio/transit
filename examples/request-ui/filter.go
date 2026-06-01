@@ -2,16 +2,13 @@
 // into a Postgres database (or in-memory ring buffer) and serves a near-realtime
 // web UI.
 //
-// Per-request state is initialized in the response handler's headers call
-// (when chunk.StatusCode != 0) and accumulated through body chunks until
-// EndStream. Request-side fields (method, path, host) come from attributes on
-// the Writer. The ResponseChunk.Context slot carries per-request state across
-// callbacks.
-//
-// Correlation with the access logger: the response handler deposits a partial
-// Record into PendingRecords keyed by x-request-id. The access logger pops it,
-// enriches it with finalized stream fields (duration, byte counts, response
-// flags), and sends it to the Sink.
+// Per-request state is initialized in the request handler (method, path, host,
+// request id, trace ids, request headers), enriched in the response handler
+// (status, response headers, response body), and finalized in the
+// OnStreamFinalized callback where Envoy provides byte counts, durations,
+// response flags, and other end-of-stream fields. The Record is sent to the
+// Sink from OnStreamFinalized so a single delivery path covers every stream
+// outcome — success, local reply, upstream failure, downstream disconnect.
 package requestui
 
 import (
@@ -42,7 +39,9 @@ type filterConfig struct {
 	MaxBodyBytes          int  `json:"max_body_bytes"`
 }
 
-// reqState is the per-request accumulated data stored in ResponseChunk.Context.
+// reqState is the per-request accumulator stored in *Request.Context /
+// *ResponseChunk.Context. The OnStreamFinalized callback builds a sink.Record
+// from it plus the FinalizedInfo Envoy delivers at stream finalization.
 type reqState struct {
 	requestID      string
 	method         string
@@ -51,74 +50,54 @@ type reqState struct {
 	traceID        string
 	spanID         string
 	requestHeaders [][2]string
-	requestBody    string
 
-	upstreamAddress string
+	statusCode      int
 	responseHeaders [][2]string
 	responseBody    string
 }
 
 var statePool = sync.Pool{New: func() any { return &reqState{} }}
 
-// Register wires the filter into the transit registry.
-// Call from init() in cmd/main.go after constructing the sink.
-func Register(name string, s *sink.Sink, pending *PendingRecords) {
-	up.RegisterWithResponse(
+// Register wires the filter into the transit registry. Call from init() in
+// cmd/main.go after constructing the sink.
+func Register(name string, s *sink.Sink) {
+	up.Register(
 		name,
-		func(_ *up.Writer, _ *up.Request) {},
-		func(w *up.Writer, chunk *up.ResponseChunk) {
+		func(w *up.Writer, r *up.Request) {
 			cfgMu.RLock()
 			c := cfg
 			cfgMu.RUnlock()
 
-			// Headers call: StatusCode != 0, Data == nil.
-			if chunk.StatusCode != 0 {
-				st, ok := statePool.Get().(*reqState)
-				if !ok || st == nil {
-					st = &reqState{}
-				}
-				*st = reqState{}
-
-				if v, ok := w.GetAttributeString(up.AttributeIDRequestId); ok {
-					st.requestID = v.ToString()
-				}
-				if v, ok := w.GetAttributeString(up.AttributeIDRequestMethod); ok {
-					st.method = v.ToString()
-				}
-				if v, ok := w.GetAttributeString(up.AttributeIDRequestPath); ok {
-					st.path = v.ToString()
-				}
-				if v, ok := w.GetAttributeString(up.AttributeIDRequestHost); ok {
-					st.host = v.ToString()
-				}
-
-				if span := w.GetActiveSpan(); span != nil {
-					if id, ok := span.GetTraceID(); ok {
-						st.traceID = id.ToString()
-					}
-					if id, ok := span.GetSpanID(); ok {
-						st.spanID = id.ToString()
-					}
-				}
-				if addr, ok := w.GetAttributeString(up.AttributeIDUpstreamAddress); ok {
-					st.upstreamAddress = addr.ToString()
-				}
-				if c.RecordResponseHeaders {
-					st.responseHeaders = chunk.AllHeaders()
-				}
-
-				if c.RecordResponseBody {
-					*chunk.Context = st
-					return
-				}
-				nr := buildRecord(chunk.StatusCode, st)
-				pending.Store(st.requestID, nr)
-				*st = reqState{}
-				statePool.Put(st)
-				return
+			st, ok := statePool.Get().(*reqState)
+			if !ok || st == nil {
+				st = &reqState{}
 			}
+			*st = reqState{}
 
-			// Body call: only reached when RecordResponseBody is true.
+			st.method = r.Method
+			st.path = r.Path
+			st.host = r.Host
+			if v, ok := w.GetAttributeString(up.AttributeIDRequestId); ok {
+				st.requestID = v.ToString()
+			}
+			if span := w.GetActiveSpan(); span != nil {
+				if id, ok := span.GetTraceID(); ok {
+					st.traceID = id.ToString()
+				}
+				if id, ok := span.GetSpanID(); ok {
+					st.spanID = id.ToString()
+				}
+			}
+			if c.RecordRequestHeaders {
+				st.requestHeaders = r.AllHeaders()
+			}
+			*r.Context = st
+		},
+		up.WithResponse(func(_ *up.Writer, chunk *up.ResponseChunk) {
+			cfgMu.RLock()
+			c := cfg
+			cfgMu.RUnlock()
+
 			if *chunk.Context == nil {
 				return
 			}
@@ -126,39 +105,59 @@ func Register(name string, s *sink.Sink, pending *PendingRecords) {
 			if !ok || st == nil {
 				return
 			}
-			if chunk.EndStream {
-				if len(chunk.Data) > 0 {
-					data := chunk.Data
-					if len(data) > c.MaxBodyBytes {
-						data = data[:c.MaxBodyBytes]
-					}
-					st.responseBody = string(data)
+
+			// Headers call: StatusCode != 0, Data == nil.
+			if chunk.StatusCode != 0 {
+				st.statusCode = chunk.StatusCode
+				if c.RecordResponseHeaders {
+					st.responseHeaders = chunk.AllHeaders()
 				}
-				nr := buildRecord(chunk.StatusCode, st)
-				pending.Store(st.requestID, nr)
-				*st = reqState{}
-				statePool.Put(st)
+				return
 			}
-		},
+
+			// Body call: only reached when RecordResponseBody is true.
+			if chunk.EndStream && len(chunk.Data) > 0 {
+				data := chunk.Data
+				if len(data) > c.MaxBodyBytes {
+					data = data[:c.MaxBodyBytes]
+				}
+				st.responseBody = string(data)
+			}
+		}),
+		up.WithOnStreamFinalized(func(ctx *any, info up.FinalizedInfo) {
+			if ctx == nil || *ctx == nil {
+				return
+			}
+			st, ok := (*ctx).(*reqState)
+			if !ok || st == nil {
+				return
+			}
+
+			r := buildRecord(st)
+			enrichWithFinalized(r, info)
+			r.HasError = hasError(r)
+			s.Send(r)
+
+			*st = reqState{}
+			statePool.Put(st)
+			*ctx = nil
+		}),
 	)
 }
 
-// buildRecord constructs a partial Record from state available at response
-// headers time. Finalized fields (duration, byte counts, flags, code_details)
-// are left zero; the access logger sets them in OnLog after stream finalization.
-func buildRecord(statusCode int, st *reqState) *sink.Record {
+// buildRecord constructs a Record from the per-request accumulator. Finalized
+// fields are filled separately by enrichWithFinalized.
+func buildRecord(st *reqState) *sink.Record {
 	r := &sink.Record{
-		RequestID:       st.requestID,
-		Method:          st.method,
-		Path:            st.path,
-		Host:            st.host,
-		TraceID:         st.traceID,
-		SpanID:          st.spanID,
-		RequestBody:     st.requestBody,
-		UpstreamAddress: st.upstreamAddress,
-		ResponseBody:    st.responseBody,
-		ResponseCode:    float64(statusCode),
-		UpstreamStatus:  statusStr(statusCode),
+		RequestID:      st.requestID,
+		Method:         st.method,
+		Path:           st.path,
+		Host:           st.host,
+		TraceID:        st.traceID,
+		SpanID:         st.spanID,
+		ResponseBody:   st.responseBody,
+		ResponseCode:   float64(st.statusCode),
+		UpstreamStatus: statusStr(st.statusCode),
 	}
 	if len(st.requestHeaders) > 0 {
 		if b, err := json.Marshal(st.requestHeaders); err == nil {
@@ -171,6 +170,46 @@ func buildRecord(statusCode int, st *reqState) *sink.Record {
 		}
 	}
 	return r
+}
+
+// enrichWithFinalized copies finalized stream fields from info into r.
+func enrichWithFinalized(r *sink.Record, info up.FinalizedInfo) {
+	if info.Timing.RequestCompleteDurationNs >= 0 {
+		r.DurationMs = float64(info.Timing.RequestCompleteDurationNs) / 1e6
+	}
+	r.FirstUpstreamTxByteSentNs = info.Timing.FirstUpstreamTxByteSentNs
+	r.LastUpstreamRxByteReceivedNs = info.Timing.LastUpstreamRxByteReceivedNs
+
+	r.RequestSizeBytes = float64(info.Bytes.BytesReceived)
+	r.ResponseSizeBytes = float64(info.Bytes.BytesSent)
+	r.WireBytesReceived = info.Bytes.WireBytesReceived
+	r.WireBytesSent = info.Bytes.WireBytesSent
+
+	// Use the finalized response code when the response handler never saw
+	// headers (DC, upstream failure, local reply).
+	if r.ResponseCode == 0 && info.ResponseCode > 0 {
+		r.ResponseCode = float64(info.ResponseCode)
+		r.UpstreamStatus = statusStr(int(info.ResponseCode))
+	}
+	r.ResponseCodeDetails = info.ResponseCodeDetails
+	if flags := up.ResponseFlagsString(info.ResponseFlags); flags != "" {
+		r.ResponseFlags = flags
+	}
+	r.UpstreamFailure = info.UpstreamFailure
+
+	if info.UpstreamPoolReadyDurationNs >= 0 {
+		r.UpstreamCxPoolReadyMs = float64(info.UpstreamPoolReadyDurationNs) / 1e6
+	}
+	r.UpstreamRequestAttempts = info.UpstreamRequestAttempts
+	r.UpstreamLocalAddress = info.UpstreamLocalAddress
+	r.UpstreamAddress = info.UpstreamAddress
+	r.RequestProtocol = info.RequestProtocol
+
+	r.TraceIDFinal = info.TraceID
+	r.SpanIDFinal = info.SpanID
+	r.TraceSampled = info.TraceSampled
+
+	r.LocalReplyBody = info.LocalReplyBody
 }
 
 func hasError(r *sink.Record) bool {

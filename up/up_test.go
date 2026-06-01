@@ -543,6 +543,51 @@ func TestWithOnStreamComplete_setsConfigFactoryField(t *testing.T) {
 	require.NotNil(t, cf.onStreamComplete)
 }
 
+func TestWithOnStreamFinalized_setsConfigFactoryField(t *testing.T) {
+	cf := &configFactory{}
+	fn := func(_ *any, _ FinalizedInfo) {}
+	WithOnStreamFinalized(fn)(cf)
+	require.NotNil(t, cf.onStreamFinalized)
+}
+
+func TestFilter_OnStreamComplete_doesNotDrainFinalizedEntry(t *testing.T) {
+	// OnStreamComplete must NOT drain the registry entry: in Envoy the HTTP
+	// filter's OnStreamComplete fires before the access logger's OnLog at
+	// AccessLogTypeDownstreamEnd, so draining here would race the SDK-internal
+	// access logger and prevent OnStreamFinalized from ever firing.
+	ctrl := gomock.NewController(t)
+	handle := newMockHandle(ctrl)
+
+	const key = "test-finalized-noop\x00abc"
+	putFinalizedEntry(key, &streamFinalizedEntry{
+		fn:  func(_ *any, _ FinalizedInfo) {},
+		ctx: new(any),
+	})
+	t.Cleanup(func() { _, _ = takeFinalizedEntry(key) })
+
+	f := &filter{
+		handle:       handle,
+		handler:      func(w *Writer, r *Request) {},
+		finalizedKey: key,
+	}
+	f.OnStreamComplete()
+
+	_, ok := takeFinalizedEntry(key)
+	require.True(t, ok, "OnStreamComplete must leave the finalized entry for the access logger")
+}
+
+func TestStreamFinalizedRegistry_takeIsOnce(t *testing.T) {
+	const key = "registry-take-once\x00xyz"
+	putFinalizedEntry(key, &streamFinalizedEntry{
+		fn:  func(_ *any, _ FinalizedInfo) {},
+		ctx: new(any),
+	})
+	_, ok := takeFinalizedEntry(key)
+	require.True(t, ok)
+	_, ok = takeFinalizedEntry(key)
+	require.False(t, ok, "second take must miss")
+}
+
 func TestRegister_appliesFilterOptions(t *testing.T) {
 	const name = "up-test-register-opts"
 	registry[name] = HandlerFunc(func(w *Writer, r *Request) {})

@@ -1,5 +1,5 @@
 // Package wsproxy demonstrates the embedded WebSocket proxy pattern using
-// up.RegisterWithGroup, with a complete implementation for the OpenAI Responses
+// up.Register + up.WithGroup, with a complete implementation for the OpenAI Responses
 // API WebSocket mode at /v1/responses.
 //
 // # Protocol: OpenAI Responses API WebSocket mode (/v1/responses)
@@ -321,7 +321,7 @@ func resolveEnv(v string) string {
 	})
 }
 
-// Register wires the ws-proxy filter into Envoy via up.RegisterWithGroup.
+// Register wires the ws-proxy filter into Envoy via up.Register + up.WithGroup.
 // The filter itself is a no-op for regular HTTP — it only starts the embedded
 // WebSocket proxy server via the Group goroutine.
 // ws-auth (upstream filter) is registered separately in auth.go's init().
@@ -370,5 +370,5 @@ func Register() {
 
 	// No-op HTTP filter: presence in the filter chain starts the embedded server
 	// (via the group) but does not alter normal HTTP requests.
-	up.RegisterWithGroup(ExtensionName, g, func(w *up.Writer, r *up.Request) {})
+	up.Register(ExtensionName, func(w *up.Writer, r *up.Request) {}, up.WithGroup(g))
 }

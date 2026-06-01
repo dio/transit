@@ -8,16 +8,15 @@ import "github.com/dio/transit/up"
 var e2eRequestsID up.MetricID
 
 func init() {
-	up.RegisterWithConfig(
+	up.Register(
 		"e2e-metrics",
-		func(h up.ConfigHandle) error {
-			var err error
-			e2eRequestsID, err = h.DefineCounter("e2e.requests_total")
-			return err
-		},
 		func(w *up.Writer, _ *up.Request) {
 			w.IncrementCounter(e2eRequestsID, 1)
 		},
-		nil,
+		up.WithConfig(func(h up.ConfigHandle) error {
+			var err error
+			e2eRequestsID, err = h.DefineCounter("e2e.requests_total")
+			return err
+		}),
 	)
 }

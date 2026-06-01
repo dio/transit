@@ -70,7 +70,7 @@ func NewTransitFilter(gateway *Gateway) (up.HandlerFunc, up.RequestBodyHandlerFu
 // importing the Envoy ABI implementation.
 func RegisterTransitFilter(name string, config Config) {
 	handler, body := NewTransitFilter(New(config))
-	up.RegisterWithMutableBody(name, handler, body, nil)
+	up.Register(name, handler, up.WithMutableBody(body))
 }
 
 func (g *Gateway) calloutCatalogServerTransit(w *up.Writer, r transitRequest, body []byte) {

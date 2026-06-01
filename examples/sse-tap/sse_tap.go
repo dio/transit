@@ -39,9 +39,12 @@ var (
 )
 
 func init() {
-	up.RegisterWithConfig(
+	up.Register(
 		ExtensionName,
-		func(h up.ConfigHandle) error {
+		func(w *up.Writer, _ *up.Request) {
+			w.SetRequestHeader("x-sse-tap", "1")
+		},
+		up.WithConfig(func(h up.ConfigHandle) error {
 			var err error
 			inputTokensID, err = h.DefineCounter("sse_tap_input_tokens")
 			if err != nil {
@@ -49,11 +52,8 @@ func init() {
 			}
 			outputTokensID, err = h.DefineCounter("sse_tap_output_tokens")
 			return err
-		},
-		func(w *up.Writer, _ *up.Request) {
-			w.SetRequestHeader("x-sse-tap", "1")
-		},
-		tapResponse,
+		}),
+		up.WithResponse(tapResponse),
 	)
 }
 

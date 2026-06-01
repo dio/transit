@@ -12,7 +12,7 @@ import (
 
 func init() {
 	up.Register("e2e-async-callout", asyncCallout)
-	up.RegisterWithMutableBody("e2e-async-callout-body", asyncCalloutBodyHeaders, asyncCalloutBodyHandler, nil)
+	up.Register("e2e-async-callout-body", asyncCalloutBodyHeaders, up.WithMutableBody(asyncCalloutBodyHandler))
 }
 
 func asyncCallout(w *up.Writer, r *up.Request) {

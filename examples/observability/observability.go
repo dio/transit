@@ -47,9 +47,10 @@ var (
 )
 
 func init() {
-	up.RegisterWithConfig(
+	up.Register(
 		ExtensionName,
-		func(h up.ConfigHandle) error {
+		onRequest,
+		up.WithConfig(func(h up.ConfigHandle) error {
 			var err error
 			requestsID, err = h.DefineCounter("observability.requests_total")
 			if err != nil {
@@ -57,9 +58,8 @@ func init() {
 			}
 			responsesID, err = h.DefineCounter("observability.responses_total")
 			return err
-		},
-		onRequest,
-		onResponse,
+		}),
+		up.WithResponse(onResponse),
 	)
 }
 

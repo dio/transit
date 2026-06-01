@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// BodySuite tests the e2e-body filter (streaming mode, RegisterWithBody).
+// BodySuite tests the e2e-body filter (streaming mode, WithStreamingBody).
 //
 // The filter echoes what it saw in the request body via the x-body-len response
 // header: "none" for bodyless requests (GET etc.), the byte count otherwise.
@@ -58,7 +58,7 @@ func (s *BodySuite) TestDelete_syntheticBodyCall() {
 }
 
 // MutableBodySuite tests the e2e-mutable-body filter (buffered mode,
-// RegisterWithMutableBody). The filter replaces the request body with
+// WithMutableBody). The filter replaces the request body with
 // "replaced:<original>" and echoes the replacement length via x-replaced-len.
 type MutableBodySuite struct {
 	suite.Suite

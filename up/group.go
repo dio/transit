@@ -12,7 +12,7 @@ import (
 //
 // Register goroutines with [Group.Add] or [Group.AddGoroutine], then call
 // [Group.Start] exactly once. Call [Group.Stop] from your filter factory's
-// OnDestroy (done automatically when registered via [RegisterWithGroup]).
+// OnDestroy (done automatically when registered via [Register] with [WithGroup]).
 type Group struct {
 	actors []groupActor
 	ctx    context.Context

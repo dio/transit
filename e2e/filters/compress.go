@@ -15,7 +15,7 @@ import (
 
 func init() {
 	// nil request body handler: only the response body is of interest.
-	up.RegisterWithMutableBody("e2e-compress", compressOnRequest, nil, compressOnResponse)
+	up.Register("e2e-compress", compressOnRequest, up.WithMutableBody(nil), up.WithResponse(compressOnResponse))
 }
 
 // compressOnRequest negotiates identity encoding so the upstream is asked not to

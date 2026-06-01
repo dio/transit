@@ -108,7 +108,7 @@ func (s *UpstreamFilterSuite) TestGet_clientAuthNotForwarded() {
 // ── group-based auth injection ───────────────────────────────────────────────
 
 // TestGet_groupAuthHeaderInjected verifies that e2e-upstream-auth-group, which
-// uses up.RegisterWithGroup, injects a header set by a background goroutine.
+// uses up.Register + up.WithGroup, injects a header set by a background goroutine.
 // It confirms that group-owned state is visible to the request handler without
 // any package-level variables.
 func (s *UpstreamFilterSuite) TestGet_groupAuthHeaderInjected() {

@@ -3,7 +3,7 @@ package up
 // BodyChunk is passed to a RequestBodyHandlerFunc on every request body event.
 //
 // In streaming mode the handler is called once per chunk as data arrives.
-// In buffered mode (RegisterWithMutableBody) the handler is called exactly
+// In buffered mode ([WithMutableBody]) the handler is called exactly
 // once with the full accumulated body when EndStream is true.
 //
 // The handler is also called synthetically with Data: nil, EndStream: true

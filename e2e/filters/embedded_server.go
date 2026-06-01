@@ -1,4 +1,4 @@
-// e2e-embedded-server exercises up.RegisterWithGroup with a net.Listen embedded
+// e2e-embedded-server exercises up.Register + up.WithGroup with a net.Listen embedded
 // HTTP server. The Group starts a plain net/http server on the address given by
 // E2E_EMBEDDED_SERVER_ADDR; Envoy routes requests to it via a STATIC loopback
 // cluster. This is the canonical pattern used in production by examples/ws-proxy.
@@ -37,5 +37,5 @@ func init() {
 		)
 	}
 
-	up.RegisterWithGroup("e2e-embedded-server", g, func(_ *up.Writer, _ *up.Request) {})
+	up.Register("e2e-embedded-server", func(_ *up.Writer, _ *up.Request) {}, up.WithGroup(g))
 }

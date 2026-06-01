@@ -4,7 +4,7 @@
 // a loopback HTTP server.
 //
 // Two endpoints are exposed by the loopback server (addr =
-// E2E_STREAM_COMPLETE_LOOPBACK_ADDR, started via RegisterWithGroup):
+// E2E_STREAM_COMPLETE_LOOPBACK_ADDR, started via WithGroup):
 //
 //   GET /          — returned to clients that route through Envoy; "ok\n".
 //   GET /counters  — JSON snapshot of the counters. Tests hit this directly
@@ -66,12 +66,13 @@ func init() {
 		)
 	}
 
-	up.RegisterWithGroup("e2e-stream-complete", g,
+	up.Register("e2e-stream-complete",
 		func(_ *up.Writer, r *up.Request) {
 			if r.Context != nil {
 				*r.Context = &streamCompleteState{path: r.Path}
 			}
 		},
+		up.WithGroup(g),
 		up.WithOnStreamComplete(func(ctx *any) {
 			streamCompleteFired.Add(1)
 			if ctx == nil || *ctx == nil {

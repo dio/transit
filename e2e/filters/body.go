@@ -17,8 +17,8 @@ import (
 )
 
 func init() {
-	up.RegisterWithBody("e2e-body", bodyOnRequest, bodyOnRequestBody, bodyOnResponse)
-	up.RegisterWithMutableBody("e2e-mutable-body", mutableOnRequest, mutableOnRequestBody, mutableOnResponse)
+	up.Register("e2e-body", bodyOnRequest, up.WithStreamingBody(bodyOnRequestBody), up.WithResponse(bodyOnResponse))
+	up.Register("e2e-mutable-body", mutableOnRequest, up.WithMutableBody(mutableOnRequestBody), up.WithResponse(mutableOnResponse))
 }
 
 type bodyCtx struct {

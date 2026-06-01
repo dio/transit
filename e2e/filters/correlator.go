@@ -25,7 +25,7 @@ import (
 )
 
 func init() {
-	up.RegisterWithResponse("e2e-correlator", correlatorOnRequest, correlatorOnResponse)
+	up.Register("e2e-correlator", correlatorOnRequest, up.WithResponse(correlatorOnResponse))
 	up.RegisterAccessLogger("e2e-correlator-logger", &correlatorConfigFactory{})
 }
 

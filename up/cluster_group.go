@@ -10,7 +10,7 @@ import (
 // [ClusterGroup.Start] (called from [Cluster.ServerInitialized]), and stopped
 // when [ClusterGroup.Stop] is called (called from [Cluster.Shutdown]).
 //
-// This mirrors the [RegisterWithGroup] pattern from the HTTP filter side:
+// This mirrors the [Register] + [WithGroup] pattern from the HTTP filter side:
 // goroutines are declared alongside setup logic and lifecycle plumbing is
 // handled for you.
 //

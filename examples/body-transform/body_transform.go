@@ -7,7 +7,7 @@ import (
 )
 
 func init() {
-	up.RegisterWithMutableBody("body-transform", OnReq, onBody, nil)
+	up.Register("body-transform", OnReq, up.WithMutableBody(onBody))
 }
 
 // OnReq logs the method and path of every incoming request.

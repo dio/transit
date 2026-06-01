@@ -43,7 +43,7 @@ func Register() {
 		},
 		func() {},
 	)
-	up.RegisterWithGroup(ExtensionName, g, func(w *up.Writer, r *up.Request) {})
+	up.Register(ExtensionName, func(w *up.Writer, r *up.Request) {}, up.WithGroup(g))
 }
 
 // serveEcho accepts a WS upgrade and echoes every frame back.

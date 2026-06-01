@@ -69,7 +69,8 @@ const (
 )
 
 func init() {
-	up.RegisterWithMutableBody(FilterName, requestHandler, bodyHandler, nil,
+	up.Register(FilterName, requestHandler,
+		up.WithMutableBody(bodyHandler),
 		up.WithOnStreamComplete(onStreamComplete))
 }
 
@@ -114,7 +115,7 @@ func requestHandler(w *up.Writer, r *up.Request) {
 func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 	w.Log(up.LogInfo, "orange-classify body: endStream=%v dataLen=%d", chunk.EndStream, len(chunk.Data))
 	if !chunk.EndStream {
-		// RegisterWithMutableBody fires once at end-of-stream, but be defensive.
+		// WithMutableBody fires once at end-of-stream, but be defensive.
 		return
 	}
 	if chunk.Context == nil || *chunk.Context == nil {

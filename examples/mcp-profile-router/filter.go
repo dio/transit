@@ -102,7 +102,7 @@ func NewTransitFilter(aggregator *Aggregator) (up.HandlerFunc, up.RequestBodyHan
 // the Envoy ABI implementation.
 func RegisterTransitFilter(name string, profile Profile) {
 	handler, body := NewTransitFilter(NewAggregator(profile))
-	up.RegisterWithMutableBody(name, handler, body, nil)
+	up.Register(name, handler, up.WithMutableBody(body))
 }
 
 func stripQuery(path string) string {

@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// EmbeddedServerSuite verifies the up.RegisterWithGroup + net.Listen embedded
+// EmbeddedServerSuite verifies the up.Register + up.WithGroup + net.Listen embedded
 // server pattern in the main e2e suite. The e2e-embedded-server filter starts a
 // plain net/http server on a loopback port; Envoy routes requests to it via a
 // STATIC cluster. The filter itself is a no-op — its only job is to start the

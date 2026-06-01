@@ -7,7 +7,7 @@ package filters
 import "github.com/dio/transit/up"
 
 func init() {
-	up.RegisterWithResponse("e2e-upstream", func(_ *up.Writer, _ *up.Request) {}, upstreamOnResponse)
+	up.Register("e2e-upstream", func(_ *up.Writer, _ *up.Request) {}, up.WithResponse(upstreamOnResponse))
 }
 
 func upstreamOnResponse(w *up.Writer, chunk *up.ResponseChunk) {

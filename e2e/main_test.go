@@ -81,6 +81,10 @@ var (
 	embeddedServerAddr            string
 	streamCompleteAddr            string
 	streamCompleteLoopbackAddr    string
+	streamFinalizedAddr           string
+	streamFinalizedDeadAddr       string
+	streamFinalizedLocalAddr      string
+	streamFinalizedLoopbackAddr   string
 	adminAddr                     string
 )
 
@@ -147,6 +151,10 @@ func TestMain(m *testing.M) {
 	embeddedServerLoopbackPort := freePort()
 	streamCompletePort := freePort()
 	streamCompleteLoopbackPort := freePort()
+	streamFinalizedPort := freePort()
+	streamFinalizedDeadPort := freePort()
+	streamFinalizedLocalPort := freePort()
+	streamFinalizedLoopbackPort := freePort()
 	// deadUpstreamPort: nothing listens here; Envoy gets ECONNREFUSED, setting UF flag.
 	deadUpstreamPort := freePort()
 	adminPort := freePort()
@@ -180,6 +188,10 @@ func TestMain(m *testing.M) {
 	embeddedServerAddr = fmt.Sprintf("http://localhost:%d", embeddedServerPort)
 	streamCompleteAddr = fmt.Sprintf("http://localhost:%d", streamCompletePort)
 	streamCompleteLoopbackAddr = fmt.Sprintf("http://127.0.0.1:%d", streamCompleteLoopbackPort)
+	streamFinalizedAddr = fmt.Sprintf("http://localhost:%d", streamFinalizedPort)
+	streamFinalizedDeadAddr = fmt.Sprintf("http://localhost:%d", streamFinalizedDeadPort)
+	streamFinalizedLocalAddr = fmt.Sprintf("http://localhost:%d", streamFinalizedLocalPort)
+	streamFinalizedLoopbackAddr = fmt.Sprintf("http://127.0.0.1:%d", streamFinalizedLoopbackPort)
 	adminAddr = fmt.Sprintf("http://localhost:%d", adminPort)
 
 	otelSink = otelsink.New()
@@ -266,6 +278,10 @@ func TestMain(m *testing.M) {
 		EmbeddedServerLoopbackPort:         embeddedServerLoopbackPort,
 		StreamCompletePort:                 streamCompletePort,
 		StreamCompleteLoopbackPort:         streamCompleteLoopbackPort,
+		StreamFinalizedPort:                streamFinalizedPort,
+		StreamFinalizedDeadPort:            streamFinalizedDeadPort,
+		StreamFinalizedLocalPort:           streamFinalizedLocalPort,
+		StreamFinalizedLoopbackPort:        streamFinalizedLoopbackPort,
 		DeadUpstreamPort:                   deadUpstreamPort,
 		AdminPort:                          adminPort,
 	})
@@ -285,6 +301,7 @@ func TestMain(m *testing.M) {
 		"ENVOY_DYNAMIC_MODULES_SEARCH_PATH="+projectRoot,
 		fmt.Sprintf("E2E_EMBEDDED_SERVER_ADDR=127.0.0.1:%d", embeddedServerLoopbackPort),
 		fmt.Sprintf("E2E_STREAM_COMPLETE_LOOPBACK_ADDR=127.0.0.1:%d", streamCompleteLoopbackPort),
+		fmt.Sprintf("E2E_STREAM_FINALIZED_LOOPBACK_ADDR=127.0.0.1:%d", streamFinalizedLoopbackPort),
 	)
 	envoyCmd.Stdout = os.Stderr
 	envoyCmd.Stderr = os.Stderr
@@ -788,6 +805,10 @@ type envoyPorts struct {
 	EmbeddedServerLoopbackPort         int
 	StreamCompletePort                 int
 	StreamCompleteLoopbackPort         int
+	StreamFinalizedPort                int
+	StreamFinalizedDeadPort            int
+	StreamFinalizedLocalPort           int
+	StreamFinalizedLoopbackPort        int
 	DeadUpstreamPort                   int
 	AdminPort                          int
 }

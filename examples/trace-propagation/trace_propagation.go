@@ -146,7 +146,7 @@ func Register() {
 	)
 
 	// Inbound filter: annotates the Envoy-created ingress span.
-	up.RegisterWithGroup(ExtensionName, g, func(w *up.Writer, r *up.Request) {
+	up.Register(ExtensionName, func(w *up.Writer, r *up.Request) {
 		span := w.GetActiveSpan()
 		if span == nil {
 			return
@@ -154,7 +154,7 @@ func Register() {
 		span.SetOperation("trace-propagation.ingress")
 		span.SetTag("http.method", r.Method)
 		span.SetTag("http.path", r.Path)
-	})
+	}, up.WithGroup(g))
 
 	// Egress filter: annotates the Envoy-created egress span.
 	up.Register(EgressExtensionName, func(w *up.Writer, r *up.Request) {

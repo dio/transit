@@ -42,14 +42,120 @@ type HandlerFunc func(w *Writer, r *Request)
 // applied. Do not call Writer methods from here.
 type OnStreamCompleteFunc func(ctx *any)
 
-// FilterOption configures filter registration. Apply with one of the
-// RegisterWith* functions.
+// FinalizedInfo holds finalized stream fields delivered to an
+// [OnStreamFinalizedFunc] after Envoy completes the stream. The values
+// mirror what an [AccessLoggerHandle] would expose at
+// [AccessLogTypeDownstreamEnd]: durations, byte counts, response flags,
+// upstream attempts, trace ids, and a local-reply body if one was sent.
+//
+// All durations are in nanoseconds; -1 in a duration means the timing is
+// unavailable. ResponseFlags is the raw bitmask — use [ResponseFlagsString]
+// to render the human-readable form.
+type FinalizedInfo struct {
+	Timing                      TimingInfo
+	Bytes                       BytesInfo
+	ResponseCode                uint32
+	ResponseCodeDetails         string
+	ResponseFlags               uint64
+	UpstreamFailure             string
+	UpstreamLocalAddress        string
+	UpstreamAddress             string
+	RequestProtocol             string
+	UpstreamPoolReadyDurationNs int64
+	UpstreamRequestAttempts     uint32
+	TraceID                     string
+	SpanID                      string
+	TraceSampled                bool
+	LocalReplyBody              string
+}
+
+// OnStreamFinalizedFunc fires on the worker thread after Envoy finalizes
+// the stream, before the per-stream context is released. Like
+// [OnStreamCompleteFunc] it carries no Writer and mutations are not
+// possible — the stream is dead. The strict superset over OnStreamComplete
+// is the finalized stream fields in [FinalizedInfo], which Envoy only
+// exposes through the access-logger path.
+//
+// Delivery: when a filter is registered with [WithOnStreamFinalized] the
+// SDK auto-registers an internal access logger under the same name and
+// correlates filter ↔ logger via the request id (x-request-id). The
+// listener Envoy YAML must include an access_log entry pointing at this
+// dynamic module with logger_name equal to the filter name (see
+// examples/request-ui/envoy.yaml). If the request id is empty or the
+// access-logger entry is missing from the YAML, the callback will not
+// fire — Envoy delivers finalized fields only through that path.
+type OnStreamFinalizedFunc func(ctx *any, info FinalizedInfo)
+
+// FilterOption configures filter registration. Pass options to [Register].
 type FilterOption func(*configFactory)
+
+// WithConfig attaches a config callback invoked once on the main thread when
+// Envoy loads the filter config. Use it to define metrics via ConfigHandle.
+func WithConfig(fn ConfigFunc) FilterOption {
+	return func(cf *configFactory) { cf.configFn = fn }
+}
+
+// WithResponse attaches a response observer.
+func WithResponse(r ResponseHandlerFunc) FilterOption {
+	return func(cf *configFactory) { cf.responseHandler = r }
+}
+
+// WithStreamingBody attaches a request body handler in streaming mode: the
+// handler is called once per chunk as data arrives. For bodyless requests
+// (GET etc.) the handler is called once with Data: nil. Mutually exclusive
+// with [WithMutableBody].
+func WithStreamingBody(rb RequestBodyHandlerFunc) FilterOption {
+	return func(cf *configFactory) {
+		cf.requestBodyHandler = rb
+		cf.bufferBody = false
+	}
+}
+
+// WithMutableBody enables buffered body handling. If rb is non-nil, it is
+// called once with the full accumulated request body; pass nil to buffer the
+// response body only (useful when WithResponse needs the full body but the
+// request body is not of interest). Use Writer.SetRequestBody /
+// SetResponseBody to replace body content. Mutually exclusive with
+// [WithStreamingBody].
+func WithMutableBody(rb RequestBodyHandlerFunc) FilterOption {
+	return func(cf *configFactory) {
+		cf.requestBodyHandler = rb
+		cf.bufferBody = true
+	}
+}
+
+// WithGroup attaches a [Group] of background goroutines. The group is started
+// when Envoy loads the filter config and stopped (via [Group.Stop]) when
+// Envoy destroys the filter factory. The handler and the goroutines in g
+// share state via closure — no package-level variables needed.
+//
+// Note: if any goroutine in the group exits for any reason — including a
+// normal return — the entire group is stopped via Group.Stop. Goroutines
+// that must survive transient errors should loop internally or use [RunRetry].
+//
+// For background work in cluster extensions (which have no filter factory),
+// use [ClusterGroup] with [ClusterGroup.Start] called from
+// [Cluster.ServerInitialized] instead.
+func WithGroup(g *Group) FilterOption {
+	return func(cf *configFactory) { cf.group = g }
+}
 
 // WithOnStreamComplete attaches a stream-termination callback to the
 // filter. See [OnStreamCompleteFunc] for semantics.
 func WithOnStreamComplete(fn OnStreamCompleteFunc) FilterOption {
 	return func(cf *configFactory) { cf.onStreamComplete = fn }
+}
+
+// WithOnStreamFinalized attaches a callback that fires after Envoy
+// finalizes the stream and delivers it through the access-logger path.
+// See [OnStreamFinalizedFunc] for delivery semantics and the YAML
+// requirements.
+//
+// Coexists with [WithOnStreamComplete]: cleanup-only consumers should
+// keep using OnStreamComplete; OnStreamFinalized is the right hook when
+// the callback needs finalized durations, byte counts, or response flags.
+func WithOnStreamFinalized(fn OnStreamFinalizedFunc) FilterOption {
+	return func(cf *configFactory) { cf.onStreamFinalized = fn }
 }
 
 // Middleware wraps a HandlerFunc, enabling before/after logic around a handler.
@@ -85,13 +191,16 @@ const (
 	MetadataSourceHostLocality MetadataSource = MetadataSource(shared.MetadataSourceTypeHostLocality)
 )
 
-// registry is a duplicate-name sentinel for up.Register variants.
+// registry is a duplicate-name sentinel for up.Register.
 // The canonical runtime registry lives in down; this catches name collisions
 // at init() time with a clear "up: filter already registered" message.
 var registry = map[string]HandlerFunc{}
 
 // Register registers a named HTTP filter handler and wires it into the Envoy
 // SDK. Must be called from an init() function. Panics on duplicate names.
+//
+// Optional features are configured via FilterOptions: WithConfig, WithResponse,
+// WithStreamingBody, WithMutableBody, WithGroup, WithOnStreamComplete.
 func Register(name string, h HandlerFunc, opts ...FilterOption) {
 	if _, ok := registry[name]; ok {
 		panic("up: filter already registered: " + name)
@@ -100,98 +209,9 @@ func Register(name string, h HandlerFunc, opts ...FilterOption) {
 	cf := &configFactory{name: name, handler: h}
 	applyFilterOptions(cf, opts)
 	down.RegisterHttpFilter(name, cf)
-}
-
-// RegisterWithGroup registers a named HTTP filter with a [Group] of background
-// goroutines. The group is started when Envoy loads the filter config and stopped
-// (via [Group.Stop]) when Envoy destroys the filter factory. The handler and the
-// goroutines in g share state via closure — no package-level variables needed.
-// Must be called from an init() function. Panics on duplicate names.
-//
-// Note: if any goroutine in the group exits for any reason — including a normal
-// return — the entire group is stopped via Group.Stop. Goroutines that must
-// survive transient errors should loop internally or use [RunRetry].
-//
-// For background work in cluster extensions (which have no filter factory),
-// use [ClusterGroup] with [ClusterGroup.Start] called from
-// [Cluster.ServerInitialized] instead.
-func RegisterWithGroup(name string, g *Group, h HandlerFunc, opts ...FilterOption) {
-	if _, ok := registry[name]; ok {
-		panic("up: filter already registered: " + name)
+	if cf.onStreamFinalized != nil {
+		registerStreamFinalizedAccessLogger(name)
 	}
-	registry[name] = h
-	cf := &configFactory{name: name, handler: h, group: g}
-	applyFilterOptions(cf, opts)
-	down.RegisterHttpFilter(name, cf)
-}
-
-// RegisterWithResponse registers a named HTTP filter with both a request and a
-// response handler. Must be called from an init() function. Panics on duplicate names.
-func RegisterWithResponse(name string, h HandlerFunc, r ResponseHandlerFunc, opts ...FilterOption) {
-	if _, ok := registry[name]; ok {
-		panic("up: filter already registered: " + name)
-	}
-	registry[name] = h
-	cf := &configFactory{name: name, handler: h, responseHandler: r}
-	applyFilterOptions(cf, opts)
-	down.RegisterHttpFilter(name, cf)
-}
-
-// RegisterWithBody registers a named HTTP filter with request body handling in
-// streaming mode: the body handler is called once per chunk as data arrives.
-// For bodyless requests (GET etc.) the handler is called once with Data: nil.
-func RegisterWithBody(name string, h HandlerFunc, rb RequestBodyHandlerFunc, r ResponseHandlerFunc, opts ...FilterOption) {
-	if _, ok := registry[name]; ok {
-		panic("up: filter already registered: " + name)
-	}
-	registry[name] = h
-	cf := &configFactory{
-		name:               name,
-		handler:            h,
-		responseHandler:    r,
-		requestBodyHandler: rb,
-	}
-	applyFilterOptions(cf, opts)
-	down.RegisterHttpFilter(name, cf)
-}
-
-// RegisterWithMutableBody registers a named HTTP filter with buffered body
-// handling: the body handler is called once with the full accumulated body.
-// Use Writer.SetRequestBody / SetResponseBody to replace body content.
-func RegisterWithMutableBody(name string, h HandlerFunc, rb RequestBodyHandlerFunc, r ResponseHandlerFunc, opts ...FilterOption) {
-	if _, ok := registry[name]; ok {
-		panic("up: filter already registered: " + name)
-	}
-	registry[name] = h
-	cf := &configFactory{
-		name:               name,
-		handler:            h,
-		responseHandler:    r,
-		requestBodyHandler: rb,
-		bufferBody:         true,
-	}
-	applyFilterOptions(cf, opts)
-	down.RegisterHttpFilter(name, cf)
-}
-
-// RegisterWithConfig registers a named HTTP filter with a config callback, a
-// request handler, and a response observer. The config callback runs once on the
-// main thread when Envoy loads the filter config — use it to define metrics via
-// ConfigHandle.DefineCounter. Must be called from an init() function.
-// Panics on duplicate names.
-func RegisterWithConfig(name string, cfg ConfigFunc, h HandlerFunc, r ResponseHandlerFunc, opts ...FilterOption) {
-	if _, ok := registry[name]; ok {
-		panic("up: filter already registered: " + name)
-	}
-	registry[name] = h
-	cf := &configFactory{
-		name:            name,
-		configFn:        cfg,
-		handler:         h,
-		responseHandler: r,
-	}
-	applyFilterOptions(cf, opts)
-	down.RegisterHttpFilter(name, cf)
 }
 
 func applyFilterOptions(cf *configFactory, opts []FilterOption) {

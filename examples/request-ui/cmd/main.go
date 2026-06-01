@@ -1,7 +1,10 @@
 // Package main builds the request-ui dynamic module.
 //
 // Starts the sink (HTTP server + SSE broadcaster + writer goroutine) then
-// registers the transit filter and access logger that feed records into it.
+// registers the transit filter that feeds records into it. The filter uses
+// up.WithOnStreamFinalized so the SDK's internal access-logger bridge
+// delivers finalized stream fields to the same callback path that builds
+// each record — no separate RegisterLogger needed.
 //
 // Environment variables (see sink package for details):
 //
@@ -16,15 +19,11 @@ import (
 	"github.com/dio/transit/examples/request-ui/sink"
 )
 
-var (
-	globalSink    = sink.New()
-	globalPending = &requestui.PendingRecords{}
-)
+var globalSink = sink.New()
 
 func init() {
 	globalSink.Start()
-	requestui.Register("request-ui", globalSink, globalPending)
-	requestui.RegisterLogger("request-ui", globalSink, globalPending)
+	requestui.Register("request-ui", globalSink)
 }
 
 func main() {}

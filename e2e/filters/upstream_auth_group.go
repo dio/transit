@@ -1,4 +1,4 @@
-// e2e-upstream-auth-group exercises [up.RegisterWithGroup]: a background
+// e2e-upstream-auth-group exercises [up.Register] + [up.WithGroup]: a background
 // goroutine populates a sync.Map of headers, and the request handler injects
 // them upstream. No package-level variables are used — state is shared via closure.
 package filters
@@ -19,7 +19,7 @@ func init() {
 		<-ctx.Done()
 	})
 
-	up.RegisterWithGroup("e2e-upstream-auth-group", g, func(w *up.Writer, _ *up.Request) {
+	up.Register("e2e-upstream-auth-group", func(w *up.Writer, _ *up.Request) {
 		headers.Range(func(k, v any) bool {
 			name, ok := k.(string)
 			if !ok {
@@ -32,5 +32,5 @@ func init() {
 			w.SetRequestHeader(name, value)
 			return true
 		})
-	})
+	}, up.WithGroup(g))
 }

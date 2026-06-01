@@ -41,7 +41,7 @@ const (
 )
 
 func init() {
-	up.RegisterWithMutableBody(FilterName, requestHandler, bodyHandler, nil)
+	up.Register(FilterName, requestHandler, up.WithMutableBody(bodyHandler))
 	up.RegisterCluster(ClusterName, &factory{})
 }
 

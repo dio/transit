@@ -16,6 +16,7 @@ type configFactory struct {
 	responseHandler    ResponseHandlerFunc
 	requestBodyHandler RequestBodyHandlerFunc
 	onStreamComplete   OnStreamCompleteFunc
+	onStreamFinalized  OnStreamFinalizedFunc
 	bufferBody         bool
 	group              *Group
 }
@@ -64,6 +65,7 @@ func (f *configFactory) Create(h shared.HttpFilterConfigHandle, _ []byte) (share
 		responseHandler:    f.responseHandler,
 		requestBodyHandler: f.requestBodyHandler,
 		onStreamComplete:   f.onStreamComplete,
+		onStreamFinalized:  f.onStreamFinalized,
 		bufferBody:         f.bufferBody,
 		stop:               stop,
 	}, nil
@@ -77,6 +79,7 @@ type filterFactory struct {
 	responseHandler    ResponseHandlerFunc
 	requestBodyHandler RequestBodyHandlerFunc
 	onStreamComplete   OnStreamCompleteFunc
+	onStreamFinalized  OnStreamFinalizedFunc
 	bufferBody         bool
 	stop               func()
 }
@@ -89,6 +92,7 @@ func (f *filterFactory) Create(handle shared.HttpFilterHandle) shared.HttpFilter
 		responseHandler:    f.responseHandler,
 		requestBodyHandler: f.requestBodyHandler,
 		onStreamComplete:   f.onStreamComplete,
+		onStreamFinalized:  f.onStreamFinalized,
 		bufferBody:         f.bufferBody,
 	}
 }
@@ -135,8 +139,15 @@ type filter struct {
 	responseHandler    ResponseHandlerFunc
 	requestBodyHandler RequestBodyHandlerFunc
 	onStreamComplete   OnStreamCompleteFunc
+	onStreamFinalized  OnStreamFinalizedFunc
 	bufferBody         bool
 	context            any
+
+	// finalizedKey is the registry key used to correlate the filter with the
+	// SDK-internal access logger that delivers FinalizedInfo. Set on the
+	// first request callback when onStreamFinalized is configured; drained in
+	// OnStreamComplete as a safety net if the access logger did not fire.
+	finalizedKey string
 
 	// captured from headers callbacks for body callbacks
 	requestContentType      string
@@ -334,6 +345,7 @@ func (f *filter) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool) sh
 
 	w := &Writer{f: f, calloutCB: f}
 	f.handler(w, newRequestWithContext(headers, f.name, &f.context))
+	f.registerFinalized(w)
 
 	// Mark that framing headers must be stripped. The actual removal happens in
 	// flush after all queued header mutations are applied, so a handler-queued
@@ -540,6 +552,12 @@ func (f *filter) OnStreamComplete() {
 		// its registry entries. Mutations are no-ops at this point.
 		f.onStreamComplete(&f.context)
 	}
+	// Note: do not drain the finalized-registry entry here. In this Envoy
+	// version, OnStreamComplete fires before the access logger's OnLog at
+	// AccessLogTypeDownstreamEnd, so draining now would race the SDK-internal
+	// access logger and prevent OnStreamFinalized from ever firing. If the
+	// listener YAML lacks the matching access_log entry the entry leaks for
+	// the life of the process — that is a configuration error.
 	f.streamDone.Store(true)
 	if f.goStarted {
 		f.goCompleted.Store(true)

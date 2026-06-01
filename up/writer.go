@@ -232,14 +232,14 @@ func (w *Writer) RemoveResponseHeader(name string) {
 }
 
 // SetRequestBody marks data as the replacement for the request body buffer.
-// Only effective in buffered mode (RegisterWithMutableBody).
+// Only effective in buffered mode ([WithMutableBody]).
 func (w *Writer) SetRequestBody(data []byte) {
 	w.f.requestBodyReplacement = data
 	w.f.hasRequestBodyReplacement = true
 }
 
 // SetResponseBody marks data as the replacement for the response body buffer.
-// Only effective in buffered mode (RegisterWithMutableBody).
+// Only effective in buffered mode ([WithMutableBody]).
 func (w *Writer) SetResponseBody(data []byte) {
 	w.f.responseBodyReplacement = data
 	w.f.hasResponseBodyReplacement = true
