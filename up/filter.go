@@ -131,6 +131,11 @@ func (f *filterFactory) OnDestroy() {
 // streamDone.Store(true) in OnStreamComplete prevents a late OnHttpCalloutDone
 // from calling flush on a dead stream.
 type filter struct {
+	// EmptyHttpFilter supplies default implementations for SDK hooks Transit
+	// does not expose at the up layer. Notably, the SDK's OnLocalReply hook is
+	// only a notification with response code/details/reset state; it does not
+	// carry local-reply body bytes, so exposing it would not solve
+	// FinalizedInfo.LocalReplyBody for Envoy-generated local replies.
 	shared.EmptyHttpFilter
 
 	name               string
@@ -236,8 +241,9 @@ type filter struct {
 
 	// localReplyBody is the body passed to this filter's SendLocalResponse.
 	// Envoy's access-log GetLocalReplyBody currently returns empty on the
-	// reachable local-reply paths, so finalizedLogger uses this as a narrow
-	// fallback for Transit-generated local replies from the same filter.
+	// reachable local-reply paths, and OnLocalReply has no body parameter, so
+	// finalizedLogger uses this as a narrow fallback for Transit-generated
+	// local replies from the same filter.
 	localReplyBody string
 }
 
