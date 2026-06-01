@@ -473,3 +473,84 @@ func TestRegister_panicOnDuplicate(t *testing.T) {
 
 // writer is a helper for tests that need a Writer backed by this filter.
 func (f *filter) writer() *Writer { return &Writer{f: f} }
+
+// --- OnStreamComplete callback ---
+
+func TestFilter_OnStreamComplete_invokesCallback(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	handle := newMockHandle(ctrl)
+
+	called := 0
+	f := &filter{
+		handle:           handle,
+		handler:          func(w *Writer, r *Request) {},
+		onStreamComplete: func(ctx *any) { called++ },
+	}
+	f.OnStreamComplete()
+	require.Equal(t, 1, called)
+}
+
+func TestFilter_OnStreamComplete_passesContextPointer(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	handle := newMockHandle(ctrl)
+
+	type state struct{ token string }
+	var seen *state
+	f := &filter{
+		handle: handle,
+		handler: func(w *Writer, r *Request) {
+			*r.Context = &state{token: "abc"}
+		},
+		onStreamComplete: func(ctx *any) {
+			if s, ok := (*ctx).(*state); ok {
+				seen = s
+			}
+		},
+	}
+	f.OnRequestHeaders(fake.NewFakeHeaderMap(nil), false)
+	f.OnStreamComplete()
+	require.NotNil(t, seen)
+	require.Equal(t, "abc", seen.token)
+}
+
+func TestFilter_OnStreamComplete_runsWithoutHandlers(t *testing.T) {
+	// No body handler, no response handler — the callback must still fire.
+	ctrl := gomock.NewController(t)
+	handle := newMockHandle(ctrl)
+
+	called := false
+	f := &filter{
+		handle:           handle,
+		handler:          func(w *Writer, r *Request) {},
+		onStreamComplete: func(ctx *any) { called = true },
+	}
+	f.OnStreamComplete()
+	require.True(t, called)
+}
+
+func TestFilter_OnStreamComplete_nilCallbackIsNoop(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	handle := newMockHandle(ctrl)
+
+	f := &filter{handle: handle, handler: func(w *Writer, r *Request) {}}
+	require.NotPanics(t, func() { f.OnStreamComplete() })
+}
+
+func TestWithOnStreamComplete_setsConfigFactoryField(t *testing.T) {
+	cf := &configFactory{}
+	fn := func(ctx *any) {}
+	WithOnStreamComplete(fn)(cf)
+	require.NotNil(t, cf.onStreamComplete)
+}
+
+func TestRegister_appliesFilterOptions(t *testing.T) {
+	const name = "up-test-register-opts"
+	registry[name] = HandlerFunc(func(w *Writer, r *Request) {})
+	t.Cleanup(func() { delete(registry, name) })
+
+	// Re-register via Register would panic on the duplicate; instead exercise
+	// applyFilterOptions directly to verify wiring.
+	cf := &configFactory{}
+	applyFilterOptions(cf, []FilterOption{WithOnStreamComplete(func(ctx *any) {})})
+	require.NotNil(t, cf.onStreamComplete)
+}

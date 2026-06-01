@@ -15,6 +15,7 @@ type configFactory struct {
 	handler            HandlerFunc
 	responseHandler    ResponseHandlerFunc
 	requestBodyHandler RequestBodyHandlerFunc
+	onStreamComplete   OnStreamCompleteFunc
 	bufferBody         bool
 	group              *Group
 }
@@ -62,6 +63,7 @@ func (f *configFactory) Create(h shared.HttpFilterConfigHandle, _ []byte) (share
 		handler:            f.handler,
 		responseHandler:    f.responseHandler,
 		requestBodyHandler: f.requestBodyHandler,
+		onStreamComplete:   f.onStreamComplete,
 		bufferBody:         f.bufferBody,
 		stop:               stop,
 	}, nil
@@ -74,6 +76,7 @@ type filterFactory struct {
 	handler            HandlerFunc
 	responseHandler    ResponseHandlerFunc
 	requestBodyHandler RequestBodyHandlerFunc
+	onStreamComplete   OnStreamCompleteFunc
 	bufferBody         bool
 	stop               func()
 }
@@ -85,6 +88,7 @@ func (f *filterFactory) Create(handle shared.HttpFilterHandle) shared.HttpFilter
 		handler:            f.handler,
 		responseHandler:    f.responseHandler,
 		requestBodyHandler: f.requestBodyHandler,
+		onStreamComplete:   f.onStreamComplete,
 		bufferBody:         f.bufferBody,
 	}
 }
@@ -130,6 +134,7 @@ type filter struct {
 	handler            HandlerFunc
 	responseHandler    ResponseHandlerFunc
 	requestBodyHandler RequestBodyHandlerFunc
+	onStreamComplete   OnStreamCompleteFunc
 	bufferBody         bool
 	context            any
 
@@ -528,6 +533,12 @@ func (f *filter) OnStreamComplete() {
 			Context:         &f.context,
 		})
 		f.responseEndSeen = true
+	}
+	if f.onStreamComplete != nil {
+		// User cleanup hook. Runs before goCancel so a still-running goroutine
+		// observes ctx.Done() only after the filter has had a chance to clean up
+		// its registry entries. Mutations are no-ops at this point.
+		f.onStreamComplete(&f.context)
 	}
 	f.streamDone.Store(true)
 	if f.goStarted {

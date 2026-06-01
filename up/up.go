@@ -30,6 +30,28 @@ type ConfigFunc func(h ConfigHandle) error
 // HandlerFunc is called on every request.
 type HandlerFunc func(w *Writer, r *Request)
 
+// OnStreamCompleteFunc is called exactly once per stream after Envoy
+// terminates it, regardless of how the stream ended (normal end-of-stream,
+// reset, idle/request timeout, local reply from another filter). Use it
+// for cleanup that must run even when the request/response handlers did
+// not — e.g. removing entries from process-wide registries.
+//
+// ctx is the per-stream context slot (same value Request.Context and
+// BodyChunk.Context point at). Mutations are no-ops at this point: the
+// stream is dead and any queued header/filter-state changes will not be
+// applied. Do not call Writer methods from here.
+type OnStreamCompleteFunc func(ctx *any)
+
+// FilterOption configures filter registration. Apply with one of the
+// RegisterWith* functions.
+type FilterOption func(*configFactory)
+
+// WithOnStreamComplete attaches a stream-termination callback to the
+// filter. See [OnStreamCompleteFunc] for semantics.
+func WithOnStreamComplete(fn OnStreamCompleteFunc) FilterOption {
+	return func(cf *configFactory) { cf.onStreamComplete = fn }
+}
+
 // Middleware wraps a HandlerFunc, enabling before/after logic around a handler.
 type Middleware func(next HandlerFunc) HandlerFunc
 
@@ -70,12 +92,14 @@ var registry = map[string]HandlerFunc{}
 
 // Register registers a named HTTP filter handler and wires it into the Envoy
 // SDK. Must be called from an init() function. Panics on duplicate names.
-func Register(name string, h HandlerFunc) {
+func Register(name string, h HandlerFunc, opts ...FilterOption) {
 	if _, ok := registry[name]; ok {
 		panic("up: filter already registered: " + name)
 	}
 	registry[name] = h
-	down.RegisterHttpFilter(name, &configFactory{name: name, handler: h})
+	cf := &configFactory{name: name, handler: h}
+	applyFilterOptions(cf, opts)
+	down.RegisterHttpFilter(name, cf)
 }
 
 // RegisterWithGroup registers a named HTTP filter with a [Group] of background
@@ -91,55 +115,63 @@ func Register(name string, h HandlerFunc) {
 // For background work in cluster extensions (which have no filter factory),
 // use [ClusterGroup] with [ClusterGroup.Start] called from
 // [Cluster.ServerInitialized] instead.
-func RegisterWithGroup(name string, g *Group, h HandlerFunc) {
+func RegisterWithGroup(name string, g *Group, h HandlerFunc, opts ...FilterOption) {
 	if _, ok := registry[name]; ok {
 		panic("up: filter already registered: " + name)
 	}
 	registry[name] = h
-	down.RegisterHttpFilter(name, &configFactory{name: name, handler: h, group: g})
+	cf := &configFactory{name: name, handler: h, group: g}
+	applyFilterOptions(cf, opts)
+	down.RegisterHttpFilter(name, cf)
 }
 
 // RegisterWithResponse registers a named HTTP filter with both a request and a
 // response handler. Must be called from an init() function. Panics on duplicate names.
-func RegisterWithResponse(name string, h HandlerFunc, r ResponseHandlerFunc) {
+func RegisterWithResponse(name string, h HandlerFunc, r ResponseHandlerFunc, opts ...FilterOption) {
 	if _, ok := registry[name]; ok {
 		panic("up: filter already registered: " + name)
 	}
 	registry[name] = h
-	down.RegisterHttpFilter(name, &configFactory{name: name, handler: h, responseHandler: r})
+	cf := &configFactory{name: name, handler: h, responseHandler: r}
+	applyFilterOptions(cf, opts)
+	down.RegisterHttpFilter(name, cf)
 }
 
 // RegisterWithBody registers a named HTTP filter with request body handling in
 // streaming mode: the body handler is called once per chunk as data arrives.
 // For bodyless requests (GET etc.) the handler is called once with Data: nil.
-func RegisterWithBody(name string, h HandlerFunc, rb RequestBodyHandlerFunc, r ResponseHandlerFunc) {
+func RegisterWithBody(name string, h HandlerFunc, rb RequestBodyHandlerFunc, r ResponseHandlerFunc, opts ...FilterOption) {
 	if _, ok := registry[name]; ok {
 		panic("up: filter already registered: " + name)
 	}
 	registry[name] = h
-	down.RegisterHttpFilter(name, &configFactory{
+	cf := &configFactory{
 		name:               name,
 		handler:            h,
 		responseHandler:    r,
 		requestBodyHandler: rb,
-	})
+	}
+	applyFilterOptions(cf, opts)
+	down.RegisterHttpFilter(name, cf)
 }
 
 // RegisterWithMutableBody registers a named HTTP filter with buffered body
 // handling: the body handler is called once with the full accumulated body.
 // Use Writer.SetRequestBody / SetResponseBody to replace body content.
-func RegisterWithMutableBody(name string, h HandlerFunc, rb RequestBodyHandlerFunc, r ResponseHandlerFunc) {
+func RegisterWithMutableBody(name string, h HandlerFunc, rb RequestBodyHandlerFunc, r ResponseHandlerFunc, opts ...FilterOption) {
 	if _, ok := registry[name]; ok {
 		panic("up: filter already registered: " + name)
 	}
 	registry[name] = h
-	down.RegisterHttpFilter(name, &configFactory{
+	cf := &configFactory{
 		name:               name,
 		handler:            h,
 		responseHandler:    r,
 		requestBodyHandler: rb,
 		bufferBody:         true,
-	})
+	}
+	applyFilterOptions(cf, opts)
+	down.RegisterHttpFilter(name, cf)
 }
 
 // RegisterWithConfig registers a named HTTP filter with a config callback, a
@@ -147,17 +179,27 @@ func RegisterWithMutableBody(name string, h HandlerFunc, rb RequestBodyHandlerFu
 // main thread when Envoy loads the filter config — use it to define metrics via
 // ConfigHandle.DefineCounter. Must be called from an init() function.
 // Panics on duplicate names.
-func RegisterWithConfig(name string, cfg ConfigFunc, h HandlerFunc, r ResponseHandlerFunc) {
+func RegisterWithConfig(name string, cfg ConfigFunc, h HandlerFunc, r ResponseHandlerFunc, opts ...FilterOption) {
 	if _, ok := registry[name]; ok {
 		panic("up: filter already registered: " + name)
 	}
 	registry[name] = h
-	down.RegisterHttpFilter(name, &configFactory{
+	cf := &configFactory{
 		name:            name,
 		configFn:        cfg,
 		handler:         h,
 		responseHandler: r,
-	})
+	}
+	applyFilterOptions(cf, opts)
+	down.RegisterHttpFilter(name, cf)
+}
+
+func applyFilterOptions(cf *configFactory, opts []FilterOption) {
+	for _, o := range opts {
+		if o != nil {
+			o(cf)
+		}
+	}
 }
 
 // RegisterAccessLogger registers a named access logger factory. Must be called
