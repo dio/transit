@@ -1,3 +1,21 @@
+#!/bin/bash
+# Run Envoy with observability filter and OTLP configuration for investigation.
+# This script sets up Envoy with fixed ports to make debugging easier.
+
+set -e
+
+cd "$(dirname "$0")/.."
+
+echo "Building observability filter..."
+CGO_ENABLED=1 go build -trimpath -buildmode=c-shared -o libobservability.so ./cmd
+
+PROXY_PORT=9090
+ADMIN_PORT=9901
+BACKEND_PORT=9092
+OTEL_PORT=9093
+
+# Create config from template
+cat > /tmp/envoy_obs_spike.yaml << CFGEOF
 tracing:
   http:
     name: envoy.tracers.opentelemetry
@@ -6,7 +24,7 @@ tracing:
       grpc_service:
         envoy_grpc:
           cluster_name: otel-collector
-      service_name: "observability-e2e"
+      service_name: "observability-spike"
 
 stats_flush_interval: 1s
 stats_sinks:
@@ -22,7 +40,7 @@ static_resources:
   listeners:
     - name: observability
       address:
-        socket_address: { address: 127.0.0.1, port_value: {{.ProxyPort}} }
+        socket_address: { address: 127.0.0.1, port_value: $PROXY_PORT }
       filter_chains:
         - filters:
             - name: envoy.filters.network.http_connection_manager
@@ -35,14 +53,6 @@ static_resources:
                   random_sampling: { value: 100 }
                   overall_sampling: { value: 100 }
                 access_log:
-                  - name: envoy.access_loggers.stdout
-                    typed_config:
-                      "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
-                      log_format:
-                        json_format:
-                          status: "%RESPONSE_CODE%"
-                          model: "%DYNAMIC_METADATA(observability:model)%"
-                          status_code: "%DYNAMIC_METADATA(observability:status_code)%"
                   - name: envoy.access_loggers.open_telemetry
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.access_loggers.open_telemetry.v3.OpenTelemetryAccessLogConfig
@@ -90,7 +100,7 @@ static_resources:
           - lb_endpoints:
               - endpoint:
                   address:
-                    socket_address: { address: 127.0.0.1, port_value: {{.BackendPort}} }
+                    socket_address: { address: 127.0.0.1, port_value: $BACKEND_PORT }
 
     - name: otel-collector
       connect_timeout: 5s
@@ -106,8 +116,37 @@ static_resources:
           - lb_endpoints:
               - endpoint:
                   address:
-                    socket_address: { address: 127.0.0.1, port_value: {{.OtelPort}} }
+                    socket_address: { address: 127.0.0.1, port_value: $OTEL_PORT }
 
 admin:
   address:
-    socket_address: { address: 127.0.0.1, port_value: {{.AdminPort}} }
+    socket_address: { address: 127.0.0.1, port_value: $ADMIN_PORT }
+CFGEOF
+
+echo "Config written to /tmp/envoy_obs_spike.yaml"
+echo ""
+echo "Starting backend server on port $BACKEND_PORT..."
+python3 -m http.server $BACKEND_PORT > /tmp/backend_spike.log 2>&1 &
+BACKEND_PID=$!
+sleep 1
+
+echo ""
+echo "Starting Envoy..."
+echo "  Proxy:      http://127.0.0.1:$PROXY_PORT"
+echo "  Admin:      http://127.0.0.1:$ADMIN_PORT"
+echo "  OTEL:       127.0.0.1:$OTEL_PORT"
+echo "  Backend:    127.0.0.1:$BACKEND_PORT"
+echo ""
+echo "Useful endpoints:"
+echo "  /stats:        curl http://127.0.0.1:$ADMIN_PORT/stats"
+echo "  /stats/prometheus: curl http://127.0.0.1:$ADMIN_PORT/stats/prometheus"
+echo "  /config_dump:  curl http://127.0.0.1:$ADMIN_PORT/config_dump"
+echo ""
+echo "Make requests:"
+echo "  curl -i http://127.0.0.1:$PROXY_PORT/"
+echo "  curl -i -H 'x-model: claude-opus' http://127.0.0.1:$PROXY_PORT/"
+echo ""
+
+trap "kill $BACKEND_PID 2>/dev/null || true" EXIT
+
+exec /Users/dio/src/dio/transit2/.bin/envoy -c /tmp/envoy_obs_spike.yaml -l info
