@@ -78,12 +78,13 @@ type FinalizedInfo struct {
 //
 // Delivery: when a filter is registered with [WithOnStreamFinalized] the
 // SDK auto-registers an internal access logger under the same name and
-// correlates filter ↔ logger via the request id (x-request-id). The
-// listener Envoy YAML must include an access_log entry pointing at this
-// dynamic module with logger_name equal to the filter name (see
-// examples/request-ui/envoy.yaml). If the request id is empty or the
-// access-logger entry is missing from the YAML, the callback will not
-// fire — Envoy delivers finalized fields only through that path.
+// correlates filter ↔ logger via the request id (x-request-id), or an
+// SDK fallback request header when the request id is empty. The listener
+// Envoy YAML must include an access_log entry pointing at this dynamic
+// module with logger_name equal to the filter name (see
+// examples/request-ui/envoy.yaml). If the access-logger entry is missing
+// from the YAML, the callback will not fire — Envoy delivers finalized
+// fields only through that path.
 type OnStreamFinalizedFunc func(ctx *any, info FinalizedInfo)
 
 // FilterOption configures filter registration. Pass options to [Register].

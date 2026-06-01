@@ -362,7 +362,7 @@ func (f *filter) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool) sh
 
 	w := &Writer{f: f, calloutCB: f}
 	f.handler(w, newRequestWithContext(headers, f.name, &f.context))
-	f.registerFinalized(w)
+	f.registerFinalized()
 
 	// Mark that framing headers must be stripped. The actual removal happens in
 	// flush after all queued header mutations are applied, so a handler-queued
@@ -574,7 +574,7 @@ func (f *filter) OnStreamComplete() {
 	// hook that fires for this stream, so drain here unconditionally.
 	// When onStreamFinalized IS configured, the drain is deferred to
 	// finalizedLogger.OnLog (stream_finalized.go), which fires AFTER this hook,
-	// so the B callback can still call GetStreamObject and read bag values.
+	// so finalized cleanup runs before the SDK removes stream-scoped objects.
 	// If the access logger never fires (listener YAML misconfiguration) the bag
 	// leaks for the process lifetime — same as the existing finalized-entry
 	// leak documented in the comment below; that is a configuration error.

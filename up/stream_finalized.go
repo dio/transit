@@ -15,8 +15,8 @@ import (
 // streamObjectNonce is a pointer into the filter's streamObjectNonce field.
 // It is read by the access logger after all filter callbacks complete, at
 // which point the nonce is final. After entry.fn fires, the access logger
-// drains the Primitive A bag so that the B callback can call GetStreamObject
-// and see its values — drain order:
+// drains the Primitive A bag so finalized cleanup runs before the SDK removes
+// stream-scoped objects. Drain order:
 //
 //	user OnStreamComplete → user OnStreamFinalized → dropBag
 type streamFinalizedEntry struct {
@@ -91,7 +91,7 @@ func mintFallbackStreamKey() string {
 //
 // Idempotent across multiple callbacks on the same stream: the filter only
 // registers once per stream (finalizedKey is non-empty after the first call).
-func (f *filter) registerFinalized(w *Writer) {
+func (f *filter) registerFinalized() {
 	if f.onStreamFinalized == nil || f.finalizedKey != "" {
 		return
 	}
@@ -101,10 +101,12 @@ func (f *filter) registerFinalized(w *Writer) {
 	}
 	if streamKey == "" {
 		// Fallback: mint a nonce and stamp it into a request header that the
-		// access logger can read. This handles deployments where
-		// generate_request_id is disabled.
+		// access logger can read. This is an internal correlation header, so
+		// write it immediately while still on the worker thread. If this were
+		// queued behind a user SendLocalResponse, flush would return after
+		// sending the local reply and the access logger would never see it.
 		streamKey = mintFallbackStreamKey()
-		w.SetRequestHeader(finalizedFallbackKeyHeader, streamKey)
+		f.handle.RequestHeaders().Set(finalizedFallbackKeyHeader, streamKey)
 	}
 	key := streamFinalizedKey(f.name, streamKey)
 	f.finalizedKey = key
@@ -206,7 +208,7 @@ func (l *finalizedLogger) OnLog(h AccessLoggerHandle, logType AccessLogType) {
 
 	entry.fn(entry.ctx, info)
 	// Drain the Primitive A bag AFTER the user callback runs so that the
-	// B callback (entry.fn above) can call GetStreamObject and see its values.
+	// finalized callback runs before the SDK removes stream-scoped objects.
 	// This establishes the guaranteed order:
 	//   user OnStreamComplete → user OnStreamFinalized → dropBag
 	if entry.streamObjectNonce != nil {

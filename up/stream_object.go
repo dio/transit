@@ -8,8 +8,8 @@
 // reply, stream reset. This is exactly the "teardown matrix" described in
 // docs/orange-token-correlation-risks.md. For filters that also use
 // WithOnStreamFinalized, the access logger's OnLog fires AFTER OnStreamComplete,
-// so drain is deferred to OnLog so that the B callback can call
-// GetStreamObject and read bag values. Drain order:
+// so drain is deferred to OnLog so finalized cleanup runs before the SDK
+// removes stream-scoped objects. Drain order:
 //
 //	user OnStreamComplete → user OnStreamFinalized → dropBag
 package up

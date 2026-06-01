@@ -1,10 +1,8 @@
 # Cross-extension correlation: guidance
 
-> **Status:** design guidance. No SDK changes have landed yet. Two existing
-> consumers (orange, request-ui) implement the patterns below by hand;
-> this document captures the shape so the next case doesn't re-invent it,
-> and so we can collapse onto a single SDK primitive when a third consumer
-> appears.
+> **Status:** implementation guidance. Primitive B landed in `d5803e4`;
+> Primitive A landed in `661f47a`, and orange has been migrated to it.
+> request-ui still demonstrates the older access-logger correlation shape.
 
 Envoy's dynamic-module extension types (HTTP filter, ClusterLB extension,
 LB Policy, AccessLogger) are independent: each runs in its own per-stream
@@ -36,11 +34,11 @@ sketches the primitives.
 - **When**: body-driven routing — LB must pick a host *after* the body
   arrives, so `ChooseHost` needs to suspend on a value the request body
   handler will produce.
-- **Today**: orange mints a token in the request handler, writes it to
-  filter state, calls `pending.Register(token) → *Pending`; `ChooseHost`
-  reads the token from `ClusterLBContext.GetFilterState`, looks up the
-  `*Pending`, and installs an `OnResolve` callback. Cleanup is owned by
-  `up.WithOnStreamComplete`.
+- **Today**: orange creates a `*pending.Pending` in the request handler,
+  stores it with `Writer.SetStreamObject`, and `ChooseHost` reads it with
+  `ClusterLBContext.GetStreamObject`. Cleanup of the process-wide SDK bag
+  is owned by Primitive A; `up.WithOnStreamComplete` only resolves the
+  pending value with `ErrStreamTerminated`.
 - **Race**: yes — consumer (`ChooseHost`) arrives before producer
   (`bodyHandler`). `Pending.OnResolve` handles the sync.
 - **Leak status**: closed (Phases 1–3 in orange).
@@ -66,10 +64,9 @@ sketches the primitives.
   cares about (real upstream identity, attempt count, origin trace ids,
   cache hit, response-side decisions) and wants to surface it without
   going through filter state as strings.
-- **Today**: not directly demonstrated in-tree; both halves are
-  `up.Register(...)` HTTP filters sharing Envoy's per-stream filter state
-  and lifetime. Anyone doing this today would hit the same pattern as
-  orange — string in filter state, process-wide map, cleanup discipline.
+- **Today**: not directly demonstrated in-tree; both halves can use
+  `Writer.SetStreamObject` / `Writer.GetStreamObject` while running in the
+  same stream.
 - **Race**: usually no (response direction: upstream chain finalizes
   before downstream response handler observes the response). If the
   direction is downstream → upstream response side, treat as the orange
@@ -123,36 +120,33 @@ type ClusterLBContext interface {
     GetStreamObject(key string) (any, bool)
 }
 
-// up/access_logger.go — consumer for AccessLogger.
-type AccessLoggerHandle interface {
-    // ... existing ...
-    GetStreamObject(key string) (any, bool)
-}
 ```
 
-Implementation outline (`up/stream_object.go`, new):
+Implementation (`up/stream_object.go`, `down/stream_object.go`):
 
 - On first `SetStreamObject` for a stream, mint a short random nonce,
   write it to a reserved filter-state key (`up.stream_object_id`), and
   create a per-stream bag in a process-wide `map[nonce]*streamObjects`.
 - Subsequent `SetStreamObject` calls in the same stream reuse the nonce
   already in filter state.
-- Consumers read the nonce from their respective context object and look
-  up the bag.
-- `OnStreamComplete` (already wired in `up/filter.go`) deletes the bag.
-  Single drain owner; the existing `TestRegistry_baseline*` e2e tests
-  already prove that hook fires for every teardown class.
+- `Writer.GetStreamObject` reads the bag through the filter's stream
+  nonce; `ClusterLBContext.GetStreamObject` reads the nonce from filter
+  state and looks up the bag.
+- `OnStreamComplete` deletes the bag for ordinary filters. If the filter
+  also uses `WithOnStreamFinalized`, drain is deferred to the internal
+  finalized access logger so finalized cleanup runs before the bag is
+  removed.
 
-Covers cases **1**, **3**, and (less ideally) **2**.
+Covers cases **1** and **3**. It is not currently exposed on
+`AccessLoggerHandle`; use Primitive B for finalized stream fields.
 
 #### What it eliminates
 
 - orange: `pending.registry sync.Map`, `pending.Register/Lookup/Delete`,
   `classify.StateToken`, the `pending.Delete` call in `onStreamComplete`.
   `Pending` collapses back to a single-shot CAS + OnResolve primitive.
-- request-ui: `PendingRecords sync.Map`, the `x-request-id` correlation.
-  The access-logger half stays only because Envoy delivers finalized
-  fields through AccessLogger — which is what Primitive B is for.
+- future filter-to-filter consumers: ad hoc filter-state tokens and
+  per-consumer registries.
 
 ### Primitive B — stream-finalized callback
 
@@ -163,10 +157,13 @@ Closes case **2** by collapsing it from two extensions to one.
 type FinalizedInfo struct {
     Timing                       TimingInfo
     Bytes                        BytesInfo
-    ResponseCode                 uint16
+    ResponseCode                 uint32
     ResponseCodeDetails          string
     ResponseFlags                uint64
     UpstreamFailure              string
+    UpstreamLocalAddress         string
+    UpstreamAddress              string
+    RequestProtocol              string
     UpstreamPoolReadyDurationNs  int64
     UpstreamRequestAttempts      uint32
     TraceID, SpanID              string
@@ -182,9 +179,12 @@ type OnStreamFinalizedFunc func(ctx *any, info FinalizedInfo)
 func WithOnStreamFinalized(fn OnStreamFinalizedFunc) FilterOption
 ```
 
-Implementation outline: same hook point as the existing
-`OnStreamComplete` in `up/filter.go`; populate `FinalizedInfo` from the
-same attributes/timings `AccessLoggerHandle` wraps.
+Implementation: `Register` auto-registers an SDK-internal access logger
+under the filter name. The filter deposits `(fn, ctx)` during request
+headers, keyed by `x-request-id` or an SDK fallback header when the request
+id is absent. The finalized logger consumes that entry at
+`AccessLogTypeDownstreamEnd` and populates `FinalizedInfo` from the same
+attributes/timings `AccessLoggerHandle` wraps.
 
 Coexists with `OnStreamComplete` — the simpler signature remains for
 cleanup-only consumers (orange).
@@ -200,7 +200,7 @@ cleanup-only consumers (orange).
 | Direction | Primitive | Race? | Notes |
 |---|---|---|---|
 | downstream filter ↔ ClusterLB | A | yes (header time) | `Pending.OnResolve` over A |
-| downstream filter ↔ AccessLogger | **B** (preferred), or A | no | B collapses to one extension |
+| downstream filter ↔ AccessLogger | **B** | no | A is not exposed on AccessLoggerHandle |
 | upstream filter ↔ downstream filter | A | usually no | response direction natural; downstream→upstream response is the orange shape |
 | upstream filter → LB Policy | neither | — | see next section |
 
@@ -229,27 +229,14 @@ host). Don't conflate with Primitive A.
 Also requires Envoy-side work to expose filter state to LB Policy if
 that direction is ever needed in-flight — flagged here for completeness.
 
-## When to introduce the SDK changes
+## Landed order
 
-The orange writeup made the explicit call to **defer the typed-handoff
-SDK change until a second consumer appears, then revisit with the use
-case in hand**
-([orange-token-correlation-risks.md §Note: global registry, kept](orange-token-correlation-risks.md#note-global-registry-kept)).
-request-ui is the second consumer for the broader correlation pattern,
-but its specific need (finalized fields) is closer to Primitive B than
-Primitive A.
-
-Recommended order if/when you commit to landing this:
-
-1. **Primitive B first** — strictly additive, doesn't change any
-   existing extension's surface, immediately deletes the request-ui
-   access-logger half. Lowest risk, highest local payoff.
-2. **Primitive A** when a third consumer appears that genuinely needs
-   the typed handoff (filter↔ClusterLB *and* filter↔AccessLogger as
-   peers, or filter↔filter for upstream/downstream sharing). At that
-   point migrate orange off `pending.registry` in the same change.
-3. **Cluster-scoped host feedback** only when a real LB feedback case
-   appears. Sketch above; don't speculate further until then.
+1. **Primitive B** landed first as `WithOnStreamFinalized`.
+2. **Primitive A** landed next and migrated orange off
+   `pending.registry`.
+3. **Cluster-scoped host feedback** remains parked until a real LB
+   feedback case appears. Sketch above; don't speculate further until
+   then.
 
 ## Anti-patterns
 
@@ -269,7 +256,8 @@ in `orange-token-correlation-risks.md`:
 ## Related docs
 
 - [`orange-token-correlation-risks.md`](orange-token-correlation-risks.md) —
-  the worked example. Phases 1–3, residual global registry note.
+  the worked example. Phases 1–3, plus the now-resolved global registry
+  note.
 - [`envoy-dynamic-module-upstream-selection.md`](envoy-dynamic-module-upstream-selection.md) —
   why the filter ↔ ClusterLB hop exists at all.
 - [`cluster-async-router-eg.md`](cluster-async-router-eg.md) — async

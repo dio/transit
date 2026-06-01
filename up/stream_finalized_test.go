@@ -11,6 +11,7 @@ import (
 
 type fakeFinalizedAccessLogHandle struct {
 	requestID      []byte
+	fallbackID     []byte
 	localReplyBody []byte
 	localReplyOK   bool
 }
@@ -42,6 +43,9 @@ func (h *fakeFinalizedAccessLogHandle) GetAttributeBool(_ AttributeID) (bool, bo
 func (h *fakeFinalizedAccessLogHandle) GetHeader(headerType HttpHeaderType, key string) (Buffer, bool) {
 	if headerType == HttpHeaderTypeRequest && key == "x-request-id" && len(h.requestID) > 0 {
 		return bufferFromBytes(h.requestID), true
+	}
+	if headerType == HttpHeaderTypeRequest && key == finalizedFallbackKeyHeader && len(h.fallbackID) > 0 {
+		return bufferFromBytes(h.fallbackID), true
 	}
 	return Buffer{}, false
 }
@@ -119,4 +123,46 @@ func TestWriter_SendLocalResponse_capturesLocalReplyBodyForFinalizedFallback(t *
 	w.SendLocalResponse(200, []byte("second"))
 
 	require.Equal(t, "first", f.localReplyBody)
+}
+
+func TestFinalizedFallbackHeaderSurvivesQueuedLocalReply(t *testing.T) {
+	const name = "finalized-local-reply-no-request-id"
+	h := testutil.NewFilterHandle()
+	finalizedCalled := false
+
+	f := &filter{
+		name:   name,
+		handle: h,
+		handler: func(w *Writer, _ *Request) {
+			w.SetStreamObject("obj", "value")
+			w.SendLocalResponse(403, []byte("blocked"))
+		},
+		onStreamFinalized: func(_ *any, _ FinalizedInfo) {
+			finalizedCalled = true
+		},
+	}
+
+	status := f.OnRequestHeaders(h.RequestHeaders(), true)
+	require.Equal(t, shared.HeadersStatusStop, status)
+
+	fallback := h.RequestHeaders().GetOne(finalizedFallbackKeyHeader)
+	require.NotZero(t, fallback.Len)
+	fallbackID := fallback.ToString()
+
+	nonce := f.streamObjectNonce
+	require.NotEmpty(t, nonce)
+	_, ok := lookupBag(nonce)
+	require.True(t, ok)
+
+	f.OnStreamComplete()
+	_, ok = lookupBag(nonce)
+	require.True(t, ok, "WithOnStreamFinalized defers Primitive A drain to finalizedLogger")
+
+	(&finalizedLogger{name: name}).OnLog(&fakeFinalizedAccessLogHandle{
+		fallbackID: []byte(fallbackID),
+	}, AccessLogTypeDownstreamEnd)
+
+	require.True(t, finalizedCalled)
+	_, ok = lookupBag(nonce)
+	require.False(t, ok)
 }
