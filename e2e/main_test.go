@@ -79,6 +79,8 @@ var (
 	accessLoggerLocalReplyAddr    string
 	accessLoggerFlagsAddr         string
 	embeddedServerAddr            string
+	streamCompleteAddr            string
+	streamCompleteLoopbackAddr    string
 	adminAddr                     string
 )
 
@@ -143,6 +145,8 @@ func TestMain(m *testing.M) {
 	accessLoggerFlagsPort := freePort()
 	embeddedServerPort := freePort()
 	embeddedServerLoopbackPort := freePort()
+	streamCompletePort := freePort()
+	streamCompleteLoopbackPort := freePort()
 	// deadUpstreamPort: nothing listens here; Envoy gets ECONNREFUSED, setting UF flag.
 	deadUpstreamPort := freePort()
 	adminPort := freePort()
@@ -174,6 +178,8 @@ func TestMain(m *testing.M) {
 	accessLoggerLocalReplyAddr = fmt.Sprintf("http://localhost:%d", accessLoggerLocalReplyPort)
 	accessLoggerFlagsAddr = fmt.Sprintf("http://localhost:%d", accessLoggerFlagsPort)
 	embeddedServerAddr = fmt.Sprintf("http://localhost:%d", embeddedServerPort)
+	streamCompleteAddr = fmt.Sprintf("http://localhost:%d", streamCompletePort)
+	streamCompleteLoopbackAddr = fmt.Sprintf("http://127.0.0.1:%d", streamCompleteLoopbackPort)
 	adminAddr = fmt.Sprintf("http://localhost:%d", adminPort)
 
 	otelSink = otelsink.New()
@@ -258,19 +264,27 @@ func TestMain(m *testing.M) {
 		AccessLoggerFlagsPort:              accessLoggerFlagsPort,
 		EmbeddedServerPort:                 embeddedServerPort,
 		EmbeddedServerLoopbackPort:         embeddedServerLoopbackPort,
+		StreamCompletePort:                 streamCompletePort,
+		StreamCompleteLoopbackPort:         streamCompleteLoopbackPort,
 		DeadUpstreamPort:                   deadUpstreamPort,
 		AdminPort:                          adminPort,
 	})
 
-	envoyCmd = exec.Command(bin,
+	envoyArgs := []string{
 		"-c", cfgPath,
 		"--log-level", "warning",
 		"--component-log-level", "dynamic_modules:info",
-	)
+	}
+	if c := os.Getenv("ENVOY_CONCURRENCY"); c != "" {
+		envoyArgs = append(envoyArgs, "--concurrency", c)
+		fmt.Fprintf(os.Stderr, "e2e: envoy --concurrency %s\n", c)
+	}
+	envoyCmd = exec.Command(bin, envoyArgs...)
 	envoyCmd.Env = append(os.Environ(),
 		"GODEBUG=cgocheck=0",
 		"ENVOY_DYNAMIC_MODULES_SEARCH_PATH="+projectRoot,
 		fmt.Sprintf("E2E_EMBEDDED_SERVER_ADDR=127.0.0.1:%d", embeddedServerLoopbackPort),
+		fmt.Sprintf("E2E_STREAM_COMPLETE_LOOPBACK_ADDR=127.0.0.1:%d", streamCompleteLoopbackPort),
 	)
 	envoyCmd.Stdout = os.Stderr
 	envoyCmd.Stderr = os.Stderr
@@ -772,6 +786,8 @@ type envoyPorts struct {
 	AccessLoggerFlagsPort              int
 	EmbeddedServerPort                 int
 	EmbeddedServerLoopbackPort         int
+	StreamCompletePort                 int
+	StreamCompleteLoopbackPort         int
 	DeadUpstreamPort                   int
 	AdminPort                          int
 }
