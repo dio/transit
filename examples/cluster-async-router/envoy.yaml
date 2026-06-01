@@ -1,0 +1,51 @@
+static_resources:
+  listeners:
+    - name: cluster-async-router
+      address:
+        socket_address: { address: 0.0.0.0, port_value: 10000 }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: cluster-async-router
+                http_filters:
+                  - name: body-router-writer
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: cluster-async-router
+                      filter_name: body-router-writer
+                      filter_config:
+                        "@type": type.googleapis.com/google.protobuf.StringValue
+                        value: '{}'
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: local
+                  virtual_hosts:
+                    - name: local
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          route: { cluster: upstream }
+
+  clusters:
+    - name: upstream
+      connect_timeout: 5s
+      lb_policy: CLUSTER_PROVIDED
+      cluster_type:
+        name: envoy.clusters.dynamic_modules
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_modules.v3.ClusterConfig
+          dynamic_module_config:
+            name: cluster-async-router
+          cluster_name: body-router-cluster
+          cluster_config:
+            "@type": type.googleapis.com/google.protobuf.StringValue
+            value: '{"hosts":[{"name":"a","address":"127.0.0.1:8081"},{"name":"b","address":"127.0.0.1:8082"}]}'
+
+admin:
+  address:
+    socket_address: { address: 127.0.0.1, port_value: 9901 }
