@@ -10,3 +10,4 @@ examples/*/lib*.h
 .graymatter/
 .claude
 .hermes/
+.DS_Store
