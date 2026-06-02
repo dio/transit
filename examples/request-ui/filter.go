@@ -57,8 +57,15 @@ type reqState struct {
 
 // Register wires the filter into the transit registry. Call from init() in
 // cmd/main.go after constructing the sink.
+//
+// The sink's writer goroutine and HTTP server are tied to the filter factory
+// lifecycle: Envoy's OnDestroy calls Group.Stop → sink.Stop, which drains the
+// writer and shuts the HTTP server down gracefully.
 func Register(name string, s *sink.Sink) {
-	up.Register(name, nil, up.WithExchangeObserver(up.ExchangeHooks[*reqState]{
+	g := up.NewGroup()
+	g.Add(func() error { s.WaitStopped(); return nil }, s.Stop)
+
+	opts := up.WithExchangeObserver(up.ExchangeHooks[*reqState]{
 		OnRequest: func(w *up.Writer, r *up.Request) *reqState {
 			cfgMu.RLock()
 			c := cfg
@@ -107,7 +114,9 @@ func Register(name string, s *sink.Sink) {
 			r.HasError = hasError(r)
 			s.Send(r)
 		},
-	})...)
+	})
+	opts = append(opts, up.WithGroup(g))
+	up.Register(name, nil, opts...)
 }
 
 // buildRecord constructs a Record from the per-request accumulator. Finalized

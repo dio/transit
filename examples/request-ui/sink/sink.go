@@ -38,6 +38,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -117,13 +118,23 @@ type Sink struct {
 	st    store
 	bcast *broadcaster
 	once  sync.Once
+
+	stopOnce      sync.Once
+	stopCh        chan struct{} // closed by Stop to signal shutdown
+	writerDone    chan struct{} // closed when writer goroutine exits
+	writerStarted atomic.Bool  // set true before writer goroutine launches
+	srv           *http.Server // set by Start; used by Stop for graceful shutdown
 }
 
 // New creates a Sink. Call Start() to connect/initialise and begin serving.
+// Call Stop() (wired via filter factory OnDestroy) to drain the writer and
+// shut down the HTTP server gracefully.
 func New() *Sink {
 	return &Sink{
-		ch:    make(chan *Record, 4096),
-		bcast: newBroadcaster(),
+		ch:         make(chan *Record, 4096),
+		bcast:      newBroadcaster(),
+		stopCh:     make(chan struct{}),
+		writerDone: make(chan struct{}),
 	}
 }
 
@@ -186,6 +197,7 @@ func (s *Sink) Start() {
 			fmt.Fprintf(os.Stderr, "[request-ui] mode=postgres\n")
 		}
 
+		s.writerStarted.Store(true)
 		go s.writer()
 
 		ln, err := net.Listen("tcp", addr)
@@ -199,13 +211,15 @@ func (s *Sink) Start() {
 		mux.HandleFunc("GET /api/stream", s.handleStream)
 		mux.HandleFunc("/", handleUI)
 
-		srv := &http.Server{Handler: mux}
-		go srv.Serve(ln) //nolint:errcheck
+		s.srv = &http.Server{Handler: mux}
+		go s.srv.Serve(ln) //nolint:errcheck
 		fmt.Fprintf(os.Stderr, "[request-ui] UI on http://%s/\n", ln.Addr())
 	})
 }
 
 func (s *Sink) writer() {
+	defer close(s.writerDone)
+
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -227,6 +241,17 @@ func (s *Sink) writer() {
 
 	for {
 		select {
+		case <-s.stopCh:
+			// Drain any records queued before stop.
+			for {
+				select {
+				case r := <-s.ch:
+					batch = append(batch, r)
+				default:
+					flush()
+					return
+				}
+			}
 		case r := <-s.ch:
 			batch = append(batch, r)
 			if len(batch) >= 100 {
@@ -236,6 +261,29 @@ func (s *Sink) writer() {
 			flush()
 		}
 	}
+}
+
+// Stop signals the writer goroutine to flush remaining records and exit, then
+// shuts down the HTTP server. Safe to call multiple times. Blocks until the
+// writer drains and the server closes.
+func (s *Sink) Stop() {
+	s.stopOnce.Do(func() {
+		close(s.stopCh)
+		if s.writerStarted.Load() {
+			<-s.writerDone
+		}
+		if s.srv != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			s.srv.Shutdown(ctx) //nolint:errcheck
+		}
+	})
+}
+
+// WaitStopped blocks until Stop has been called. Used by filter lifecycle
+// hooks to park a Group actor until the factory is destroyed.
+func (s *Sink) WaitStopped() {
+	<-s.stopCh
 }
 
 func (s *Sink) handleRequests(w http.ResponseWriter, r *http.Request) {
