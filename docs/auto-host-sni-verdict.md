@@ -9,8 +9,11 @@ host's hostname, eliminating all per-provider TLS configuration.
 
 ## Outcome
 
-**Falsified.** The approach cannot work today with the dynamic module cluster
-API. Two blockers were identified and proven experimentally.
+**Resolved — V1 confirmed (after ABI patch).** The approach works once the
+dynamic module cluster ABI carries a per-host hostname. Both blockers identified
+in the initial investigation have been fixed and proven experimentally.
+
+See **Resolution** section below for the patch, test results, and WS-B verdict.
 
 ---
 
@@ -154,3 +157,86 @@ cluster. Clusters mixing TLS and plaintext hosts cannot use this approach — ea
 plaintext upstream would receive a TLS handshake attempt and return 503. This is
 an independent constraint from the hostname blocker above, relevant if the fix is
 implemented and the cluster config includes both TLS and non-TLS hosts.
+
+---
+
+## Resolution
+
+All four steps from "Smallest Required Fix" above were implemented:
+
+### ABI patch
+
+A new `envoy_dynamic_module_callback_cluster_add_hosts_with_hostnames` callback
+was added to Envoy. A patched binary is published at:
+
+```
+https://github.com/dio/envoy-builder/releases/tag/envoy-0d6e3c60-auto-host-sni
+```
+
+The patch gist:
+```
+https://gist.githubusercontent.com/dio/e4d1c59710a2039d146deb98ee19977c/raw/.../auto-host-sni-hostname-abi.patch
+```
+
+The patched `abi.h` is available as a release asset (`abi.h`) on the same release.
+Transit vendors it at `down/abi_impl/abi.h` with `ABI_SOURCE=release` in `down/abi_impl/VERSION`.
+
+### Transit changes
+
+- `down/cluster.go`: `HostSpec.Hostname string` added
+- `down/abi_impl/cluster.go`: `AddHosts` calls `add_hosts_with_hostnames`, passing hostname per host
+- `examples/cluster-async-router/cluster_async_router.go`: `spec.Hostname = he.SNI`
+
+### Test results
+
+`make -C examples/cluster-async-router e2e-static-tls` — both tests now **PASS**:
+
+```
+TestStaticTLS_Httpbin   status=405   PASS  (TLS handshake succeeded, SAN validated)
+TestStaticTLS_Example   status=403   PASS  (TLS handshake succeeded, SAN validated)
+```
+
+`make -C examples/cluster-async-router e2e-static-tls-matches` — all three **PASS**:
+
+```
+TestTLSMatches_Httpbin    status=405   PASS  (tls-system-ca bucket)
+TestTLSMatches_Example    status=403   PASS  (tls-system-ca bucket)
+TestTLSMatches_Plaintext  status=200   PASS  (plaintext bucket)
+```
+
+`make -C examples/cluster-async-router e2e` — canonical 4-test suite all **PASS**:
+
+```
+TestAsyncRouter_TLS_Httpbin    status=405   PASS
+TestAsyncRouter_TLS_Example    status=403   PASS
+TestAsyncRouter_Plaintext      status=200   PASS
+TestAsyncRouter_UnknownTarget  status=503   PASS
+```
+
+### WS-B Verdict: V1 — Fully Dynamic Host + Envoy-Owned TLS
+
+For ordinary public WebPKI providers, provider add/remove is **application config
+only**. No xDS/EPP update is required. The stable Envoy config is:
+
+```yaml
+transport_socket:           # single static socket — OR —
+  auto_host_sni: true       # use transport_socket_matches with bucket key
+  auto_sni_san_validation: true    # for mixed plain+TLS clusters
+  trusted_ca: system bundle
+```
+
+The dynamic module sets `HostSpec.Hostname` at `AddHosts` time. Envoy reads it
+via `HostDescription::hostname()` at connect time.
+
+**Downstream shifts (from plan.md WS-B verdict forks):**
+
+| Workstream | V1 shift |
+|---|---|
+| WS-D | `HostPtr` carries hostname; `AsyncHostSelector[T]` lookup is `func(T) (host, sni)` |
+| WS-H | Implements stable generic transport; provider/server add/remove is config-only across all four EG integrations |
+
+**Remaining WS-B experiments for WS-H (do not change V1 verdict):**
+
+- Experiment 5: `auto_sni` from `:authority` header timing (router trap)
+- Experiments 6–7: Envoy Gateway native Gateway API vs EPP comparison
+- Experiment 9: Cohere-style provider add on EG (config-only proof)
