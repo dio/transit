@@ -4,6 +4,8 @@ import (
 	"os"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/dio/transit/examples/orange/classify"
 	"github.com/dio/transit/examples/orange/config"
 	"github.com/dio/transit/up"
@@ -14,9 +16,7 @@ func loadTestConfig(t *testing.T) {
 	t.Helper()
 	t.Setenv("OPENAI_API_KEY", "sk-test-openai")
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test-anthropic")
-	if err := os.Setenv(config.EnvVar, "../orange.yaml"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Setenv(config.EnvVar, "../orange.yaml"))
 	config.MustReload()
 }
 
@@ -52,17 +52,11 @@ func TestHandler_anthropic_injectsKeyAndVersion(t *testing.T) {
 	w, h, r := newStream(t, "anthropic_direct")
 	handler(w, r)
 
-	if got := headerValue(h, "x-api-key"); got != "sk-test-anthropic" {
-		t.Errorf("x-api-key = %q, want sk-test-anthropic", got)
-	}
-	if got := headerValue(h, "anthropic-version"); got != "2023-06-01" {
-		t.Errorf("anthropic-version = %q, want 2023-06-01", got)
-	}
+	require.Equal(t, "sk-test-anthropic", headerValue(h, "x-api-key"))
+	require.Equal(t, "2023-06-01", headerValue(h, "anthropic-version"))
 	// authorization must be stripped (per orange.yaml strip_request_headers)
 	// before injection so a client-supplied Bearer can't leak to Anthropic.
-	if got := headerValue(h, "authorization"); got != "" {
-		t.Errorf("authorization not stripped: got %q", got)
-	}
+	require.Empty(t, headerValue(h, "authorization"), "authorization not stripped")
 }
 
 func TestHandler_openai_injectsBearer(t *testing.T) {
@@ -70,17 +64,10 @@ func TestHandler_openai_injectsBearer(t *testing.T) {
 	w, h, r := newStream(t, "openai_direct")
 	handler(w, r)
 
-	if got := headerValue(h, "authorization"); got != "Bearer sk-test-openai" {
-		t.Errorf("authorization = %q, want Bearer sk-test-openai", got)
-	}
-	// OpenAI doesn't use x-api-key; the client-supplied one must be stripped
-	// even when the chosen provider has no use for it.
-	if got := headerValue(h, "x-api-key"); got != "" {
-		t.Errorf("x-api-key not stripped: got %q", got)
-	}
-	if got := headerValue(h, "anthropic-version"); got != "" {
-		t.Errorf("anthropic-version unexpectedly set: %q", got)
-	}
+	require.Equal(t, "Bearer sk-test-openai", headerValue(h, "authorization"))
+	// OpenAI doesn't use x-api-key; the client-supplied one must be stripped.
+	require.Empty(t, headerValue(h, "x-api-key"), "x-api-key not stripped")
+	require.Empty(t, headerValue(h, "anthropic-version"), "anthropic-version unexpectedly set")
 }
 
 func TestHandler_noUpstream_noChanges(t *testing.T) {
@@ -97,7 +84,6 @@ func TestHandler_noUpstream_noChanges(t *testing.T) {
 	// Without metadata, translate must not touch headers — leave the request
 	// untouched so a misconfigured pipeline surfaces as a clear upstream error
 	// rather than a silently-stripped client Authorization.
-	if got := headerValue(h, "authorization"); got != "Bearer client-supplied" {
-		t.Errorf("authorization mutated without upstream metadata: %q", got)
-	}
+	require.Equal(t, "Bearer client-supplied", headerValue(h, "authorization"),
+		"authorization mutated without upstream metadata")
 }

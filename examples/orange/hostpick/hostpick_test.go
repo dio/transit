@@ -1,6 +1,10 @@
 package hostpick
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
 
 func TestSplitEndpoint(t *testing.T) {
 	cases := []struct {
@@ -17,17 +21,11 @@ func TestSplitEndpoint(t *testing.T) {
 	for _, tc := range cases {
 		h, p, err := splitEndpoint(tc.in)
 		if tc.wantErr {
-			if err == nil {
-				t.Errorf("splitEndpoint(%q) want err, got %q:%q", tc.in, h, p)
-			}
+			require.Error(t, err, "splitEndpoint(%q) want err", tc.in)
 			continue
 		}
-		if err != nil {
-			t.Errorf("splitEndpoint(%q) err: %v", tc.in, err)
-			continue
-		}
-		if h != tc.host || p != tc.port {
-			t.Errorf("splitEndpoint(%q) = %q:%q, want %q:%q", tc.in, h, p, tc.host, tc.port)
-		}
+		require.NoError(t, err, "splitEndpoint(%q)", tc.in)
+		require.Equal(t, tc.host, h, "splitEndpoint(%q) host", tc.in)
+		require.Equal(t, tc.port, p, "splitEndpoint(%q) port", tc.in)
 	}
 }

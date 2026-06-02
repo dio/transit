@@ -1,19 +1,18 @@
 // Package classify is the downstream HTTP filter for orange.
 //
 // On a POST to /v1/chat/completions or /v1/messages it:
-//   - stores a new [pending.Pending] in the per-stream object bag
-//     (via Writer.SetStreamObject) at headers phase. hostpick reads it in
-//     ChooseHost via ClusterLBContext.GetStreamObject and waits until classify
-//     resolves it.
+//   - stores a new [*up.StreamPromise[Decision]] in the per-stream object bag
+//     via [DecisionKey].Set at headers phase. hostpick reads it in ChooseHost
+//     via [DecisionKey].GetFromCtx and waits until classify resolves it.
 //   - in the body phase, parses the `model` field out of the JSON body,
 //     looks up the upstream from config.models[], rewrites :authority to the
 //     provider host (so auto_sni/auto_san_validation see the right name when
 //     TLS handshakes for the suspended-then-resumed upstream connection),
 //     writes the routing filter state and dynamic metadata, and resolves the
-//     Pending.
+//     promise.
 //
 // On a missing/unknown model it returns a JSON local response per
-// config.classify.on_miss and resolves the Pending with an error code so the
+// config.classify.on_miss and resolves the promise with an error code so the
 // async ChooseHost waiter can complete cleanly.
 package classify
 
@@ -21,10 +20,28 @@ import (
 	"encoding/json"
 
 	"github.com/dio/transit/examples/orange/config"
-	"github.com/dio/transit/examples/orange/pending"
 	"github.com/dio/transit/up"
 	"github.com/tidwall/gjson"
 )
+
+// Decision is the resolved value classify publishes per request.
+//
+// Err is the orange.* error code (e.g. "orange.model_required",
+// "orange.model_not_found"). When Err is set, Provider/Kind/Model are
+// undefined; hostpick will Complete the host selection with a nil host and
+// that string as errDetail, but classify has already sent a local response so
+// the stream is on its way to closing anyway.
+type Decision struct {
+	Provider string // selected provider name, e.g. "openai_direct"
+	Kind     string // provider kind, e.g. "openai"
+	Model    string
+	Err      string
+}
+
+// DecisionKey is the typed stream-object key classify uses to store the
+// per-request promise. hostpick calls DecisionKey.GetFromCtx to retrieve it
+// without a string literal or a type assertion.
+var DecisionKey = up.NewStreamKey[*up.StreamPromise[Decision]]("orange.decision")
 
 // errorBody is the response shape for classify-generated errors.
 type errorBody struct {
@@ -34,11 +51,6 @@ type errorBody struct {
 
 const (
 	FilterName = "orange-classify"
-
-	// StreamObjectKey is the per-stream bag key under which classify stores the
-	// *pending.Pending. hostpick imports this constant to look up the Pending
-	// via ClusterLBContext.GetStreamObject — no string literal duplication.
-	StreamObjectKey = "orange.pending"
 
 	// Filter state — only the cluster LB can read this.
 	StateUpstream = "orange.upstream"
@@ -55,14 +67,14 @@ const (
 	pathV1Messages        = "/v1/messages"
 
 	// ErrModelRequired and ErrUnknownModel are the orange.* codes published on
-	// pending.Result.Err. They mirror the error response codes.
+	// Decision.Err. They mirror the error response codes.
 	ErrModelRequired = "orange.model_required"
 
-	// ErrStreamTerminated is the orange.* code published on pending.Result.Err
-	// when the stream ends before the body handler resolves the Pending —
-	// downstream disconnect, idle timeout, another filter's local reply, reset.
-	// Resolve is CAS, so this is a no-op when bodyHandler already published a
-	// result.
+	// ErrStreamTerminated is the orange.* code published on Decision.Err when
+	// the stream ends before the body handler resolves the promise — downstream
+	// disconnect, idle timeout, another filter's local reply, reset.
+	// Resolve is first-wins, so this is a no-op when bodyHandler already
+	// published a result.
 	ErrStreamTerminated = "orange.stream_terminated"
 )
 
@@ -73,9 +85,9 @@ func init() {
 }
 
 // streamState is stashed in the per-stream context slot at headers phase so
-// the body handler can find the same Pending without re-parsing anything.
+// the body handler can find the same promise without re-parsing anything.
 type streamState struct {
-	p *pending.Pending
+	p *up.StreamPromise[Decision]
 }
 
 func requestHandler(w *up.Writer, r *up.Request) {
@@ -88,13 +100,13 @@ func requestHandler(w *up.Writer, r *up.Request) {
 		return
 	}
 
-	p := pending.New()
+	p := up.NewStreamPromise[Decision]()
 	if r.Context != nil {
 		*r.Context = &streamState{p: p}
 	}
-	// Store the *Pending in the per-stream object bag (Primitive A).
-	// hostpick reads it in ChooseHost via ClusterLBContext.GetStreamObject.
-	w.SetStreamObject(StreamObjectKey, p)
+	// Store the promise in the per-stream object bag (Primitive A).
+	// hostpick reads it in ChooseHost via DecisionKey.GetFromCtx.
+	DecisionKey.Set(w, p)
 	w.Log(up.LogInfo, "orange-classify headers: authority_in=%s", r.Host)
 }
 
@@ -124,7 +136,7 @@ func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 
 	model := gjson.GetBytes(chunk.Data, field).String()
 	if model == "" {
-		st.p.Resolve(pending.Result{Err: ErrModelRequired})
+		st.p.Resolve(Decision{Err: ErrModelRequired})
 		sendError(w, 400, ErrModelRequired,
 			"request body is missing the `"+field+"` field")
 		return
@@ -132,7 +144,7 @@ func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 
 	upstream := cfg.LookupModel(model)
 	if upstream == "" {
-		st.p.Resolve(pending.Result{Err: cfg.Classify.OnMiss.Code})
+		st.p.Resolve(Decision{Err: cfg.Classify.OnMiss.Code})
 		sendError(w, cfg.Classify.OnMiss.Status, cfg.Classify.OnMiss.Code,
 			"no upstream configured for model "+model)
 		return
@@ -157,7 +169,7 @@ func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 
 	w.Log(up.LogInfo, "orange-classify body: resolved model=%s provider=%s host=%s kind=%s",
 		model, upstream, prov.Host(), prov.Kind)
-	st.p.Resolve(pending.Result{
+	st.p.Resolve(Decision{
 		Provider: upstream,
 		Kind:     prov.Kind,
 		Model:    model,
@@ -169,8 +181,8 @@ func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 // drains the stream-object bag unconditionally; this callback only needs to
 // publish the terminal ErrStreamTerminated so hostpick can complete cleanly.
 //
-// Resolve is a CAS — when bodyHandler already published a real Result this is
-// a no-op.
+// Resolve is first-wins — when bodyHandler already published a real Decision
+// this is a no-op.
 func onStreamComplete(ctx *any) {
 	if ctx == nil || *ctx == nil {
 		return
@@ -180,9 +192,9 @@ func onStreamComplete(ctx *any) {
 		return
 	}
 	if st.p != nil {
-		st.p.Resolve(pending.Result{Err: ErrStreamTerminated})
+		st.p.Resolve(Decision{Err: ErrStreamTerminated})
 	}
-	// No pending.Delete here: the stream-object bag is owned and drained
+	// No bag delete here: the stream-object bag is owned and drained
 	// by the SDK (Primitive A / dropBag in filter.OnStreamComplete).
 }
 

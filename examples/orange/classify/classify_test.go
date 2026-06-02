@@ -5,9 +5,10 @@ import (
 	"os"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/dio/transit/down"
 	"github.com/dio/transit/examples/orange/config"
-	"github.com/dio/transit/examples/orange/pending"
 	"github.com/dio/transit/up"
 	"github.com/dio/transit/up/testutil"
 )
@@ -16,9 +17,7 @@ func loadTestConfig(t *testing.T) {
 	t.Helper()
 	t.Setenv("OPENAI_API_KEY", "sk-test-openai")
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test-anthropic")
-	if err := os.Setenv(config.EnvVar, "../orange.yaml"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Setenv(config.EnvVar, "../orange.yaml"))
 	config.MustReload()
 }
 
@@ -69,29 +68,22 @@ func TestHeaders_storesPendingInStreamObjectBag(t *testing.T) {
 	requestHandler(w, r)
 
 	st, ok := (*ctx).(*streamState)
-	if !ok || st == nil {
-		t.Fatal("expected stream state to be stashed in r.Context")
-	}
-	if st.p == nil {
-		t.Error("pending is nil")
-	}
+	require.True(t, ok && st != nil, "expected stream state to be stashed in r.Context")
+	require.NotNil(t, st.p, "promise is nil")
 
-	// The Pending must be in the stream-object bag under StreamObjectKey.
+	// The promise must be in the stream-object bag under DecisionKey.
 	nonce := streamObjectNonce(h)
-	if nonce == "" {
-		t.Fatal("stream-object nonce not written to filter state")
-	}
+	require.NotEmpty(t, nonce, "stream-object nonce not written to filter state")
+
 	bag, ok := down.LookupStreamObjectBag(nonce)
-	if !ok {
-		t.Fatal("bag not found for nonce")
-	}
-	v, ok := bag.Get(StreamObjectKey)
-	if !ok {
-		t.Fatal("StreamObjectKey not in bag")
-	}
-	if v != st.p {
-		t.Error("bag entry is not the same *pending.Pending as streamState.p")
-	}
+	require.True(t, ok, "bag not found for nonce")
+
+	v, ok := bag.Get(DecisionKey.Key())
+	require.True(t, ok, "DecisionKey not in bag")
+
+	promise, ok := v.(*up.StreamPromise[Decision])
+	require.True(t, ok, "bag entry has wrong type: %T", v)
+	require.Same(t, st.p, promise, "bag entry is not the same promise as streamState.p")
 
 	// Cleanup: drain the bag (normally done by OnStreamComplete).
 	down.DropStreamObjectBag(nonce)
@@ -102,37 +94,24 @@ func TestBody_knownModel_resolvesUpstream(t *testing.T) {
 	body := []byte(`{"model":"gpt-4o-mini","messages":[]}`)
 	h, st := runFlow(t, body)
 
-	if len(h.LocalResponses) != 0 {
-		t.Fatalf("unexpected local response: %+v", h.LocalResponses)
-	}
+	require.Empty(t, h.LocalResponses, "unexpected local response")
+
 	res, ok := st.p.Result()
-	if !ok {
-		t.Fatal("pending not resolved")
-	}
-	if res.Err != "" {
-		t.Errorf("err = %q, want empty", res.Err)
-	}
-	if res.Provider != "openai_direct" {
-		t.Errorf("provider = %q", res.Provider)
-	}
-	if res.Kind != "openai" {
-		t.Errorf("kind = %q", res.Kind)
-	}
-	if res.Model != "gpt-4o-mini" {
-		t.Errorf("model = %q", res.Model)
-	}
-	if v, ok := h.Metadata(MetadataNamespace, MetadataKeyUpstream); !ok || v != "openai_direct" {
-		t.Errorf("metadata upstream = (%q, %v)", v, ok)
-	}
+	require.True(t, ok, "promise not resolved")
+	require.Empty(t, res.Err)
+	require.Equal(t, "openai_direct", res.Provider)
+	require.Equal(t, "openai", res.Kind)
+	require.Equal(t, "gpt-4o-mini", res.Model)
+
+	v, ok := h.Metadata(MetadataNamespace, MetadataKeyUpstream)
+	require.True(t, ok)
+	require.Equal(t, "openai_direct", v)
 
 	// Bag entry must still be present before onStreamComplete (SDK owns the drain).
 	nonce := streamObjectNonce(h)
-	if nonce == "" {
-		t.Fatal("nonce missing from filter state")
-	}
-	if _, ok := down.LookupStreamObjectBag(nonce); !ok {
-		t.Error("bag entry unexpectedly missing before stream complete")
-	}
+	require.NotEmpty(t, nonce, "nonce missing from filter state")
+	_, ok = down.LookupStreamObjectBag(nonce)
+	require.True(t, ok, "bag entry unexpectedly missing before stream complete")
 
 	// Simulate OnStreamComplete: call onStreamComplete then drain the bag.
 	var ctx any = st
@@ -140,13 +119,12 @@ func TestBody_knownModel_resolvesUpstream(t *testing.T) {
 	down.DropStreamObjectBag(nonce)
 
 	// After drain, bag must be gone.
-	if _, ok := down.LookupStreamObjectBag(nonce); ok {
-		t.Error("bag entry not gone after stream complete + drain")
-	}
+	_, ok = down.LookupStreamObjectBag(nonce)
+	require.False(t, ok, "bag entry not gone after stream complete + drain")
+
 	// Resolve must remain the bodyHandler's (CAS loses races silently).
-	if got, _ := st.p.Result(); got.Err != "" {
-		t.Errorf("post-cleanup err = %q, want empty (CAS should preserve body result)", got.Err)
-	}
+	got, _ := st.p.Result()
+	require.Empty(t, got.Err, "post-cleanup err should be empty (CAS should preserve body result)")
 }
 
 func TestOnStreamComplete_cleansUpWhenBodyNeverRan(t *testing.T) {
@@ -154,37 +132,26 @@ func TestOnStreamComplete_cleansUpWhenBodyNeverRan(t *testing.T) {
 	// Headers-only flow: simulates downstream disconnect / timeout after
 	// headers and before the body handler runs.
 	h, st := runFlow(t, nil)
-	if st == nil {
-		t.Fatal("expected stream state from headers phase")
-	}
+	require.NotNil(t, st, "expected stream state from headers phase")
 
 	nonce := streamObjectNonce(h)
-	if nonce == "" {
-		t.Fatal("nonce missing from filter state")
-	}
+	require.NotEmpty(t, nonce, "nonce missing from filter state")
 
-	// Bag must be present before onStreamComplete.
-	if _, ok := down.LookupStreamObjectBag(nonce); !ok {
-		t.Error("bag entry missing before onStreamComplete")
-	}
+	_, ok := down.LookupStreamObjectBag(nonce)
+	require.True(t, ok, "bag entry missing before onStreamComplete")
 
 	var ctx any = st
 	onStreamComplete(&ctx)
 
-	// onStreamComplete must have resolved the Pending with ErrStreamTerminated.
+	// onStreamComplete must have resolved the promise with ErrStreamTerminated.
 	res, ok := st.p.Result()
-	if !ok {
-		t.Fatal("pending should be resolved by onStreamComplete")
-	}
-	if res.Err != ErrStreamTerminated {
-		t.Errorf("err = %q, want %q", res.Err, ErrStreamTerminated)
-	}
+	require.True(t, ok, "promise should be resolved by onStreamComplete")
+	require.Equal(t, ErrStreamTerminated, res.Err)
 
 	// SDK drains the bag; simulate that here.
 	down.DropStreamObjectBag(nonce)
-	if _, ok := down.LookupStreamObjectBag(nonce); ok {
-		t.Error("bag still present after drain")
-	}
+	_, ok = down.LookupStreamObjectBag(nonce)
+	require.False(t, ok, "bag still present after drain")
 }
 
 func TestOnStreamComplete_nilContextIsNoop(t *testing.T) {
@@ -201,22 +168,17 @@ func TestBody_missingModel_400(t *testing.T) {
 	body := []byte(`{"messages":[]}`)
 	h, st := runFlow(t, body)
 
-	if len(h.LocalResponses) != 1 || h.LocalResponses[0].Status != 400 {
-		t.Fatalf("expected one 400 response, got %+v", h.LocalResponses)
-	}
+	require.Len(t, h.LocalResponses, 1)
+	require.EqualValues(t, 400, h.LocalResponses[0].Status)
+
 	var got struct{ Error, Code string }
 	_ = json.Unmarshal(h.LocalResponses[0].Body, &got)
-	if got.Code != ErrModelRequired {
-		t.Errorf("code = %q", got.Code)
-	}
-	res, _ := st.p.Result()
-	if res.Err != ErrModelRequired {
-		t.Errorf("pending err = %q", res.Err)
-	}
+	require.Equal(t, ErrModelRequired, got.Code)
 
-	// Cleanup bag.
-	nonce := streamObjectNonce(h)
-	down.DropStreamObjectBag(nonce)
+	res, _ := st.p.Result()
+	require.Equal(t, ErrModelRequired, res.Err)
+
+	down.DropStreamObjectBag(streamObjectNonce(h))
 }
 
 func TestBody_unknownModel_404(t *testing.T) {
@@ -224,22 +186,17 @@ func TestBody_unknownModel_404(t *testing.T) {
 	body := []byte(`{"model":"gemini-1.5"}`)
 	h, st := runFlow(t, body)
 
-	if len(h.LocalResponses) != 1 || h.LocalResponses[0].Status != 404 {
-		t.Fatalf("expected one 404 response, got %+v", h.LocalResponses)
-	}
+	require.Len(t, h.LocalResponses, 1)
+	require.EqualValues(t, 404, h.LocalResponses[0].Status)
+
 	var got struct{ Error, Code string }
 	_ = json.Unmarshal(h.LocalResponses[0].Body, &got)
-	if got.Code != "orange.model_not_found" {
-		t.Errorf("code = %q", got.Code)
-	}
-	res, _ := st.p.Result()
-	if res.Err != "orange.model_not_found" {
-		t.Errorf("pending err = %q", res.Err)
-	}
+	require.Equal(t, "orange.model_not_found", got.Code)
 
-	// Cleanup bag.
-	nonce := streamObjectNonce(h)
-	down.DropStreamObjectBag(nonce)
+	res, _ := st.p.Result()
+	require.Equal(t, "orange.model_not_found", res.Err)
+
+	down.DropStreamObjectBag(streamObjectNonce(h))
 }
 
 func TestHeaders_skipsNonMatchingPath(t *testing.T) {
@@ -252,42 +209,27 @@ func TestHeaders_skipsNonMatchingPath(t *testing.T) {
 	r.Context = &ctx
 
 	requestHandler(w, r)
-	if ctx != nil {
-		t.Errorf("expected no stream state for non-matching path, got %v", ctx)
-	}
-	if len(h.LocalResponses) != 0 {
-		t.Fatalf("expected no local response, got %+v", h.LocalResponses)
-	}
-	// No stream object should have been stored.
+	require.Nil(t, ctx, "expected no stream state for non-matching path")
+	require.Empty(t, h.LocalResponses)
+
 	nonce := streamObjectNonce(h)
 	if nonce != "" {
-		t.Errorf("unexpected nonce %q for non-matching request", nonce)
 		down.DropStreamObjectBag(nonce)
+		t.Errorf("unexpected nonce %q for non-matching request", nonce)
 	}
 }
 
 // TestHostpick_getStreamObject: verifies that a FakeClusterLBContext backed
-// by the same handle can retrieve the *pending.Pending via GetStreamObject.
+// by the same handle can retrieve the promise via DecisionKey.GetFromCtx.
 func TestHostpick_getStreamObject(t *testing.T) {
 	loadTestConfig(t)
 	w, h, r, _ := newPostStream(t)
 	requestHandler(w, r)
 
-	// Build a FakeClusterLBContext that reads the nonce from the same handle.
 	ctx := testutil.NewFakeClusterLBContext(h)
-	v, ok := ctx.GetStreamObject(StreamObjectKey)
-	if !ok {
-		t.Fatal("GetStreamObject returned false — nonce not propagated to filter state")
-	}
-	p, ok := v.(*pending.Pending)
-	if !ok {
-		t.Fatalf("type assertion failed: %T", v)
-	}
-	if p == nil {
-		t.Fatal("Pending is nil")
-	}
+	promise, ok := DecisionKey.GetFromCtx(ctx)
+	require.True(t, ok, "DecisionKey.GetFromCtx returned false — nonce not propagated to filter state")
+	require.NotNil(t, promise)
 
-	// Cleanup.
-	nonce := streamObjectNonce(h)
-	down.DropStreamObjectBag(nonce)
+	down.DropStreamObjectBag(streamObjectNonce(h))
 }

@@ -30,7 +30,6 @@ import (
 
 	"github.com/dio/transit/examples/orange/classify"
 	orangecfg "github.com/dio/transit/examples/orange/config"
-	"github.com/dio/transit/examples/orange/pending"
 	"github.com/dio/transit/up"
 )
 
@@ -114,20 +113,17 @@ type lb struct {
 }
 
 func (l *lb) ChooseHost(_ up.ClusterLBHandle, ctx up.ClusterLBContext) (up.HostPtr, *up.ClusterLBCompletion) {
-	v, ok := ctx.GetStreamObject(classify.StreamObjectKey)
+	promise, ok := classify.DecisionKey.GetFromCtx(ctx)
 	if !ok {
 		return nil, nil
 	}
-	// Type-assert: a non-*pending.Pending value under this key is a programmer
-	// error, so panic is the right response — it surfaces the bug immediately.
-	p := v.(*pending.Pending)
 
 	completion := ctx.NewCompletion()
-	p.OnResolve(func(res pending.Result) {
+	promise.OnResolve(func(d classify.Decision) {
 		// May be invoked inline on the body/onStreamComplete thread (worker)
-		// or inline here if the Pending is already resolved. Either way we
+		// or inline here if the promise is already resolved. Either way we
 		// must run completion.Complete on the cluster main thread.
-		l.owner.handle.Schedule(func() { l.complete(completion, res) })
+		l.owner.handle.Schedule(func() { l.complete(completion, d) })
 	})
 	return nil, completion
 }
@@ -136,7 +132,7 @@ func (l *lb) ChooseHost(_ up.ClusterLBHandle, ctx up.ClusterLBContext) (up.HostP
 // single place that calls completion.Complete: kept here so the
 // cancelled-check, the host lookup and the Complete call cannot race with
 // CancelHostSelection.
-func (l *lb) complete(completion *up.ClusterLBCompletion, res pending.Result) {
+func (l *lb) complete(completion *up.ClusterLBCompletion, d classify.Decision) {
 	l.mu.Lock()
 	_, cancelled := l.cancelled[completion]
 	if cancelled {
@@ -147,13 +143,13 @@ func (l *lb) complete(completion *up.ClusterLBCompletion, res pending.Result) {
 		return
 	}
 
-	if res.Err != "" {
-		completion.Complete(nil, res.Err)
+	if d.Err != "" {
+		completion.Complete(nil, d.Err)
 		return
 	}
 	var host up.HostPtr
 	if m := l.owner.hosts.Load(); m != nil {
-		host = (*m)[res.Provider]
+		host = (*m)[d.Provider]
 	}
 	if host == nil {
 		completion.Complete(nil, "orange.unknown_upstream")

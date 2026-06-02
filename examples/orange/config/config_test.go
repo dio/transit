@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestLoadFile_minimal(t *testing.T) {
@@ -10,28 +12,14 @@ func TestLoadFile_minimal(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test-anthropic")
 
 	cfg, err := LoadFile("../orange.yaml")
-	if err != nil {
-		t.Fatalf("LoadFile: %v", err)
-	}
-	if got := cfg.Providers["openai_direct"].Endpoint; got != "https://api.openai.com" {
-		t.Fatalf("openai endpoint: %q", got)
-	}
-	if got := cfg.Providers["anthropic_direct"].AnthropicVersion; got != "2023-06-01" {
-		t.Fatalf("anthropic version: %q", got)
-	}
-	if got := cfg.ProviderSecret("openai_direct"); got != "sk-test-openai" {
-		t.Fatalf("openai secret: %q", got)
-	}
-	if got := cfg.ProviderSecret("anthropic_direct"); got != "sk-test-anthropic" {
-		t.Fatalf("anthropic secret: %q", got)
-	}
+	require.NoError(t, err, "LoadFile")
+	require.Equal(t, "https://api.openai.com", cfg.Providers["openai_direct"].Endpoint)
+	require.Equal(t, "2023-06-01", cfg.Providers["anthropic_direct"].AnthropicVersion)
+	require.Equal(t, "sk-test-openai", cfg.ProviderSecret("openai_direct"))
+	require.Equal(t, "sk-test-anthropic", cfg.ProviderSecret("anthropic_direct"))
 	// Defaults applied.
-	if cfg.Classify.ModelField != "model" {
-		t.Fatalf("model_field default: %q", cfg.Classify.ModelField)
-	}
-	if cfg.Hostpick.UpstreamKey != "orange.upstream" {
-		t.Fatalf("upstream_key default: %q", cfg.Hostpick.UpstreamKey)
-	}
+	require.Equal(t, "model", cfg.Classify.ModelField)
+	require.Equal(t, "orange.upstream", cfg.Hostpick.UpstreamKey)
 }
 
 func TestLoadFile_missingEnvVar(t *testing.T) {
@@ -41,9 +29,7 @@ func TestLoadFile_missingEnvVar(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test-anthropic")
 
 	_, err := LoadFile("../orange.yaml")
-	if err == nil {
-		t.Fatal("expected error when OPENAI_API_KEY is unset")
-	}
+	require.Error(t, err, "expected error when OPENAI_API_KEY is unset")
 }
 
 func TestLookupModel(t *testing.T) {
@@ -61,8 +47,6 @@ func TestLookupModel(t *testing.T) {
 		{"", ""},
 	}
 	for _, tc := range cases {
-		if got := cfg.LookupModel(tc.in); got != tc.want {
-			t.Errorf("LookupModel(%q) = %q, want %q", tc.in, got, tc.want)
-		}
+		require.Equal(t, tc.want, cfg.LookupModel(tc.in), "LookupModel(%q)", tc.in)
 	}
 }
