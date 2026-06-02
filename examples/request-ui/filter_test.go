@@ -3,6 +3,8 @@ package requestui
 import (
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	requestuisink "github.com/dio/transit/examples/request-ui/sink"
 	"github.com/dio/transit/up"
 )
@@ -33,9 +35,7 @@ func TestHasError(t *testing.T) {
 	}
 	for _, c := range cases {
 		got := hasError(&c.r)
-		if got != c.want {
-			t.Errorf("hasError(%+v): want %v, got %v", c.r, c.want, got)
-		}
+		require.Equal(t, c.want, got, "hasError(%+v)", c.r)
 	}
 }
 
@@ -59,9 +59,7 @@ func TestContainsErrorFlag(t *testing.T) {
 	}
 	for _, c := range cases {
 		got := containsErrorFlag(c.flags)
-		if got != c.want {
-			t.Errorf("containsErrorFlag(%q): want %v, got %v", c.flags, c.want, got)
-		}
+		require.Equal(t, c.want, got, "containsErrorFlag(%q)", c.flags)
 	}
 }
 
@@ -77,9 +75,7 @@ func TestStatusStr(t *testing.T) {
 	}
 	for _, c := range cases {
 		got := statusStr(c.code)
-		if got != c.want {
-			t.Errorf("statusStr(%d): want %q, got %q", c.code, c.want, got)
-		}
+		require.Equal(t, c.want, got, "statusStr(%d)", c.code)
 	}
 }
 
@@ -88,30 +84,8 @@ func TestDefaultConfig(t *testing.T) {
 	c := cfg
 	cfgMu.RUnlock()
 
-	if !c.RecordRequestHeaders {
-		t.Error("want RecordRequestHeaders=true by default")
-	}
-	if !c.RecordResponseHeaders {
-		t.Error("want RecordResponseHeaders=true by default")
-	}
-	if c.RecordRequestBody {
-		t.Error("want RecordRequestBody=false by default")
-	}
-	if c.MaxBodyBytes != defaultMaxBody {
-		t.Errorf("want MaxBodyBytes=%d, got %d", defaultMaxBody, c.MaxBodyBytes)
-	}
-}
-
-func TestStatePool(t *testing.T) {
-	st := statePool.Get().(*reqState)
-	st.requestID = "test"
-	st.method = "GET"
-	*st = reqState{}
-	statePool.Put(st)
-
-	st2 := statePool.Get().(*reqState)
-	if st2.requestID != "" || st2.method != "" {
-		t.Error("pool returned dirty state")
-	}
-	statePool.Put(st2)
+	require.True(t, c.RecordRequestHeaders, "want RecordRequestHeaders=true by default")
+	require.True(t, c.RecordResponseHeaders, "want RecordResponseHeaders=true by default")
+	require.False(t, c.RecordRequestBody, "want RecordRequestBody=false by default")
+	require.Equal(t, defaultMaxBody, c.MaxBodyBytes)
 }

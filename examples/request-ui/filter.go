@@ -39,9 +39,8 @@ type filterConfig struct {
 	MaxBodyBytes          int  `json:"max_body_bytes"`
 }
 
-// reqState is the per-request accumulator stored in *Request.Context /
-// *ResponseChunk.Context. The OnStreamFinalized callback builds a sink.Record
-// from it plus the FinalizedInfo Envoy delivers at stream finalization.
+// reqState is the per-request accumulator. WithExchangeObserver owns the pool
+// lifecycle; callers receive a typed *reqState and never touch *any directly.
 type reqState struct {
 	requestID      string
 	method         string
@@ -56,27 +55,20 @@ type reqState struct {
 	responseBody    string
 }
 
-var statePool = sync.Pool{New: func() any { return &reqState{} }}
-
 // Register wires the filter into the transit registry. Call from init() in
 // cmd/main.go after constructing the sink.
 func Register(name string, s *sink.Sink) {
-	up.Register(
-		name,
-		func(w *up.Writer, r *up.Request) {
+	up.Register(name, nil, up.WithExchangeObserver(up.ExchangeHooks[*reqState]{
+		OnRequest: func(w *up.Writer, r *up.Request) *reqState {
 			cfgMu.RLock()
 			c := cfg
 			cfgMu.RUnlock()
 
-			st, ok := statePool.Get().(*reqState)
-			if !ok || st == nil {
-				st = &reqState{}
+			st := &reqState{
+				method: r.Method,
+				path:   r.Path,
+				host:   r.Host,
 			}
-			*st = reqState{}
-
-			st.method = r.Method
-			st.path = r.Path
-			st.host = r.Host
 			if v, ok := w.GetAttributeString(up.AttributeIDRequestId); ok {
 				st.requestID = v.ToString()
 			}
@@ -91,22 +83,13 @@ func Register(name string, s *sink.Sink) {
 			if c.RecordRequestHeaders {
 				st.requestHeaders = r.AllHeaders()
 			}
-			*r.Context = st
+			return st
 		},
-		up.WithResponse(func(_ *up.Writer, chunk *up.ResponseChunk) {
+		OnResponse: func(st *reqState, _ *up.Writer, chunk *up.ResponseChunk) {
 			cfgMu.RLock()
 			c := cfg
 			cfgMu.RUnlock()
 
-			if *chunk.Context == nil {
-				return
-			}
-			st, ok := (*chunk.Context).(*reqState)
-			if !ok || st == nil {
-				return
-			}
-
-			// Headers call: StatusCode != 0, Data == nil.
 			if chunk.StatusCode != 0 {
 				st.statusCode = chunk.StatusCode
 				if c.RecordResponseHeaders {
@@ -114,35 +97,17 @@ func Register(name string, s *sink.Sink) {
 				}
 				return
 			}
-
-			// Body call: only reached when RecordResponseBody is true.
 			if chunk.EndStream && len(chunk.Data) > 0 {
-				data := chunk.Data
-				if len(data) > c.MaxBodyBytes {
-					data = data[:c.MaxBodyBytes]
-				}
-				st.responseBody = string(data)
+				st.responseBody = string(up.TruncateBody(chunk.Data, c.MaxBodyBytes))
 			}
-		}),
-		up.WithOnStreamFinalized(func(ctx *any, info up.FinalizedInfo) {
-			if ctx == nil || *ctx == nil {
-				return
-			}
-			st, ok := (*ctx).(*reqState)
-			if !ok || st == nil {
-				return
-			}
-
+		},
+		OnFinalized: func(st *reqState, info up.FinalizedInfo) {
 			r := buildRecord(st)
 			enrichWithFinalized(r, info)
 			r.HasError = hasError(r)
 			s.Send(r)
-
-			*st = reqState{}
-			statePool.Put(st)
-			*ctx = nil
-		}),
-	)
+		},
+	})...)
 }
 
 // buildRecord constructs a Record from the per-request accumulator. Finalized
