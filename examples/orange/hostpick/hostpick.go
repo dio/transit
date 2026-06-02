@@ -4,14 +4,10 @@
 // On Init it resolves every upstream listed in orange.yaml, registers each
 // host with the cluster, and remembers the HostPtr by upstream name.
 //
-// ChooseHost reads the *pending.Pending classify stored in the per-stream
-// object bag (via ClusterLBContext.GetStreamObject with key
-// classify.StreamObjectKey), and returns an async ClusterLBCompletion. It
-// registers a callback via pending.Pending.OnResolve; when classify resolves
-// the Pending (from bodyHandler after parsing the OpenAI `model` field, or
-// from onStreamComplete on stream teardown), the callback hops back to the
-// cluster's main thread via handle.Schedule and calls completion.Complete.
-// No per-request goroutine is parked.
+// ChooseHost and CancelHostSelection are delegated to [up.AsyncHostSelector],
+// which owns the completion lifecycle, the cancel guard, and the scheduling
+// back to the cluster main thread. The only orange-specific logic is the
+// lookup func that maps a [classify.Decision] to a [up.HostResult].
 //
 // See .agents/skills/transit-body-driven-cluster-routing/SKILL.md for the
 // rationale (header iteration finishes across all filters before the body
@@ -24,7 +20,6 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -32,7 +27,6 @@ import (
 	orangecfg "github.com/dio/transit/examples/orange/config"
 	"github.com/dio/transit/up"
 )
-
 
 const (
 	ClusterName = "orange-hostpick"
@@ -94,7 +88,23 @@ func (c *cluster) Init(h up.ClusterHandle) {
 
 func (c *cluster) ServerInitialized(_ up.ClusterHandle) {}
 func (c *cluster) NewClusterLB() up.ClusterLB {
-	return &lb{owner: c, cancelled: make(map[*up.ClusterLBCompletion]struct{})}
+	sel := up.NewAsyncHostSelector(
+		c.handle,
+		classify.DecisionKey,
+		func(d classify.Decision) up.HostResult {
+			if d.Err != "" {
+				return up.HostResult{ErrDetail: d.Err}
+			}
+			if m := c.hosts.Load(); m != nil {
+				if host := (*m)[d.Provider]; host != nil {
+					return up.HostResult{Host: host}
+				}
+			}
+			return up.HostResult{ErrDetail: "orange.unknown_upstream"}
+		},
+		up.SelectorObserver{},
+	)
+	return &lb{sel: sel}
 }
 func (c *cluster) DrainStarted(_ up.ClusterHandle)          {}
 func (c *cluster) Shutdown(_ up.ClusterHandle, done func()) { done() }
@@ -102,66 +112,15 @@ func (c *cluster) Close()                                   {}
 
 type lb struct {
 	up.EmptyClusterLB
-	owner *cluster
-
-	// cancelled tracks ChooseHost completions Envoy cancelled before they
-	// completed. The scheduled completion callback consults this map on the
-	// cluster main thread and skips Complete when the entry is present. Empty
-	// in the happy path: entries only appear on the cancel path.
-	mu        sync.Mutex
-	cancelled map[*up.ClusterLBCompletion]struct{}
+	sel *up.AsyncHostSelector[classify.Decision]
 }
 
-func (l *lb) ChooseHost(_ up.ClusterLBHandle, ctx up.ClusterLBContext) (up.HostPtr, *up.ClusterLBCompletion) {
-	promise, ok := classify.DecisionKey.GetFromCtx(ctx)
-	if !ok {
-		return nil, nil
-	}
-
-	completion := ctx.NewCompletion()
-	promise.OnResolve(func(d classify.Decision) {
-		// May be invoked inline on the body/onStreamComplete thread (worker)
-		// or inline here if the promise is already resolved. Either way we
-		// must run completion.Complete on the cluster main thread.
-		l.owner.handle.Schedule(func() { l.complete(completion, d) })
-	})
-	return nil, completion
-}
-
-// complete finalises a host selection on the cluster main thread. It is the
-// single place that calls completion.Complete: kept here so the
-// cancelled-check, the host lookup and the Complete call cannot race with
-// CancelHostSelection.
-func (l *lb) complete(completion *up.ClusterLBCompletion, d classify.Decision) {
-	l.mu.Lock()
-	_, cancelled := l.cancelled[completion]
-	if cancelled {
-		delete(l.cancelled, completion)
-	}
-	l.mu.Unlock()
-	if cancelled {
-		return
-	}
-
-	if d.Err != "" {
-		completion.Complete(nil, d.Err)
-		return
-	}
-	var host up.HostPtr
-	if m := l.owner.hosts.Load(); m != nil {
-		host = (*m)[d.Provider]
-	}
-	if host == nil {
-		completion.Complete(nil, "orange.unknown_upstream")
-		return
-	}
-	completion.Complete(host, "")
+func (l *lb) ChooseHost(h up.ClusterLBHandle, ctx up.ClusterLBContext) (up.HostPtr, *up.ClusterLBCompletion) {
+	return l.sel.ChooseHost(h, ctx)
 }
 
 func (l *lb) CancelHostSelection(completion *up.ClusterLBCompletion) {
-	l.mu.Lock()
-	l.cancelled[completion] = struct{}{}
-	l.mu.Unlock()
+	l.sel.Cancel(completion)
 }
 
 // resolveUpstream parses a URL like "https://api.openai.com" into a resolved
