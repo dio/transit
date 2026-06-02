@@ -8,12 +8,12 @@ import (
 )
 
 func init() {
-	config, err := mcpprofilegateway.LoadConfigFromEnv()
+	pc, err := mcpprofilegateway.LoadPipelineConfig()
 	if err != nil {
 		log.Printf("mcp-profile-gateway: %v", err)
 		return
 	}
-	mcpprofilegateway.RegisterTransitFilter("mcp-profile-gateway", config)
+	mcpprofilegateway.RegisterTransitFilter("mcp-profile-gateway", pc.Snapshot())
 }
 
 func main() {}

@@ -1,6 +1,7 @@
 package mcpprofilegateway
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	mcpprofilerouter "github.com/dio/transit/examples/mcp-profile-router"
+	"github.com/dio/transit/up"
 )
 
 const ConfigEnv = "MCP_PROFILE_GATEWAY_CONFIG"
@@ -97,6 +99,33 @@ func LoadConfigFromEnv() (Config, error) {
 		return Config{}, fmt.Errorf("%s: %w", ConfigEnv, err)
 	}
 	return config, nil
+}
+
+// decodeConfig JSON-decodes and validates a Config from raw bytes.
+// Used as the ConfigDecoder for NewFileConfig.
+func decodeConfig(data []byte) (Config, error) {
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return Config{}, fmt.Errorf("parse %s: %w", ConfigEnv, err)
+	}
+	if err := ValidateConfig(cfg); err != nil {
+		return Config{}, fmt.Errorf("%s: %w", ConfigEnv, err)
+	}
+	return cfg, nil
+}
+
+// LoadPipelineConfig returns a PipelineConfig backed by the file path in
+// MCP_PROFILE_GATEWAY_CONFIG. Call RefreshOnce before reading Snapshot().
+func LoadPipelineConfig() (*up.PipelineConfig[Config], error) {
+	path := strings.TrimSpace(os.Getenv(ConfigEnv))
+	if path == "" {
+		return nil, fmt.Errorf("%s is required", ConfigEnv)
+	}
+	pc := up.NewFileConfig[Config](path, decodeConfig, up.PollOptions{})
+	if err := pc.RefreshOnce(context.Background()); err != nil {
+		return nil, err
+	}
+	return pc, nil
 }
 
 func ValidateConfig(config Config) error {

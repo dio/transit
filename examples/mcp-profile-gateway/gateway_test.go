@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -1147,4 +1148,67 @@ func mustRaw(t *testing.T, v any) json.RawMessage {
 	raw, err := json.Marshal(v)
 	require.NoError(t, err)
 	return raw
+}
+
+// ---------------------------------------------------------------------------
+// LoadPipelineConfig tests
+// ---------------------------------------------------------------------------
+
+func TestLoadPipelineConfig_LoadsFromFile(t *testing.T) {
+	cfg := Config{
+		CatalogServers: map[string]CatalogServer{
+			"test-server": {URL: "http://localhost:9999"},
+		},
+	}
+	data, err := json.Marshal(cfg)
+	require.NoError(t, err)
+
+	dir := t.TempDir()
+	path := dir + "/config.json"
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+	t.Setenv(ConfigEnv, path)
+
+	pc, err := LoadPipelineConfig()
+	require.NoError(t, err)
+	require.NotNil(t, pc)
+
+	got := pc.Snapshot()
+	require.Equal(t, "http://localhost:9999", got.CatalogServers["test-server"].URL)
+}
+
+func TestLoadPipelineConfig_ErrorWhenEnvUnset(t *testing.T) {
+	t.Setenv(ConfigEnv, "")
+	_, err := LoadPipelineConfig()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), ConfigEnv)
+}
+
+func TestLoadPipelineConfig_ErrorWhenFileMissing(t *testing.T) {
+	t.Setenv(ConfigEnv, "/no/such/path/config.json")
+	_, err := LoadPipelineConfig()
+	require.Error(t, err)
+}
+
+func TestLoadPipelineConfig_ErrorWhenInvalidJSON(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/config.json"
+	require.NoError(t, os.WriteFile(path, []byte(`not json`), 0o600))
+	t.Setenv(ConfigEnv, path)
+
+	_, err := LoadPipelineConfig()
+	require.Error(t, err)
+}
+
+func TestLoadPipelineConfig_ErrorWhenValidationFails(t *testing.T) {
+	// Config with no catalog servers fails validation.
+	data, err := json.Marshal(Config{})
+	require.NoError(t, err)
+
+	dir := t.TempDir()
+	path := dir + "/config.json"
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+	t.Setenv(ConfigEnv, path)
+
+	_, err = LoadPipelineConfig()
+	require.Error(t, err)
 }
