@@ -3,7 +3,9 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -38,6 +40,7 @@ type clusterAsyncRouterSuite struct {
 
 	envoyImage string
 	demoImage  string
+	caPEM      []byte // stored by applyTLSSecrets; consumed by runSDSVariant
 }
 
 func (s *clusterAsyncRouterSuite) SetupSuite() {
@@ -52,9 +55,11 @@ func (s *clusterAsyncRouterSuite) SetupSuite() {
 // them as Secrets. The CA Secret is mounted into Envoy (validates upstream
 // leaves via /etc/envoy/tls/ca.pem); the leaf Secrets are mounted into the
 // upstream-c / upstream-d Pods so their TLS listeners can serve.
+// The raw CA PEM is stored on s.caPEM for later use by runSDSVariant.
 func (s *clusterAsyncRouterSuite) applyTLSSecrets() {
 	caPEM, caKey, err := genCA()
 	require.NoError(s.T(), err)
+	s.caPEM = caPEM
 	hostC, err := genLeaf("host-c.test", caPEM, caKey)
 	require.NoError(s.T(), err)
 	hostD, err := genLeaf("host-d.test", caPEM, caKey)
@@ -70,6 +75,69 @@ func (s *clusterAsyncRouterSuite) applyTLSSecrets() {
 		"kubectl", "apply", "-f", "-")
 	run(s.Ctx, s.T(), tlsSecretManifest("tls-host-d", "default", hostD),
 		"kubectl", "apply", "-f", "-")
+}
+
+// applySDSConfigMap creates a ConfigMap in envoy-gateway-system that holds an
+// SDS resource JSON file (ca-sds.json). Envoy reads the file via
+// path_config_source to supply the trusted CA when combined_validation_context
+// is used (delta-e / epp-sds.tmpl.yaml).
+func (s *clusterAsyncRouterSuite) applySDSConfigMap(caPEM []byte) {
+	s.T().Helper()
+	b64CA := base64.StdEncoding.EncodeToString(caPEM)
+	sdsJSON := fmt.Sprintf(
+		`{"resources":[{"@type":"type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.Secret","name":"cluster-async-router-ca","validation_context":{"trusted_ca":{"inline_bytes":%q}}}]}`,
+		b64CA,
+	)
+	manifest := fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-async-router-sds-ca
+  namespace: envoy-gateway-system
+data:
+  ca-sds.json: |
+%s
+`, indent(sdsJSON, "    "))
+	run(s.Ctx, s.T(), manifest, "kubectl", "apply", "-f", "-")
+}
+
+// runSDSVariant runs the SDS-backed CA validation variant (WS-B delta-e).
+// It applies envoyproxy-sds.tmpl.yaml (which mounts the SDS ConfigMap),
+// waits for the Envoy deployment to roll, re-opens port-forwards, applies
+// epp-sds.tmpl.yaml, and asserts a/b/c/d all return 200.
+func (s *clusterAsyncRouterSuite) runSDSVariant(clusterName string) {
+	s.T().Helper()
+
+	liveLogf(s.T(), "[delta-e] applying SDS ConfigMap")
+	s.applySDSConfigMap(s.caPEM)
+
+	liveLogf(s.T(), "[delta-e] applying envoyproxy-sds.tmpl.yaml")
+	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "envoyproxy-sds.tmpl.yaml"), map[string]string{
+		"EnvoyImage": s.envoyImage,
+	})
+
+	liveLogf(s.T(), "[delta-e] waiting for Envoy deployment rollout")
+	envoyDeploy := egtest.GeneratedResourceName(s.Ctx, s.T(), "envoy-gateway-system", "default", "cluster-async-router", "deploy")
+	waitDeployment(s.Ctx, s.T(), "envoy-gateway-system", envoyDeploy)
+
+	liveLogf(s.T(), "[delta-e] opening new admin + gateway port-forwards")
+	adminURL, stopAdmin := portForward(s.Ctx, s.T(), "envoy-gateway-system", "deploy/"+envoyDeploy, 19000)
+	defer stopAdmin()
+	envoySvc := egtest.GeneratedResourceName(s.Ctx, s.T(), "envoy-gateway-system", "default", "cluster-async-router", "svc")
+	gatewayURL, stopGateway := portForward(s.Ctx, s.T(), "envoy-gateway-system", "service/"+envoySvc, 80)
+	defer stopGateway()
+	_ = adminURL // available for future config_dump assertions
+
+	liveLogf(s.T(), "[delta-e] applying epp-sds.tmpl.yaml")
+	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "epp-sds.tmpl.yaml"), map[string]string{
+		"ClusterName": clusterName,
+	})
+	waitEnvoyPatchPolicyProgrammed(s.Ctx, s.T(), "cluster-async-router")
+
+	liveLogf(s.T(), "[delta-e] asserting a/b/c/d all 200 via SDS CA")
+	assertTarget(s.Ctx, s.T(), gatewayURL, "a", "upstream-a")
+	assertTarget(s.Ctx, s.T(), gatewayURL, "b", "upstream-b")
+	assertTarget(s.Ctx, s.T(), gatewayURL, "c", "upstream-c")
+	assertTarget(s.Ctx, s.T(), gatewayURL, "d", "upstream-d")
 }
 
 func (s *clusterAsyncRouterSuite) TestClusterAsyncRouterEnvoyGateway() {
@@ -138,6 +206,79 @@ func (s *clusterAsyncRouterSuite) TestClusterAsyncRouterEnvoyGateway() {
 	liveLogf(s.T(), "asserting negative paths fail closed")
 	requireNon2xx(s.Ctx, s.T(), gatewayURL, []byte(`{"target":"nope"}`))
 	requireNon2xx(s.Ctx, s.T(), gatewayURL, []byte(`{}`))
+
+	// [WS-B delta-b] auto_host_sni: switch EPP to derive SNI from :authority.
+	// With :authority="cluster-async-router.example.com" (gateway hostname),
+	// SNI will be the gateway hostname, not host-c.test / host-d.test.
+	// Expected: a/b still 200 (plaintext); c/d non-2xx (SNI mismatch —
+	// proves auto_sni reads :authority, not host metadata).
+	liveLogf(s.T(), "[delta-b] applying epp-auto-host-sni.tmpl.yaml")
+	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "epp-auto-host-sni.tmpl.yaml"), map[string]string{
+		"ClusterName": clusterName,
+	})
+	waitEnvoyPatchPolicyProgrammed(s.Ctx, s.T(), "cluster-async-router")
+	liveLogf(s.T(), "[delta-b] asserting a/b → 200, c/d → non-2xx (auto_sni reads :authority)")
+	assertTarget(s.Ctx, s.T(), gatewayURL, "a", "upstream-a")
+	assertTarget(s.Ctx, s.T(), gatewayURL, "b", "upstream-b")
+	requireNon2xx(s.Ctx, s.T(), gatewayURL, []byte(`{"target":"c"}`))
+	requireNon2xx(s.Ctx, s.T(), gatewayURL, []byte(`{"target":"d"}`))
+
+	// [WS-B delta-c] timing trap test: Lua sets :authority from body phase,
+	// auto_sni reads it for SNI.
+	// Research question: does auto_sni evaluate :authority before or after
+	// the body phase?
+	//   If AFTER (cluster-level, at connection time): c/d → 200 (no trap).
+	//   If BEFORE (router-level, at headers phase): c/d → non-2xx (trap confirmed).
+	// Observation is logged; the test does NOT assert a specific outcome for c/d.
+	// Finding feeds the WS-B verdict.
+	liveLogf(s.T(), "[delta-c] applying epp-authority-rewrite.tmpl.yaml")
+	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "epp-authority-rewrite.tmpl.yaml"), map[string]string{
+		"ClusterName": clusterName,
+	})
+	waitEnvoyPatchPolicyProgrammed(s.Ctx, s.T(), "cluster-async-router")
+	liveLogf(s.T(), "[delta-c] asserting a/b → 200")
+	assertTarget(s.Ctx, s.T(), gatewayURL, "a", "upstream-a")
+	assertTarget(s.Ctx, s.T(), gatewayURL, "b", "upstream-b")
+	liveLogf(s.T(), "[delta-c] probing c and d (outcome logged, not asserted)")
+	statusC := probeTarget(s.Ctx, s.T(), gatewayURL, "c")
+	statusD := probeTarget(s.Ctx, s.T(), gatewayURL, "d")
+	liveLogf(s.T(), "[delta-c] target=c → %s; target=d → %s (auto_sni timing observation)", statusC, statusD)
+
+	// Restore baseline EPP before the SDS variant so the SDS test starts from
+	// a known-good state with explicit sni in UpstreamTlsContext.
+	liveLogf(s.T(), "restoring baseline epp.tmpl.yaml before SDS variant")
+	renderApply(s.Ctx, s.T(), filepath.Join(s.Dir, "k8s", "epp.tmpl.yaml"), map[string]string{
+		"ClusterName": clusterName,
+	})
+	waitEnvoyPatchPolicyProgrammed(s.Ctx, s.T(), "cluster-async-router")
+
+	if os.Getenv("TLS_VIA_SDS") == "1" {
+		liveLogf(s.T(), "[WS-B delta-e] running SDS variant")
+		s.runSDSVariant(clusterName)
+	}
+}
+
+// probeTarget sends a POST {"target":<target>} to gatewayURL and returns "2xx"
+// if the response status is in the 2xx range, or the numeric status code string
+// otherwise. It does not call t.Fatal on non-2xx responses, making it suitable
+// for observation-only probes (e.g. delta-c timing trap research).
+func probeTarget(ctx context.Context, t *testing.T, gatewayURL, target string) string {
+	t.Helper()
+	body, _ := json.Marshal(map[string]string{"target": target})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, gatewayURL+"/", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Sprintf("err:%v", err)
+	}
+	req.Host = gatewayHost
+	req.Header.Set("content-type", "application/json")
+	_, status, err := egtest.DoRequest(req)
+	if err != nil {
+		return fmt.Sprintf("err:%v", err)
+	}
+	if status >= 200 && status < 300 {
+		return "2xx"
+	}
+	return fmt.Sprintf("%d", status)
 }
 
 // assertPatchedClusterShape pulls the patched cluster out of Envoy's

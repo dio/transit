@@ -88,11 +88,15 @@ func (h *clusterHandleImpl) AddHosts(specs []down.HostSpec) []down.HostPtr {
 	empty := make([]C.envoy_dynamic_module_type_module_buffer, n) // locality zeros
 	results := make([]C.envoy_dynamic_module_type_cluster_host_envoy_ptr, n)
 
+	hostnames := make([]C.envoy_dynamic_module_type_module_buffer, n)
 	rawAddrs := make([]string, n)
+	rawHostnames := make([]string, n)
 	maxPairs := 0
 	for i, s := range specs {
 		rawAddrs[i] = s.Address
 		addrs[i] = stringToModuleBuffer(rawAddrs[i])
+		rawHostnames[i] = s.Hostname
+		hostnames[i] = stringToModuleBuffer(rawHostnames[i])
 		w := s.Weight
 		if w == 0 {
 			w = 1
@@ -131,15 +135,16 @@ func (h *clusterHandleImpl) AddHosts(specs []down.HostSpec) []down.HostPtr {
 		metaPtr = &metaBufs[0]
 	}
 
-	C.envoy_dynamic_module_callback_cluster_add_hosts(
+	C.envoy_dynamic_module_callback_cluster_add_hosts_with_hostnames(
 		h.envoyPtr, 0,
-		&addrs[0], &weights[0],
+		&addrs[0], &hostnames[0], &weights[0],
 		&empty[0], &empty[0], &empty[0],
 		metaPtr, C.size_t(maxPairs),
 		C.size_t(n),
 		&results[0],
 	)
 	runtime.KeepAlive(rawAddrs)
+	runtime.KeepAlive(rawHostnames)
 	runtime.KeepAlive(rawMeta)
 
 	out := make([]down.HostPtr, n)

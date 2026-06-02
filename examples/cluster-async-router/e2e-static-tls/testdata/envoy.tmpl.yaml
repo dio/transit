@@ -1,0 +1,63 @@
+static_resources:
+  listeners:
+    - name: cluster-async-router-static-tls
+      address:
+        socket_address: { address: 127.0.0.1, port_value: {{.ProxyPort}} }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: cluster-async-router-static-tls
+                http_filters:
+                  - name: body-router-writer
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: cluster-async-router
+                      filter_name: body-router-writer
+                      filter_config:
+                        "@type": type.googleapis.com/google.protobuf.StringValue
+                        value: '{}'
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: cluster-async-router-static-tls
+                  virtual_hosts:
+                    - name: local
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          route: { cluster: upstream }
+
+  clusters:
+    - name: upstream
+      connect_timeout: 5s
+      lb_policy: CLUSTER_PROVIDED
+      # Single static transport_socket. No transport_socket_matches anywhere.
+      # auto_host_sni reads the selected host's hostname() and uses it as SNI.
+      # auto_sni_san_validation copies that SNI into the SAN matcher.
+      transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+          auto_host_sni: true
+          auto_sni_san_validation: true
+          common_tls_context:
+            validation_context:
+              trusted_ca: { filename: {{.SystemCAFile}} }
+      cluster_type:
+        name: envoy.clusters.dynamic_modules
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_modules.v3.ClusterConfig
+          dynamic_module_config:
+            name: cluster-async-router
+          cluster_name: body-router-cluster
+          cluster_config:
+            "@type": type.googleapis.com/google.protobuf.StringValue
+            value: '{"hosts":[{"name":"httpbin","address":"httpbin.org:443","sni":"httpbin.org"},{"name":"example","address":"example.com:443","sni":"example.com"}]}'
+
+admin:
+  address:
+    socket_address: { address: 127.0.0.1, port_value: {{.AdminPort}} }

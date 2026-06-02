@@ -1,0 +1,368 @@
+diff --git a/source/extensions/clusters/dynamic_modules/abi_impl.cc b/source/extensions/clusters/dynamic_modules/abi_impl.cc
+index c9bca932..da0fe6f6 100644
+--- a/source/extensions/clusters/dynamic_modules/abi_impl.cc
++++ b/source/extensions/clusters/dynamic_modules/abi_impl.cc
+@@ -136,9 +136,76 @@ bool envoy_dynamic_module_callback_cluster_add_hosts(
+     }
+   }
+ 
++  // Empty hostnames vector preserves the legacy synthesized hostname (cluster name + address)
++  // that callers of this entrypoint have always received.
++  std::vector<std::string> hostname_strings(count);
+   std::vector<Envoy::Upstream::HostSharedPtr> result_hosts;
+-  if (!cluster->addHosts(address_strings, weight_vec, region_strings, zone_strings,
+-                         sub_zone_strings, metadata_vec, result_hosts, priority)) {
++  if (!cluster->addHosts(address_strings, hostname_strings, weight_vec, region_strings,
++                         zone_strings, sub_zone_strings, metadata_vec, result_hosts, priority)) {
++    return false;
++  }
++  for (size_t i = 0; i < result_hosts.size(); ++i) {
++    result_host_ptrs[i] = const_cast<Envoy::Upstream::Host*>(result_hosts[i].get());
++  }
++  return true;
++}
++
++bool envoy_dynamic_module_callback_cluster_add_hosts_with_hostnames(
++    envoy_dynamic_module_type_cluster_envoy_ptr cluster_envoy_ptr, uint32_t priority,
++    const envoy_dynamic_module_type_module_buffer* addresses,
++    const envoy_dynamic_module_type_module_buffer* hostnames, const uint32_t* weights,
++    const envoy_dynamic_module_type_module_buffer* regions,
++    const envoy_dynamic_module_type_module_buffer* zones,
++    const envoy_dynamic_module_type_module_buffer* sub_zones,
++    const envoy_dynamic_module_type_module_buffer* metadata_pairs, size_t metadata_pairs_per_host,
++    size_t count, envoy_dynamic_module_type_cluster_host_envoy_ptr* result_host_ptrs) {
++  if (!Envoy::Thread::MainThread::isMainOrTestThread()) {
++    IS_ENVOY_BUG("envoy_dynamic_module_callback_cluster_add_hosts_with_hostnames must be called on "
++                 "the main thread");
++    return false;
++  }
++  auto* cluster = getCluster(cluster_envoy_ptr);
++  std::vector<std::string> address_strings;
++  address_strings.reserve(count);
++  std::vector<std::string> hostname_strings;
++  hostname_strings.reserve(count);
++  std::vector<uint32_t> weight_vec(weights, weights + count);
++  std::vector<std::string> region_strings;
++  region_strings.reserve(count);
++  std::vector<std::string> zone_strings;
++  zone_strings.reserve(count);
++  std::vector<std::string> sub_zone_strings;
++  sub_zone_strings.reserve(count);
++  for (size_t i = 0; i < count; ++i) {
++    address_strings.emplace_back(addresses[i].ptr, addresses[i].length);
++    if (hostnames != nullptr) {
++      hostname_strings.emplace_back(hostnames[i].ptr, hostnames[i].length);
++    } else {
++      hostname_strings.emplace_back();
++    }
++    region_strings.emplace_back(regions[i].ptr, regions[i].length);
++    zone_strings.emplace_back(zones[i].ptr, zones[i].length);
++    sub_zone_strings.emplace_back(sub_zones[i].ptr, sub_zones[i].length);
++  }
++
++  std::vector<std::vector<std::tuple<std::string, std::string, std::string>>> metadata_vec;
++  if (metadata_pairs != nullptr && metadata_pairs_per_host > 0) {
++    metadata_vec.resize(count);
++    for (size_t i = 0; i < count; ++i) {
++      metadata_vec[i].reserve(metadata_pairs_per_host);
++      for (size_t j = 0; j < metadata_pairs_per_host; ++j) {
++        size_t base = (i * metadata_pairs_per_host + j) * 3;
++        std::string filter_name(metadata_pairs[base].ptr, metadata_pairs[base].length);
++        std::string key(metadata_pairs[base + 1].ptr, metadata_pairs[base + 1].length);
++        std::string value(metadata_pairs[base + 2].ptr, metadata_pairs[base + 2].length);
++        metadata_vec[i].emplace_back(std::move(filter_name), std::move(key), std::move(value));
++      }
++    }
++  }
++
++  std::vector<Envoy::Upstream::HostSharedPtr> result_hosts;
++  if (!cluster->addHosts(address_strings, hostname_strings, weight_vec, region_strings,
++                         zone_strings, sub_zone_strings, metadata_vec, result_hosts, priority)) {
+     return false;
+   }
+   for (size_t i = 0; i < result_hosts.size(); ++i) {
+diff --git a/source/extensions/clusters/dynamic_modules/cluster.cc b/source/extensions/clusters/dynamic_modules/cluster.cc
+index 99c5b757..a0bba5a5 100644
+--- a/source/extensions/clusters/dynamic_modules/cluster.cc
++++ b/source/extensions/clusters/dynamic_modules/cluster.cc
+@@ -297,11 +297,12 @@ Upstream::HostsPerLocalityConstSharedPtr buildHostsPerLocality(const Upstream::H
+ } // namespace
+ 
+ bool DynamicModuleCluster::addHosts(
+-    const std::vector<std::string>& addresses, const std::vector<uint32_t>& weights,
+-    const std::vector<std::string>& regions, const std::vector<std::string>& zones,
+-    const std::vector<std::string>& sub_zones,
++    const std::vector<std::string>& addresses, const std::vector<std::string>& hostnames,
++    const std::vector<uint32_t>& weights, const std::vector<std::string>& regions,
++    const std::vector<std::string>& zones, const std::vector<std::string>& sub_zones,
+     const std::vector<std::vector<std::tuple<std::string, std::string, std::string>>>& metadata,
+     std::vector<Upstream::HostSharedPtr>& result_hosts, uint32_t priority) {
++  ASSERT(addresses.size() == hostnames.size());
+   ASSERT(addresses.size() == weights.size());
+   ASSERT(addresses.size() == regions.size());
+   ASSERT(addresses.size() == zones.size());
+@@ -347,9 +348,16 @@ bool DynamicModuleCluster::addHosts(
+       endpoint_metadata = std::move(md);
+     }
+ 
++    // When the caller provided a hostname for this host, use it verbatim — this is the value
++    // read by Upstream::HostDescription::hostname() and consumed by upstream TLS features such
++    // as auto_host_sni. Otherwise fall back to the legacy synthesized form so existing modules
++    // (callers of envoy_dynamic_module_callback_cluster_add_hosts, which has no hostname slot)
++    // see no behavior change.
++    const std::string host_name =
++        hostnames[i].empty() ? (cluster_info->name() + addresses[i]) : hostnames[i];
+     auto host_result = Upstream::HostImpl::create(
+-        cluster_info, cluster_info->name() + addresses[i], std::move(resolved_address),
+-        std::move(endpoint_metadata), nullptr, weights[i], std::move(locality),
++        cluster_info, host_name, std::move(resolved_address), std::move(endpoint_metadata), nullptr,
++        weights[i], std::move(locality),
+         envoy::config::endpoint::v3::Endpoint::HealthCheckConfig().default_instance(), 0,
+         envoy::config::core::v3::UNKNOWN);
+     if (!host_result.ok()) {
+diff --git a/source/extensions/clusters/dynamic_modules/cluster.h b/source/extensions/clusters/dynamic_modules/cluster.h
+index 2f8443d5..7b59a1c6 100644
+--- a/source/extensions/clusters/dynamic_modules/cluster.h
++++ b/source/extensions/clusters/dynamic_modules/cluster.h
+@@ -322,10 +322,14 @@ public:
+   }
+ 
+   // Methods called by the dynamic module via ABI callbacks.
++  //
++  // `hostnames` must have the same length as `addresses`. An entry with empty string preserves the
++  // legacy synthesized hostname (cluster name + address string) for that host; a non-empty entry
++  // is used verbatim as the host's hostname and is what `UpstreamTlsContext.auto_host_sni` reads.
+   bool addHosts(
+-      const std::vector<std::string>& addresses, const std::vector<uint32_t>& weights,
+-      const std::vector<std::string>& regions, const std::vector<std::string>& zones,
+-      const std::vector<std::string>& sub_zones,
++      const std::vector<std::string>& addresses, const std::vector<std::string>& hostnames,
++      const std::vector<uint32_t>& weights, const std::vector<std::string>& regions,
++      const std::vector<std::string>& zones, const std::vector<std::string>& sub_zones,
+       const std::vector<std::vector<std::tuple<std::string, std::string, std::string>>>& metadata,
+       std::vector<Upstream::HostSharedPtr>& result_hosts, uint32_t priority = 0);
+   size_t removeHosts(const std::vector<Upstream::HostSharedPtr>& hosts);
+diff --git a/source/extensions/dynamic_modules/abi/abi.h b/source/extensions/dynamic_modules/abi/abi.h
+index b6ab7f49..347c0734 100644
+--- a/source/extensions/dynamic_modules/abi/abi.h
++++ b/source/extensions/dynamic_modules/abi/abi.h
+@@ -8669,6 +8669,37 @@ bool envoy_dynamic_module_callback_cluster_add_hosts(
+     const envoy_dynamic_module_type_module_buffer* metadata_pairs, size_t metadata_pairs_per_host,
+     size_t count, envoy_dynamic_module_type_cluster_host_envoy_ptr* result_host_ptrs);
+ 
++/**
++ * envoy_dynamic_module_callback_cluster_add_hosts_with_hostnames is identical to
++ * envoy_dynamic_module_callback_cluster_add_hosts but additionally accepts a per-host hostname
++ * array. The hostname is what Envoy returns from ``Upstream::HostDescription::hostname()`` and is
++ * the value read by upstream TLS features such as ``UpstreamTlsContext.auto_host_sni`` and
++ * ``auto_sni_san_validation``. This lets dynamic-module clusters originate TLS to upstreams whose
++ * SAN must match a logical hostname (e.g. ``host-c.test``) while the address itself is a numeric
++ * ``ip:port``.
++ *
++ * Entries in ``hostnames`` with length 0 preserve the previous behavior of
++ * envoy_dynamic_module_callback_cluster_add_hosts: the resulting host's hostname is the
++ * concatenation of the cluster name and the address string. The ``hostnames`` array itself may be
++ * nullptr, in which case all hosts use that legacy synthesized hostname.
++ *
++ * All other parameters and ownership semantics match
++ * envoy_dynamic_module_callback_cluster_add_hosts.
++ *
++ * @param hostnames is an optional array of hostname strings, one per host. Each entry is owned by
++ * the module. An entry with length 0 indicates no hostname (legacy synthesized form). May be
++ * nullptr if no host needs a hostname.
++ */
++bool envoy_dynamic_module_callback_cluster_add_hosts_with_hostnames(
++    envoy_dynamic_module_type_cluster_envoy_ptr cluster_envoy_ptr, uint32_t priority,
++    const envoy_dynamic_module_type_module_buffer* addresses,
++    const envoy_dynamic_module_type_module_buffer* hostnames, const uint32_t* weights,
++    const envoy_dynamic_module_type_module_buffer* regions,
++    const envoy_dynamic_module_type_module_buffer* zones,
++    const envoy_dynamic_module_type_module_buffer* sub_zones,
++    const envoy_dynamic_module_type_module_buffer* metadata_pairs, size_t metadata_pairs_per_host,
++    size_t count, envoy_dynamic_module_type_cluster_host_envoy_ptr* result_host_ptrs);
++
+ /**
+  * envoy_dynamic_module_callback_cluster_remove_hosts removes multiple hosts from the cluster in a
+  * single batch operation. This triggers only one priority set update regardless of how many hosts
+diff --git a/source/extensions/dynamic_modules/abi_impl.cc b/source/extensions/dynamic_modules/abi_impl.cc
+index ef30d362..47a8e230 100644
+--- a/source/extensions/dynamic_modules/abi_impl.cc
++++ b/source/extensions/dynamic_modules/abi_impl.cc
+@@ -453,6 +453,18 @@ __attribute__((weak)) bool envoy_dynamic_module_callback_cluster_add_hosts(
+   return false;
+ }
+ 
++__attribute__((weak)) bool envoy_dynamic_module_callback_cluster_add_hosts_with_hostnames(
++    envoy_dynamic_module_type_cluster_envoy_ptr, uint32_t,
++    const envoy_dynamic_module_type_module_buffer*, const envoy_dynamic_module_type_module_buffer*,
++    const uint32_t*, const envoy_dynamic_module_type_module_buffer*,
++    const envoy_dynamic_module_type_module_buffer*, const envoy_dynamic_module_type_module_buffer*,
++    const envoy_dynamic_module_type_module_buffer*, size_t, size_t,
++    envoy_dynamic_module_type_cluster_host_envoy_ptr*) {
++  IS_ENVOY_BUG("envoy_dynamic_module_callback_cluster_add_hosts_with_hostnames: "
++               "not implemented in this context");
++  return false;
++}
++
+ __attribute__((weak)) size_t envoy_dynamic_module_callback_cluster_remove_hosts(
+     envoy_dynamic_module_type_cluster_envoy_ptr,
+     const envoy_dynamic_module_type_cluster_host_envoy_ptr*, size_t) {
+diff --git a/test/extensions/clusters/dynamic_modules/cluster_test.cc b/test/extensions/clusters/dynamic_modules/cluster_test.cc
+index 67202263..ff0f6841 100644
+--- a/test/extensions/clusters/dynamic_modules/cluster_test.cc
++++ b/test/extensions/clusters/dynamic_modules/cluster_test.cc
+@@ -120,13 +120,14 @@ cluster_type:
+   NiceMock<Server::Configuration::MockServerFactoryContext> server_context_;
+ };
+ 
+-// Convenience wrapper to add hosts without locality (passes empty locality and metadata vectors).
++// Convenience wrapper to add hosts without locality (passes empty hostname, locality and metadata
++// vectors). Empty hostnames preserve the legacy synthesized host hostname.
+ bool addSimpleHosts(DynamicModuleCluster& cluster, const std::vector<std::string>& addresses,
+                     const std::vector<uint32_t>& weights,
+                     std::vector<Upstream::HostSharedPtr>& result_hosts, uint32_t priority = 0) {
+   std::vector<std::string> empty_strings(addresses.size());
+-  return cluster.addHosts(addresses, weights, empty_strings, empty_strings, empty_strings, {},
+-                          result_hosts, priority);
++  return cluster.addHosts(addresses, empty_strings, weights, empty_strings, empty_strings,
++                          empty_strings, {}, result_hosts, priority);
+ }
+ 
+ // Test that creating a cluster with a valid no-op module succeeds.
+@@ -445,6 +446,103 @@ TEST_F(DynamicModuleClusterTest, AbiCallbacksHostManagement) {
+   EXPECT_EQ(0, envoy_dynamic_module_callback_cluster_remove_hosts(cluster.get(), host_ptrs, 2));
+ }
+ 
++// Test that envoy_dynamic_module_callback_cluster_add_hosts_with_hostnames threads the per-host
++// hostname through to Upstream::HostDescription::hostname(). This is the value upstream TLS
++// features such as auto_host_sni read at connect time to populate the TLS ClientHello SNI.
++TEST_F(DynamicModuleClusterTest, AbiCallbacksAddHostsWithHostnames) {
++  auto result = createCluster(makeYamlConfig("cluster_no_op"));
++  ASSERT_TRUE(result.ok()) << result.status().message();
++  auto cluster = std::dynamic_pointer_cast<DynamicModuleCluster>(result->first);
++  ASSERT_NE(nullptr, cluster);
++
++  std::string addr1 = "127.0.0.1:10001";
++  std::string addr2 = "127.0.0.1:10002";
++  std::string addr3 = "127.0.0.1:10003";
++  std::string hostname1 = "host-c.test";
++  std::string hostname2 = "host-d.test";
++  // Empty entry must fall back to the legacy synthesized hostname so callers can mix.
++  std::string hostname3;
++
++  envoy_dynamic_module_type_module_buffer addr_bufs[] = {{addr1.data(), addr1.size()},
++                                                         {addr2.data(), addr2.size()},
++                                                         {addr3.data(), addr3.size()}};
++  envoy_dynamic_module_type_module_buffer hostname_bufs[] = {
++      {hostname1.data(), hostname1.size()},
++      {hostname2.data(), hostname2.size()},
++      {hostname3.data(), hostname3.size()}};
++  uint32_t weights[] = {1, 1, 1};
++  envoy_dynamic_module_type_module_buffer empty_loc[] = {{"", 0}, {"", 0}, {"", 0}};
++  envoy_dynamic_module_type_cluster_host_envoy_ptr host_ptrs[3] = {nullptr, nullptr, nullptr};
++
++  EXPECT_TRUE(envoy_dynamic_module_callback_cluster_add_hosts_with_hostnames(
++      cluster.get(), 0, addr_bufs, hostname_bufs, weights, empty_loc, empty_loc, empty_loc, nullptr,
++      0, 3, host_ptrs));
++  ASSERT_NE(nullptr, host_ptrs[0]);
++  ASSERT_NE(nullptr, host_ptrs[1]);
++  ASSERT_NE(nullptr, host_ptrs[2]);
++
++  auto* host1 = static_cast<Upstream::Host*>(host_ptrs[0]);
++  auto* host2 = static_cast<Upstream::Host*>(host_ptrs[1]);
++  auto* host3 = static_cast<Upstream::Host*>(host_ptrs[2]);
++  EXPECT_EQ(hostname1, host1->hostname());
++  EXPECT_EQ(hostname2, host2->hostname());
++  // Empty hostname → legacy synthesized form: cluster name concatenated with the address.
++  EXPECT_EQ(cluster->info()->name() + addr3, host3->hostname());
++
++  EXPECT_EQ(3, envoy_dynamic_module_callback_cluster_remove_hosts(cluster.get(), host_ptrs, 3));
++}
++
++// Test that nullptr `hostnames` is accepted and produces the legacy synthesized hostname for all
++// hosts — the same behavior callers of envoy_dynamic_module_callback_cluster_add_hosts see today.
++TEST_F(DynamicModuleClusterTest, AbiCallbacksAddHostsWithHostnamesNullArrayIsLegacy) {
++  auto result = createCluster(makeYamlConfig("cluster_no_op"));
++  ASSERT_TRUE(result.ok()) << result.status().message();
++  auto cluster = std::dynamic_pointer_cast<DynamicModuleCluster>(result->first);
++  ASSERT_NE(nullptr, cluster);
++
++  std::string addr1 = "127.0.0.1:10001";
++  std::string addr2 = "127.0.0.1:10002";
++  envoy_dynamic_module_type_module_buffer addr_bufs[] = {{addr1.data(), addr1.size()},
++                                                         {addr2.data(), addr2.size()}};
++  uint32_t weights[] = {1, 1};
++  envoy_dynamic_module_type_module_buffer empty_loc[] = {{"", 0}, {"", 0}};
++  envoy_dynamic_module_type_cluster_host_envoy_ptr host_ptrs[2] = {nullptr, nullptr};
++
++  EXPECT_TRUE(envoy_dynamic_module_callback_cluster_add_hosts_with_hostnames(
++      cluster.get(), 0, addr_bufs, /*hostnames=*/nullptr, weights, empty_loc, empty_loc, empty_loc,
++      nullptr, 0, 2, host_ptrs));
++  auto* host1 = static_cast<Upstream::Host*>(host_ptrs[0]);
++  auto* host2 = static_cast<Upstream::Host*>(host_ptrs[1]);
++  EXPECT_EQ(cluster->info()->name() + addr1, host1->hostname());
++  EXPECT_EQ(cluster->info()->name() + addr2, host2->hostname());
++
++  EXPECT_EQ(2, envoy_dynamic_module_callback_cluster_remove_hosts(cluster.get(), host_ptrs, 2));
++}
++
++// Sanity: envoy_dynamic_module_callback_cluster_add_hosts (the legacy entrypoint, no hostnames
++// parameter) must continue to produce the synthesized host hostname so existing modules see no
++// behavior change after this patch.
++TEST_F(DynamicModuleClusterTest, AbiCallbacksLegacyAddHostsPreservesSynthesizedHostname) {
++  auto result = createCluster(makeYamlConfig("cluster_no_op"));
++  ASSERT_TRUE(result.ok()) << result.status().message();
++  auto cluster = std::dynamic_pointer_cast<DynamicModuleCluster>(result->first);
++  ASSERT_NE(nullptr, cluster);
++
++  std::string addr1 = "127.0.0.1:10001";
++  envoy_dynamic_module_type_module_buffer addr_bufs[] = {{addr1.data(), addr1.size()}};
++  uint32_t weights[] = {1};
++  envoy_dynamic_module_type_module_buffer empty_loc[] = {{"", 0}};
++  envoy_dynamic_module_type_cluster_host_envoy_ptr host_ptrs[1] = {nullptr};
++
++  EXPECT_TRUE(envoy_dynamic_module_callback_cluster_add_hosts(cluster.get(), 0, addr_bufs, weights,
++                                                              empty_loc, empty_loc, empty_loc,
++                                                              nullptr, 0, 1, host_ptrs));
++  auto* host = static_cast<Upstream::Host*>(host_ptrs[0]);
++  EXPECT_EQ(cluster->info()->name() + addr1, host->hostname());
++
++  EXPECT_EQ(1, envoy_dynamic_module_callback_cluster_remove_hosts(cluster.get(), host_ptrs, 1));
++}
++
+ // Test the LB ABI callback implementations directly.
+ TEST_F(DynamicModuleClusterTest, LbAbiCallbacks) {
+   auto result = createCluster(makeYamlConfig("cluster_no_op"));
+@@ -2774,7 +2872,9 @@ TEST_F(DynamicModuleClusterTest, AddHostsWithLocality) {
+   std::vector<std::vector<std::tuple<std::string, std::string, std::string>>> metadata;
+ 
+   std::vector<Upstream::HostSharedPtr> hosts;
+-  ASSERT_TRUE(cluster->addHosts(addresses, weights, regions, zones, sub_zones, metadata, hosts));
++  std::vector<std::string> hostnames(addresses.size());
++  ASSERT_TRUE(cluster->addHosts(addresses, hostnames, weights, regions, zones, sub_zones, metadata,
++                                hosts));
+   EXPECT_EQ(2, hosts.size());
+   EXPECT_EQ(2, DynamicModuleClusterTestPeer::getHostMapSize(*cluster));
+ 
+@@ -2807,7 +2907,9 @@ TEST_F(DynamicModuleClusterTest, AddHostsWithLocalityAndMetadata) {
+       {{"envoy.lb", "shard", "42"}, {"envoy.lb", "service", "my-service"}}};
+ 
+   std::vector<Upstream::HostSharedPtr> hosts;
+-  ASSERT_TRUE(cluster->addHosts(addresses, weights, regions, zones, sub_zones, metadata, hosts));
++  std::vector<std::string> hostnames(addresses.size());
++  ASSERT_TRUE(cluster->addHosts(addresses, hostnames, weights, regions, zones, sub_zones, metadata,
++                                hosts));
+   EXPECT_EQ(1, hosts.size());
+ 
+   // Verify metadata is set correctly.
+@@ -3078,7 +3180,9 @@ TEST_F(DynamicModuleClusterTest, HostsPerLocalityWithLocality) {
+   std::vector<std::vector<std::tuple<std::string, std::string, std::string>>> metadata;
+ 
+   std::vector<Upstream::HostSharedPtr> hosts;
+-  ASSERT_TRUE(cluster->addHosts(addresses, weights, regions, zones, sub_zones, metadata, hosts));
++  std::vector<std::string> hostnames(addresses.size());
++  ASSERT_TRUE(cluster->addHosts(addresses, hostnames, weights, regions, zones, sub_zones, metadata,
++                                hosts));
+ 
+   // Verify through the LB that locality grouping works.
+   auto handle = std::make_shared<DynamicModuleClusterHandle>(cluster);

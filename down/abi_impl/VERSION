@@ -1,14 +1,30 @@
 # Vendored abi.h provenance
 #
-# abi.h is copied from the Envoy dynamic modules SDK module cache. It MUST
-# always match the Go SDK version pinned in go.mod.
+# ABI_SOURCE controls where abi.h is obtained:
+#   gomod   (default) — copied from Go module cache; MUST match SDK_VERSION in go.mod
+#   release — downloaded from the GitHub release asset; use for patched builds where
+#             the abi.h is a superset of the upstream module version
 #
-# Updating both in separate commits (or updating only one) causes ABI drift and
-# will produce hard-to-diagnose runtime crashes.
+# ENVOY_TAG overrides the release tag used for both the Envoy binary download and
+# (when ABI_SOURCE=release) the abi.h download. When absent it is derived as
+# envoy-{SDK_COMMIT[:8]}.
 #
-# To update (all steps in one):
+# ENVOY_ASSET_SUFFIX is appended to the binary asset name inside the release
+# (e.g. -auto-host-sni → envoy-darwin-arm64-auto-host-sni). When absent no suffix
+# is appended. Must match the suffix used when `emb build --suffix=...` was run.
+#
+# Normal upstream update (both steps in one):
 #   make update-sdk ENVOY_COMMIT=<full-or-short-commit>
+#
+# Patched build update:
+#   1. Set ENVOY_TAG, ENVOY_ASSET_SUFFIX, ABI_SOURCE=release below.
+#   2. Run: make sync-abi          # fetches abi.h from the release
+#   3. Commit VERSION + abi.h together.
 
 SDK_MODULE=github.com/envoyproxy/envoy/source/extensions/dynamic_modules
 SDK_VERSION=v0.0.0-20260521055639-0d6e3c60aa55
 SDK_COMMIT=0d6e3c60aa55
+
+ENVOY_TAG=envoy-0d6e3c60-auto-host-sni
+ENVOY_ASSET_SUFFIX=-auto-host-sni
+ABI_SOURCE=release

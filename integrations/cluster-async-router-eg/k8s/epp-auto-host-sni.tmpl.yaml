@@ -1,0 +1,90 @@
+# EnvoyPatchPolicy variant: auto_host_sni (WS-B delta-b).
+#
+# Same body-router-writer HCM patch as epp.tmpl.yaml but the cluster uses
+# auto_sni / auto_san_validation instead of hardcoded sni in each
+# UpstreamTlsContext. SNI is derived from the request :authority header at
+# connection time rather than being statically embedded in the patch.
+#
+# With the gateway host ":authority: cluster-async-router.example.com" the SNI
+# presented to upstream-c/d will be the gateway hostname, NOT host-c.test /
+# host-d.test, so c/d upstreams (whose GetCertificate tripwire requires an
+# exact SNI match) will reject the handshake → non-2xx.
+# a/b are plaintext and unaffected → 200.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyPatchPolicy
+metadata:
+  name: cluster-async-router
+  namespace: default
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: cluster-async-router
+  type: JSONPatch
+  jsonPatches:
+  - type: "type.googleapis.com/envoy.config.listener.v3.Listener"
+    name: tcp-80
+    operation:
+      op: add
+      path: "/default_filter_chain/filters/0/typed_config/http_filters/0"
+      value:
+        name: body-router-writer
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+          dynamic_module_config:
+            name: cluster-async-router
+          filter_name: body-router-writer
+          filter_config:
+            "@type": type.googleapis.com/google.protobuf.StringValue
+            value: '{}'
+  - type: "type.googleapis.com/envoy.config.cluster.v3.Cluster"
+    name: "{{.ClusterName}}"
+    operation:
+      op: replace
+      path: ""
+      value:
+        name: "{{.ClusterName}}"
+        connect_timeout: 5s
+        lb_policy: CLUSTER_PROVIDED
+        typed_extension_protocol_options:
+          envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+            "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+            explicit_http_config:
+              http_protocol_options: {}
+            # auto_sni derives the TLS SNI from the request :authority header.
+            # auto_san_validation validates the upstream cert SAN against the
+            # same :authority value. No hardcoded sni is embedded here — the
+            # transport_socket_matches entries still select the right TLS context
+            # via host metadata, but the outgoing SNI comes from :authority.
+            upstream_http_protocol_options:
+              auto_sni: true
+              auto_san_validation: true
+        transport_socket_matches:
+        - name: host-c
+          match: { sni: host-c.test }
+          transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+              common_tls_context:
+                validation_context:
+                  trusted_ca: { filename: /etc/envoy/tls/ca.pem }
+        - name: host-d
+          match: { sni: host-d.test }
+          transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+              common_tls_context:
+                validation_context:
+                  trusted_ca: { filename: /etc/envoy/tls/ca.pem }
+        cluster_type:
+          name: envoy.clusters.dynamic_modules
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_modules.v3.ClusterConfig
+            dynamic_module_config:
+              name: cluster-async-router
+            cluster_name: body-router-cluster
+            cluster_config:
+              "@type": type.googleapis.com/google.protobuf.StringValue
+              value: '{"hosts":[{"name":"a","address":"upstream-a.default.svc.cluster.local:8080"},{"name":"b","address":"upstream-b.default.svc.cluster.local:8080"},{"name":"c","address":"upstream-c.default.svc.cluster.local:8443","sni":"host-c.test"},{"name":"d","address":"upstream-d.default.svc.cluster.local:8443","sni":"host-d.test"}]}'

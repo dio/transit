@@ -76,6 +76,12 @@ eg-install:
 	RESET_CLUSTER=$(RESET_CLUSTER) \
 	go test ./e2e/... -run TestEnvoyGatewayInstallOnly -v -timeout=10m -count=1
 
+ifeq ($(TLS_VIA_SDS),1)
+e2e: TLS_VIA_SDS_FLAG = TLS_VIA_SDS=1
+else
+e2e: TLS_VIA_SDS_FLAG =
+endif
+
 ifeq ($(SKIP_IMAGE_BUILD),1)
 e2e:
 else
@@ -91,6 +97,7 @@ endif
 	K3D_SKIP_IMAGE_IMPORT=$(K3D_SKIP_IMAGE_IMPORT) \
 	KEEP_CLUSTER=$(KEEP_CLUSTER) \
 	RESET_CLUSTER=$(RESET_CLUSTER) \
+	$(TLS_VIA_SDS_FLAG) \
 	go test ./e2e/... -v -timeout=15m -count=1
 
 clean:

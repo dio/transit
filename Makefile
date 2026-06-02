@@ -19,11 +19,20 @@ ZIG_OS := $(if $(filter darwin,$(GOOS)),macos,$(GOOS))
 # Zig download URL (deferred so ZIG_VERSION overrides take effect).
 ZIG_URL = https://ziglang.org/download/$(ZIG_VERSION)/zig-$(_ARCH)-$(ZIG_OS)-$(ZIG_VERSION).tar.xz
 
-# Envoy: raw binaries from dio/envoy-builder, tagged envoy-{8-char commit}.
-# ENVOY_TAG is derived from SDK_COMMIT in down/abi_impl/VERSION at parse time
-# so make update-sdk keeps the download URL in sync automatically.
-ENVOY_TAG := envoy-$(shell grep '^SDK_COMMIT=' down/abi_impl/VERSION | cut -d= -f2 | cut -c1-8)
-ENVOY_URL  = https://github.com/dio/envoy-builder/releases/download/$(ENVOY_TAG)/envoy-$(GOOS)-$(GOARCH)
+# Envoy: raw binaries from dio/envoy-builder releases.
+#
+# ENVOY_TAG: read from VERSION if set; otherwise derived as envoy-{SDK_COMMIT[:8]}.
+# ENVOY_ASSET_SUFFIX: appended to the binary asset name (e.g. -auto-host-sni).
+# ABI_SOURCE: "gomod" (default) or "release" (download abi.h from release asset).
+_ENVOY_TAG_OVERRIDE   := $(shell grep '^ENVOY_TAG='          down/abi_impl/VERSION | cut -d= -f2)
+_ENVOY_ASSET_SUFFIX   := $(shell grep '^ENVOY_ASSET_SUFFIX=' down/abi_impl/VERSION | cut -d= -f2)
+_ABI_SOURCE           := $(shell grep '^ABI_SOURCE='         down/abi_impl/VERSION | cut -d= -f2)
+
+ENVOY_TAG  := $(if $(_ENVOY_TAG_OVERRIDE),$(_ENVOY_TAG_OVERRIDE),envoy-$(shell grep '^SDK_COMMIT=' down/abi_impl/VERSION | cut -d= -f2 | cut -c1-8))
+ABI_SOURCE := $(if $(_ABI_SOURCE),$(_ABI_SOURCE),gomod)
+
+ENVOY_URL = https://github.com/dio/envoy-builder/releases/download/$(ENVOY_TAG)/envoy-$(GOOS)-$(GOARCH)$(_ENVOY_ASSET_SUFFIX)
+ABI_URL   = https://github.com/dio/envoy-builder/releases/download/$(ENVOY_TAG)/abi.h
 
 # Host target triple for zig cc.
 ifeq ($(GOOS),darwin)
@@ -132,9 +141,19 @@ tidy:
 	cd tools && GOWORK=off go mod tidy
 	go work sync
 
+# sync-abi downloads abi.h from the GitHub release pinned by ENVOY_TAG in
+# down/abi_impl/VERSION. Use this when ABI_SOURCE=release (patched builds).
+.PHONY: sync-abi
+sync-abi:
+	@echo "Downloading abi.h from $(ENVOY_TAG)..."
+	@chmod u+w down/abi_impl/abi.h 2>/dev/null || true
+	@curl -fsSL -L "$(ABI_URL)" -o down/abi_impl/abi.h
+	@echo "abi.h synced from $(ABI_URL)"
+
 # update-sdk upgrades the Envoy dynamic modules SDK to the given Envoy commit and
 # syncs down/abi_impl/abi.h + down/abi_impl/VERSION in one step.
 # Usage: make update-sdk ENVOY_COMMIT=<full-or-short-commit>
+# For patched builds set ABI_SOURCE=release in VERSION and use sync-abi instead.
 .PHONY: update-sdk
 update-sdk:
 	@if [ -z "$(ENVOY_COMMIT)" ]; then \
@@ -145,28 +164,37 @@ update-sdk:
 	GOWORK=off go mod tidy
 	@NEW_VER=$$(grep 'envoyproxy/envoy/source/extensions/dynamic_modules ' go.mod | awk '{print $$2}'); \
 	NEW_COMMIT=$$(echo "$$NEW_VER" | sed 's/.*-//'); \
-	MODCACHE=$$(go env GOPATH)/pkg/mod; \
-	ABI_SRC="$$MODCACHE/github.com/envoyproxy/envoy/source/extensions/dynamic_modules@$$NEW_VER/abi/abi.h"; \
-	chmod u+w down/abi_impl/abi.h; \
-	cp "$$ABI_SRC" down/abi_impl/abi.h; \
-	sed -i.bak "s|^SDK_VERSION=.*|SDK_VERSION=$$NEW_VER|" down/abi_impl/VERSION; \
-	sed -i.bak "s|^SDK_COMMIT=.*|SDK_COMMIT=$$NEW_COMMIT|" down/abi_impl/VERSION; \
-	rm -f down/abi_impl/VERSION.bak; \
-	echo "SDK updated to $$NEW_VER"
+	gsed -i "s|^SDK_VERSION=.*|SDK_VERSION=$$NEW_VER|" down/abi_impl/VERSION; \
+	gsed -i "s|^SDK_COMMIT=.*|SDK_COMMIT=$$NEW_COMMIT|" down/abi_impl/VERSION; \
+	echo "SDK updated to $$NEW_VER"; \
+	if [ "$(ABI_SOURCE)" = "release" ]; then \
+		$(MAKE) sync-abi; \
+	else \
+		MODCACHE=$$(go env GOPATH)/pkg/mod; \
+		ABI_SRC="$$MODCACHE/github.com/envoyproxy/envoy/source/extensions/dynamic_modules@$$NEW_VER/abi/abi.h"; \
+		chmod u+w down/abi_impl/abi.h; \
+		cp "$$ABI_SRC" down/abi_impl/abi.h; \
+		echo "abi.h copied from module cache"; \
+	fi
 	$(MAKE) tidy
 
-# check-abi verifies that the vendored abi.h (down/abi_impl/abi.h) was taken from
-# the same SDK version that go.mod depends on. Run this after `go get` updates.
+# check-abi verifies abi.h provenance matches VERSION.
+# When ABI_SOURCE=release the gomod version check is skipped (patched abi.h is a
+# superset of the upstream module version and intentionally differs).
 .PHONY: check-abi
 check-abi:
-	@gomod_ver=$$(grep 'envoyproxy/envoy/source/extensions/dynamic_modules ' go.mod | awk '{print $$2}'); \
-	abi_ver=$$(grep '^SDK_VERSION=' down/abi_impl/VERSION | cut -d= -f2); \
-	if [ "$$gomod_ver" != "$$abi_ver" ]; then \
-		echo "ABI DRIFT: go.mod has $$gomod_ver but down/abi_impl/VERSION records $$abi_ver"; \
-		echo "Update abi.h and down/abi_impl/VERSION to match go.mod (see VERSION for instructions)."; \
-		exit 1; \
-	fi; \
-	echo "abi.h OK: $$gomod_ver"
+	@if [ "$(ABI_SOURCE)" = "release" ]; then \
+		echo "ABI_SOURCE=release: abi.h sourced from $(ENVOY_TAG) release (skipping gomod version check)"; \
+	else \
+		gomod_ver=$$(grep 'envoyproxy/envoy/source/extensions/dynamic_modules ' go.mod | awk '{print $$2}'); \
+		abi_ver=$$(grep '^SDK_VERSION=' down/abi_impl/VERSION | cut -d= -f2); \
+		if [ "$$gomod_ver" != "$$abi_ver" ]; then \
+			echo "ABI DRIFT: go.mod has $$gomod_ver but down/abi_impl/VERSION records $$abi_ver"; \
+			echo "Run: make update-sdk ENVOY_COMMIT=<commit>"; \
+			exit 1; \
+		fi; \
+		echo "abi.h OK: $$gomod_ver"; \
+	fi
 
 .PHONY: clean
 clean:

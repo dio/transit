@@ -1,0 +1,102 @@
+# EnvoyPatchPolicy variant: SDS data source for CA validation (WS-B delta-e).
+#
+# Same structure as epp.tmpl.yaml (explicit sni in UpstreamTlsContext) but
+# validation_context is replaced with combined_validation_context that fetches
+# the CA from an SDS secret backed by a ConfigMap-mounted JSON file at
+# /etc/envoy/sds/ca-sds.json. The ConfigMap (cluster-async-router-sds-ca) is
+# applied by applySDSConfigMap before this EPP, and envoyproxy-sds.tmpl.yaml
+# mounts it into the Envoy pod.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyPatchPolicy
+metadata:
+  name: cluster-async-router
+  namespace: default
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: cluster-async-router
+  type: JSONPatch
+  jsonPatches:
+  - type: "type.googleapis.com/envoy.config.listener.v3.Listener"
+    name: tcp-80
+    operation:
+      op: add
+      path: "/default_filter_chain/filters/0/typed_config/http_filters/0"
+      value:
+        name: body-router-writer
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+          dynamic_module_config:
+            name: cluster-async-router
+          filter_name: body-router-writer
+          filter_config:
+            "@type": type.googleapis.com/google.protobuf.StringValue
+            value: '{}'
+  - type: "type.googleapis.com/envoy.config.cluster.v3.Cluster"
+    name: "{{.ClusterName}}"
+    operation:
+      op: replace
+      path: ""
+      value:
+        name: "{{.ClusterName}}"
+        connect_timeout: 5s
+        lb_policy: CLUSTER_PROVIDED
+        typed_extension_protocol_options:
+          envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+            "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+            explicit_http_config:
+              http_protocol_options: {}
+        transport_socket_matches:
+        - name: host-c
+          match: { sni: host-c.test }
+          transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+              sni: host-c.test
+              common_tls_context:
+                combined_validation_context:
+                  validation_context_sds_secret_configs:
+                  - name: cluster-async-router-ca
+                    sds_config:
+                      path_config_source:
+                        path: /etc/envoy/sds/ca-sds.json
+                        watched_directory:
+                          path: /etc/envoy/sds
+                      resource_api_version: V3
+                  default_validation_context:
+                    match_typed_subject_alt_names:
+                    - san_type: DNS
+                      matcher: { exact: host-c.test }
+        - name: host-d
+          match: { sni: host-d.test }
+          transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+              sni: host-d.test
+              common_tls_context:
+                combined_validation_context:
+                  validation_context_sds_secret_configs:
+                  - name: cluster-async-router-ca
+                    sds_config:
+                      path_config_source:
+                        path: /etc/envoy/sds/ca-sds.json
+                        watched_directory:
+                          path: /etc/envoy/sds
+                      resource_api_version: V3
+                  default_validation_context:
+                    match_typed_subject_alt_names:
+                    - san_type: DNS
+                      matcher: { exact: host-d.test }
+        cluster_type:
+          name: envoy.clusters.dynamic_modules
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_modules.v3.ClusterConfig
+            dynamic_module_config:
+              name: cluster-async-router
+            cluster_name: body-router-cluster
+            cluster_config:
+              "@type": type.googleapis.com/google.protobuf.StringValue
+              value: '{"hosts":[{"name":"a","address":"upstream-a.default.svc.cluster.local:8080"},{"name":"b","address":"upstream-b.default.svc.cluster.local:8080"},{"name":"c","address":"upstream-c.default.svc.cluster.local:8443","sni":"host-c.test"},{"name":"d","address":"upstream-d.default.svc.cluster.local:8443","sni":"host-d.test"}]}'

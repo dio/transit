@@ -225,6 +225,7 @@ func (c *cluster) Init(h up.ClusterHandle) {
 		addr := resolveHostAddr(he.Address)
 		spec := up.HostSpec{Address: addr}
 		if he.SNI != "" {
+			spec.Hostname = he.SNI
 			spec.Metadata = map[string]string{"sni": he.SNI}
 		}
 		ptrs := h.AddHosts([]up.HostSpec{spec})

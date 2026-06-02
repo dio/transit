@@ -8670,6 +8670,31 @@ bool envoy_dynamic_module_callback_cluster_add_hosts(
     size_t count, envoy_dynamic_module_type_cluster_host_envoy_ptr* result_host_ptrs);
 
 /**
+ * envoy_dynamic_module_callback_cluster_add_hosts_with_hostnames is identical to
+ * envoy_dynamic_module_callback_cluster_add_hosts but additionally accepts a per-host hostname
+ * array. The hostname is what Envoy returns from ``Upstream::HostDescription::hostname()`` and is
+ * the value read by upstream TLS features such as ``UpstreamTlsContext.auto_host_sni`` and
+ * ``auto_sni_san_validation``. This lets dynamic-module clusters originate TLS to upstreams whose
+ * SAN must match a logical hostname (e.g. ``httpbin.org``) while the address itself is a numeric
+ * ``ip:port``.
+ *
+ * @param hostnames is the array of per-host hostname strings. Can be nullptr to preserve legacy
+ * behaviour (synthesised ``cluster_name + address``). An entry with length 0 is treated as
+ * "no hostname" and also falls back to the legacy synthesised form.
+ *
+ * All other parameters are identical to envoy_dynamic_module_callback_cluster_add_hosts.
+ */
+bool envoy_dynamic_module_callback_cluster_add_hosts_with_hostnames(
+    envoy_dynamic_module_type_cluster_envoy_ptr cluster_envoy_ptr, uint32_t priority,
+    const envoy_dynamic_module_type_module_buffer* addresses,
+    const envoy_dynamic_module_type_module_buffer* hostnames, const uint32_t* weights,
+    const envoy_dynamic_module_type_module_buffer* regions,
+    const envoy_dynamic_module_type_module_buffer* zones,
+    const envoy_dynamic_module_type_module_buffer* sub_zones,
+    const envoy_dynamic_module_type_module_buffer* metadata_pairs, size_t metadata_pairs_per_host,
+    size_t count, envoy_dynamic_module_type_cluster_host_envoy_ptr* result_host_ptrs);
+
+/**
  * envoy_dynamic_module_callback_cluster_remove_hosts removes multiple hosts from the cluster in a
  * single batch operation. This triggers only one priority set update regardless of how many hosts
  * are removed.

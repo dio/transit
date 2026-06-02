@@ -1,0 +1,45 @@
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: cluster-async-router-proxy
+  namespace: default
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        type: ClusterIP
+      envoyDeployment:
+        container:
+          image: "{{.EnvoyImage}}"
+          env:
+          - name: GODEBUG
+            value: "cgocheck=0"
+          - name: ENVOY_DYNAMIC_MODULES_SEARCH_PATH
+            value: "/etc/envoy/dynamic-modules"
+          volumeMounts:
+          - name: tls-ca
+            mountPath: /etc/envoy/tls
+            readOnly: true
+          - name: sds-ca
+            mountPath: /etc/envoy/sds
+            readOnly: true
+        pod:
+          volumes:
+          - name: tls-ca
+            secret:
+              secretName: cluster-async-router-ca
+              items:
+              - key: ca.crt
+                path: ca.pem
+          - name: sds-ca
+            configMap:
+              name: cluster-async-router-sds-ca
+  dynamicModules:
+  - name: cluster-async-router
+    source:
+      type: Local
+      local:
+        path: /etc/envoy/dynamic-modules/libcluster-async-router.so
+    doNotClose: true
+    loadGlobally: false
