@@ -54,3 +54,34 @@ as `up.HostSpec`, `up.ClusterLB`, etc.
 
 `down/abi_impl/VERSION` records the Envoy dynamic module ABI version this build
 targets. The Envoy binary rejects a module whose ABI version does not match.
+
+## Patched Envoy builds
+
+When using a patched Envoy binary (e.g. one built with additional ABI callbacks
+not yet merged upstream), `down/abi_impl/VERSION` carries three extra fields:
+
+```
+ENVOY_TAG=envoy-0d6e3c60-auto-host-sni   # release tag on dio/envoy-builder
+ENVOY_ASSET_SUFFIX=-auto-host-sni        # suffix on the binary asset name
+ABI_SOURCE=release                       # abi.h comes from the release, not gomod
+```
+
+`make sync-abi` downloads `abi.h` from that release asset so the local vendored
+header stays in sync with the binary. `make download-envoy` picks up the patched
+binary automatically via `ENVOY_TAG` + `ENVOY_ASSET_SUFFIX`.
+
+### VSCode / gopls false positive
+
+gopls reports `undefined: C.<new_callback>` for any symbol declared only in the
+local `down/abi_impl/abi.h` but absent from the Go module cache copy. This is a
+known gopls limitation with cgo relative includes — the language server does not
+always execute the C preprocessor against the local header.
+
+The actual compiler resolves `#include "abi.h"` to the local file and the build
+succeeds:
+
+```sh
+GOWORK=off CGO_ENABLED=1 go build ./down/...  # no errors
+```
+
+The red squiggle in the editor is safe to ignore.
