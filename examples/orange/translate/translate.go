@@ -13,7 +13,6 @@ import (
 	"github.com/dio/transit/examples/orange/classify"
 	"github.com/dio/transit/examples/orange/config"
 	"github.com/dio/transit/up"
-	"github.com/dio/transit/up/translate"
 )
 
 const FilterName = "orange-translate"
@@ -23,9 +22,9 @@ func init() {
 }
 
 // kindSchema maps orange provider kind strings to their APISchemaName.
-var kindSchema = map[string]translate.APISchemaName{
-	"openai":    translate.SchemaOpenAI,
-	"anthropic": translate.SchemaAnthropic,
+var kindSchema = map[string]APISchemaName{
+	"openai":    SchemaOpenAI,
+	"anthropic": SchemaAnthropic,
 }
 
 func handler(w *up.Writer, r *up.Request) {
@@ -45,7 +44,7 @@ func handler(w *up.Writer, r *up.Request) {
 	}
 	w.Log(up.LogInfo, "orange-translate: provider=%s authority=%s kind=%s", upstream, r.Host, prov.Kind)
 
-	route := translate.RouteFor(translate.SchemaOpenAI, translate.ProviderConfig{
+	route := RouteFor(SchemaOpenAI, ProviderConfig{
 		Schema:     kindSchema[prov.Kind],
 		PathPrefix: prov.ResolvedPathPrefix(),
 		Secret:     cfg.ProviderSecret(upstream),

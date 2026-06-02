@@ -7,7 +7,7 @@ import (
 )
 
 // APISchemaName identifies the OpenAPI request/response shape a client or
-// upstream speaks. Used by RouteFor to select translator and auth.
+// upstream speaks.
 type APISchemaName string
 
 const (
@@ -15,24 +15,19 @@ const (
 	SchemaAnthropic APISchemaName = "anthropic"
 )
 
-// ProviderConfig carries the upstream-specific settings that RouteFor needs to
-// build a Route. Callers (e.g. orange/translate) populate it from their own
-// config types; up/translate has no dependency on orange/config.
+// ProviderConfig carries the upstream-specific settings needed to build a Route.
 type ProviderConfig struct {
 	Schema     APISchemaName
 	PathPrefix string // upstream path prefix; "" or "/v1" means no rewrite
 	Secret     string // resolved credential (Bearer token or API key)
-	// Extra is schema-specific extra. For SchemaAnthropic it is the
-	// anthropic-version header value.
+	// Extra is schema-specific. For SchemaAnthropic it is the anthropic-version header value.
 	Extra string
 }
 
-// Route is a value that carries the translation decisions for one
-// (client schema, upstream) pair. It is created once per request by RouteFor
-// and applied by Apply.
+// Route carries the translation decisions for one (client schema, upstream) pair.
 type Route struct {
-	auth       BackendAuthHandler
-	pathPrefix string // non-empty and != "/v1" → rewrite
+	auth       backendAuthHandler
+	pathPrefix string
 }
 
 // Apply strips client-auth headers listed in strip, rewrites :path when needed,
@@ -47,27 +42,25 @@ func (ro Route) Apply(w *up.Writer, r *up.Request, strip []string) {
 	ro.auth.InjectAuth(w)
 }
 
-// RouteFor returns the Route for a given client schema talking to a given
-// upstream ProviderConfig. clientSchema is currently always SchemaOpenAI for
-// orange; the switch is here to make future client-schema expansion explicit.
+// RouteFor returns the Route for a given client schema talking to a given upstream ProviderConfig.
 func RouteFor(clientSchema APISchemaName, p ProviderConfig) Route {
 	switch clientSchema {
 	case SchemaOpenAI:
 		return routeOpenAIClient(p)
 	default:
-		return Route{auth: NoAuth{}}
+		return Route{auth: noAuth{}}
 	}
 }
 
 func routeOpenAIClient(p ProviderConfig) Route {
-	var auth BackendAuthHandler
+	var auth backendAuthHandler
 	switch p.Schema {
 	case SchemaOpenAI:
 		auth = BearerAuth{Token: p.Secret}
 	case SchemaAnthropic:
 		auth = AnthropicAuth{APIKey: p.Secret, Version: p.Extra}
 	default:
-		auth = NoAuth{}
+		auth = noAuth{}
 	}
 	return Route{auth: auth, pathPrefix: p.PathPrefix}
 }

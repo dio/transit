@@ -1,20 +1,15 @@
-// Package translate provides composable upstream translation helpers:
-// path-rewrite logic and backend auth injection.
 package translate
 
 import "github.com/dio/transit/up"
 
-// BackendAuthHandler injects provider credentials into an outgoing request.
-// Implementations are stateful (they hold resolved secrets) but the method
-// itself is side-effect-free beyond writing headers.
-type BackendAuthHandler interface {
+// backendAuthHandler injects provider credentials into an outgoing request.
+type backendAuthHandler interface {
 	InjectAuth(w *up.Writer)
 }
 
-// NoAuth is a BackendAuthHandler that does nothing.
-type NoAuth struct{}
+type noAuth struct{}
 
-func (NoAuth) InjectAuth(_ *up.Writer) {}
+func (noAuth) InjectAuth(_ *up.Writer) {}
 
 // BearerAuth sets Authorization: Bearer <Token>.
 type BearerAuth struct{ Token string }
@@ -25,8 +20,7 @@ func (a BearerAuth) InjectAuth(w *up.Writer) {
 	}
 }
 
-// APIKeyAuth sets a custom header to the given key value. Useful for providers
-// that use a non-standard auth header (e.g. x-api-key).
+// APIKeyAuth sets a custom header to the given key value.
 type APIKeyAuth struct {
 	Header string
 	Key    string
