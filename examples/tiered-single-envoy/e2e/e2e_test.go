@@ -1,5 +1,21 @@
-// Package e2e tests L1 → L2 routing through a single Envoy process with
-// multiple static listeners. Requires RUN_TIERED_SINGLE_ENVOY_E2E=1.
+// Package e2e runs integration tests for the tiered-single-envoy example
+// against a real Envoy instance with three static listeners (L1 + L2-a + L2-b).
+//
+// TestMain builds the search path for cluster-shard-router and cluster-router,
+// starts fake backends, launches Envoy, runs all tests, then tears down.
+//
+// Prerequisites:
+//   - Envoy binary at .bin/envoy in the transit root (run: make download-envoy)
+//     or set ENVOY_BIN.
+//   - Both .so files built (make build, or make e2e which builds automatically).
+//
+// Run:
+//
+//	make -C examples/tiered-single-envoy e2e
+//
+// Or directly (from the examples/ directory):
+//
+//	ENVOY_BIN=../.bin/envoy go test ./tiered-single-envoy/e2e/... -v -timeout=90s
 package e2e
 
 import (
@@ -25,11 +41,6 @@ var envoyConfigTmpl string
 var l1URL string
 
 func TestMain(m *testing.M) {
-	if os.Getenv("RUN_TIERED_SINGLE_ENVOY_E2E") != "1" {
-		fmt.Fprintln(os.Stderr, "SKIP: set RUN_TIERED_SINGLE_ENVOY_E2E=1 to run")
-		os.Exit(0)
-	}
-
 	_, file, _, _ := runtime.Caller(0)
 	examplesRoot := filepath.Join(filepath.Dir(file), "../../")
 
