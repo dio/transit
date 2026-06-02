@@ -10,22 +10,22 @@
 package translate
 
 import (
-	"strings"
-
 	"github.com/dio/transit/examples/orange/classify"
 	"github.com/dio/transit/examples/orange/config"
 	"github.com/dio/transit/up"
+	"github.com/dio/transit/up/translate"
 )
 
 const FilterName = "orange-translate"
 
-const (
-	kindOpenAI    = "openai"
-	kindAnthropic = "anthropic"
-)
-
 func init() {
 	up.Register(FilterName, handler)
+}
+
+// kindSchema maps orange provider kind strings to their APISchemaName.
+var kindSchema = map[string]translate.APISchemaName{
+	"openai":    translate.SchemaOpenAI,
+	"anthropic": translate.SchemaAnthropic,
 }
 
 func handler(w *up.Writer, r *up.Request) {
@@ -45,29 +45,11 @@ func handler(w *up.Writer, r *up.Request) {
 	}
 	w.Log(up.LogInfo, "orange-translate: provider=%s authority=%s kind=%s", upstream, r.Host, prov.Kind)
 
-	for _, h := range cfg.Translate.StripRequestHeaders {
-		w.RemoveRequestHeader(h)
-	}
-
-	if prefix := prov.ResolvedPathPrefix(); prefix != "/v1" {
-		w.SetRequestHeader(":path", prefix+strings.TrimPrefix(r.Path, "/v1"))
-	}
-
-	secret := cfg.ProviderSecret(upstream)
-	switch prov.Kind {
-	case kindOpenAI:
-		if secret != "" {
-			w.SetRequestHeader("authorization", "Bearer "+secret)
-		}
-	case kindAnthropic:
-		// Anthropic auth is x-api-key (not Authorization: Bearer) plus a required
-		// anthropic-version header. Both are configured per-provider so different
-		// keys / API revisions can coexist.
-		if secret != "" {
-			w.SetRequestHeader("x-api-key", secret)
-		}
-		if prov.AnthropicVersion != "" {
-			w.SetRequestHeader("anthropic-version", prov.AnthropicVersion)
-		}
-	}
+	route := translate.RouteFor(translate.SchemaOpenAI, translate.ProviderConfig{
+		Schema:     kindSchema[prov.Kind],
+		PathPrefix: prov.ResolvedPathPrefix(),
+		Secret:     cfg.ProviderSecret(upstream),
+		Extra:      prov.AnthropicVersion,
+	})
+	route.Apply(w, r, cfg.Translate.StripRequestHeaders)
 }
