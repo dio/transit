@@ -2,8 +2,10 @@ package up
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -11,197 +13,206 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ---------------------------------------------------------------------------
-// FileSource tests
-// ---------------------------------------------------------------------------
+// --------------------------------------------------------------------------
+// Polling: observer
+// --------------------------------------------------------------------------
 
-func TestFileSource_ReadsContents(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "cfg.json")
-	want := []byte(`{"name":"file","value":42}`)
-	require.NoError(t, os.WriteFile(path, want, 0o600))
-
-	src := FileSource(path)
-	got, err := src.Fetch(context.Background())
-	require.NoError(t, err)
-	require.Equal(t, string(want), string(got))
-}
-
-func TestFileSource_ReadsFreshOnEachCall(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "cfg.json")
-	require.NoError(t, os.WriteFile(path, []byte(`first`), 0o600))
-
-	src := FileSource(path)
-	got1, err := src.Fetch(context.Background())
-	require.NoError(t, err)
-	require.Equal(t, "first", string(got1))
-
-	require.NoError(t, os.WriteFile(path, []byte(`second`), 0o600))
-	got2, err := src.Fetch(context.Background())
-	require.NoError(t, err)
-	require.Equal(t, "second", string(got2))
-}
-
-func TestFileSource_MissingFileReturnsError(t *testing.T) {
-	src := FileSource("/no/such/file/does/not/exist.json")
-	_, err := src.Fetch(context.Background())
-	require.Error(t, err)
-}
-
-// ---------------------------------------------------------------------------
-// WithObserver tests
-// ---------------------------------------------------------------------------
-
-func TestWithObserver_CalledOnSuccess(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "cfg.json")
-	require.NoError(t, os.WriteFile(path, []byte(`{"name":"obs","value":1}`), 0o600))
-
-	p := New[testStruct](FileSource(path), JSONDecoder[testStruct]())
-
-	var events []RefreshEvent
-	p.WithObserver(func(ev RefreshEvent) {
+func TestPolling_ObserverFiresOnSuccess(t *testing.T) {
+	data := []byte(`{"name":"obs","value":1}`)
+	var mu sync.Mutex
+	var events []ConfigEvent
+	observe := func(ev ConfigEvent) {
+		mu.Lock()
 		events = append(events, ev)
+		mu.Unlock()
+	}
+	p := NewPollingConfig(staticSrc(data), JSONDecoder[testStruct](), PollOptions{
+		Interval: time.Hour, // only fire immediately
+		Observe:  observe,
 	})
+	stop := p.Start(context.Background())
+	defer stop()
 
-	require.NoError(t, p.Refresh(context.Background()))
+	// Wait for immediate first fetch.
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(events) > 0
+	}, time.Second, 5*time.Millisecond)
+	stop()
 
-	require.Len(t, events, 1)
+	mu.Lock()
 	ev := events[0]
+	mu.Unlock()
+
 	require.NoError(t, ev.Err)
 	require.NotEmpty(t, ev.Version)
 	require.Positive(t, ev.Duration)
 }
 
-func TestWithObserver_CalledOnError(t *testing.T) {
-	p := New[testStruct](FileSource("/no/such/path.json"), JSONDecoder[testStruct]())
-
-	var events []RefreshEvent
-	p.WithObserver(func(ev RefreshEvent) {
-		events = append(events, ev)
+func TestPolling_ObserverFiresOnError(t *testing.T) {
+	fetchErr := errors.New("sentinel fetch error")
+	var mu sync.Mutex
+	var events []ConfigEvent
+	p := NewPollingConfig(errSrc(fetchErr), JSONDecoder[testStruct](), PollOptions{
+		Interval: time.Hour,
+		Observe: func(ev ConfigEvent) {
+			mu.Lock()
+			events = append(events, ev)
+			mu.Unlock()
+		},
 	})
+	stop := p.Start(context.Background())
+	defer stop()
 
-	require.Error(t, p.Refresh(context.Background()))
-	require.Len(t, events, 1)
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(events) > 0
+	}, time.Second, 5*time.Millisecond)
+	stop()
+
+	mu.Lock()
 	ev := events[0]
+	mu.Unlock()
+
 	require.Error(t, ev.Err)
 	require.Empty(t, ev.Version)
 }
 
-func TestWithObserver_MultipleObservers(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "cfg.json")
-	require.NoError(t, os.WriteFile(path, []byte(`{"name":"multi","value":2}`), 0o600))
+// --------------------------------------------------------------------------
+// Polling: Stop waits for in-flight fetch
+// --------------------------------------------------------------------------
 
-	p := New[testStruct](FileSource(path), JSONDecoder[testStruct]())
+func TestPolling_StopWaitsForInFlight(t *testing.T) {
+	fetchStarted := make(chan struct{}, 1)
+	unblock := make(chan struct{})
 
-	var count int32
-	for i := 0; i < 3; i++ {
-		p.WithObserver(func(ev RefreshEvent) {
-			atomic.AddInt32(&count, 1)
-		})
+	// The source blocks on unblock ignoring ctx; this simulates a non-cancellable
+	// operation (e.g. a slow disk read) to verify Stop() waits for completion.
+	src := ConfigSource(func(_ context.Context) ([]byte, error) {
+		select {
+		case fetchStarted <- struct{}{}:
+		default:
+		}
+		<-unblock // released by test; not context-sensitive
+		return []byte(`{"name":"x","value":1}`), nil
+	})
+
+	p := NewPollingConfig(src, JSONDecoder[testStruct](), PollOptions{
+		Interval: time.Hour,    // only the immediate fetch fires
+		Timeout:  time.Hour,    // long timeout so per-attempt ctx stays alive
+	})
+	stop := p.Start(context.Background())
+
+	// Wait for the goroutine to enter the source.
+	<-fetchStarted
+
+	stopDone := make(chan struct{})
+	go func() {
+		stop()
+		close(stopDone)
+	}()
+
+	// Stop() must be blocked while the fetch is in progress.
+	select {
+	case <-stopDone:
+		t.Fatal("Stop() returned before fetch completed")
+	case <-time.After(30 * time.Millisecond):
 	}
 
-	require.NoError(t, p.Refresh(context.Background()))
-	require.EqualValues(t, 3, atomic.LoadInt32(&count))
+	close(unblock) // allow fetch to finish
+
+	select {
+	case <-stopDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop() did not return after fetch completed")
+	}
 }
 
-// ---------------------------------------------------------------------------
-// StartPolling tests
-// ---------------------------------------------------------------------------
+// --------------------------------------------------------------------------
+// Polling: jitter varies the tick interval
+// --------------------------------------------------------------------------
 
-func TestStartPolling_TriggersRepeatedRefreshes(t *testing.T) {
+func TestPolling_JitterVariesInterval(t *testing.T) {
+	data := []byte(`{"name":"jitter","value":0}`)
+
+	var mu sync.Mutex
+	var times []time.Time
+	src := ConfigSource(func(_ context.Context) ([]byte, error) {
+		mu.Lock()
+		times = append(times, time.Now())
+		mu.Unlock()
+		return data, nil
+	})
+
+	p := NewPollingConfig(src, JSONDecoder[testStruct](), PollOptions{
+		Interval: 20 * time.Millisecond,
+		Jitter:   15 * time.Millisecond,
+	})
+	stop := p.Start(context.Background())
+	defer stop()
+
+	// Collect at least 5 fetch timestamps (1 immediate + 4 ticks).
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(times) >= 5
+	}, 5*time.Second, 5*time.Millisecond)
+	stop()
+
+	mu.Lock()
+	captured := append([]time.Time(nil), times...)
+	mu.Unlock()
+
+	// Compute consecutive gaps; skip gap[0] (immediate → first tick).
+	var gaps []time.Duration
+	for i := 2; i < len(captured); i++ {
+		gaps = append(gaps, captured[i].Sub(captured[i-1]))
+	}
+	require.GreaterOrEqual(t, len(gaps), 2, "need at least 2 gaps to compare")
+
+	// At least two of the gaps must differ by more than 1ms (jitter randomises the interval).
+	distinct := false
+	for i := 1; i < len(gaps); i++ {
+		diff := gaps[i] - gaps[i-1]
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff > time.Millisecond {
+			distinct = true
+			break
+		}
+	}
+	require.True(t, distinct, "jitter produced no variation in tick intervals: %v", gaps)
+}
+
+// --------------------------------------------------------------------------
+// Polling: repeated refreshes accumulate correctly
+// --------------------------------------------------------------------------
+
+func TestPolling_RepeatedRefreshes(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cfg.json")
 	require.NoError(t, os.WriteFile(path, []byte(`{"name":"poll","value":7}`), 0o600))
 
-	p := New[testStruct](FileSource(path), JSONDecoder[testStruct]())
-
 	var count int32
-	p.WithObserver(func(ev RefreshEvent) {
-		if ev.Err == nil {
-			atomic.AddInt32(&count, 1)
-		}
+	p := NewFileConfig(path, JSONDecoder[testStruct](), PollOptions{
+		Interval: 20 * time.Millisecond,
+		Observe: func(ev ConfigEvent) {
+			if ev.Err == nil {
+				atomic.AddInt32(&count, 1)
+			}
+		},
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	stop := p.Start(ctx)
+	defer stop()
 
-	interval := 20 * time.Millisecond
-	p.StartPolling(ctx, interval, 0)
-
-	// Wait until we see at least 3 successful refreshes (1 immediate + 2 ticks).
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if atomic.LoadInt32(&count) >= 3 {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	require.Eventually(t, func() bool {
+		return atomic.LoadInt32(&count) >= 3
+	}, 2*time.Second, 5*time.Millisecond)
 	cancel()
-
-	require.GreaterOrEqual(t, atomic.LoadInt32(&count), int32(3))
-}
-
-func TestStartPolling_NoOpOnSecondCall(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "cfg.json")
-	require.NoError(t, os.WriteFile(path, []byte(`{"name":"noop","value":0}`), 0o600))
-
-	p := New[testStruct](FileSource(path), JSONDecoder[testStruct]())
-
-	var count int32
-	p.WithObserver(func(ev RefreshEvent) {
-		atomic.AddInt32(&count, 1)
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	interval := 50 * time.Millisecond
-
-	// Call StartPolling twice; second call must be a no-op.
-	p.StartPolling(ctx, interval, 0)
-	p.StartPolling(ctx, interval, 0)
-
-	// Let at least one tick fire.
-	time.Sleep(120 * time.Millisecond)
-	cancel()
-
-	// If second StartPolling spawned a second goroutine, observer count would
-	// roughly double. We can't assert an exact count because timing varies, but
-	// we verify the call doesn't panic and the config is still readable.
-	snap, ok := p.Snapshot()
-	require.True(t, ok, "expected snapshot after polling")
-	require.Equal(t, "noop", snap.Value.Name)
-}
-
-func TestStartPolling_StopsOnContextCancel(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "cfg.json")
-	require.NoError(t, os.WriteFile(path, []byte(`{"name":"stop","value":5}`), 0o600))
-
-	p := New[testStruct](FileSource(path), JSONDecoder[testStruct]())
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	var count int32
-	p.WithObserver(func(ev RefreshEvent) {
-		atomic.AddInt32(&count, 1)
-	})
-
-	p.StartPolling(ctx, 10*time.Millisecond, 0)
-	time.Sleep(50 * time.Millisecond)
-	cancel()
-
-	// Record count just after cancel.
-	countAfterCancel := atomic.LoadInt32(&count)
-	// Wait a bit and verify count did not grow significantly.
-	time.Sleep(50 * time.Millisecond)
-	countLater := atomic.LoadInt32(&count)
-
-	// Allow up to 2 extra calls due to in-flight goroutine scheduling.
-	require.LessOrEqual(t, countLater, countAfterCancel+2,
-		"polling continued after cancel: before=%d after=%d", countAfterCancel, countLater)
+	stop()
 }

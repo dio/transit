@@ -79,11 +79,8 @@ type HostpickCfg struct {
 	UpstreamKey string `yaml:"upstream_key"`
 }
 
-// configDecoder implements up.ConfigDecoder[*Config].
-// It applies the same defaults and secret resolution as LoadFile.
-type configDecoder struct{}
-
-func (configDecoder) Decode(data []byte) (*Config, error) {
+// decodeConfig is the ConfigDecoder for *Config. It applies defaults and resolves secrets.
+func decodeConfig(data []byte) (*Config, error) {
 	cfg := &Config{}
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("orange/config: parse: %w", err)
@@ -104,7 +101,7 @@ var pc *up.PipelineConfig[*Config]
 func init() {
 	path := resolvedPath()
 	if path != "" {
-		pc = up.New[*Config](up.FileSource(path), configDecoder{})
+		pc = up.NewFileConfig[*Config](path, decodeConfig, up.PollOptions{})
 	}
 }
 
@@ -130,12 +127,13 @@ func Get() *Config {
 		panic(fmt.Sprintf("orange/config: %s is required", EnvVar))
 	}
 	// Load on first call if no snapshot yet.
-	if _, ok := pc.Snapshot(); !ok {
-		if err := pc.Refresh(context.Background()); err != nil {
-			panic(err)
-		}
+	if cfg := pc.Snapshot(); cfg != nil {
+		return cfg
 	}
-	return pc.MustSnapshot()
+	if err := pc.RefreshOnce(context.Background()); err != nil {
+		panic(err)
+	}
+	return pc.Snapshot()
 }
 
 // MustReload clears the cached snapshot and re-initialises the PipelineConfig.
@@ -143,7 +141,7 @@ func Get() *Config {
 func MustReload() {
 	path := resolvedPath()
 	if path != "" {
-		pc = up.New[*Config](up.FileSource(path), configDecoder{})
+		pc = up.NewFileConfig[*Config](path, decodeConfig, up.PollOptions{})
 	} else {
 		pc = nil
 	}

@@ -5,18 +5,11 @@ import (
 	"os"
 )
 
-// fileSource implements ConfigSource by reading a file on every Fetch call.
-type fileSource struct {
-	path string
-}
-
-// FileSource returns a ConfigSource that reads path on every Fetch call.
-// The file is read fresh each time; no caching. Suitable as the source for
-// a polling PipelineConfig.
-func FileSource(path string) ConfigSource {
-	return &fileSource{path: path}
-}
-
-func (f *fileSource) Fetch(_ context.Context) ([]byte, error) {
-	return os.ReadFile(f.path)
+// NewFileConfig returns a PipelineConfig backed by a file path.
+// The file is read fresh on every poll tick; path is evaluated at fetch time.
+func NewFileConfig[T any](path string, dec ConfigDecoder[T], opts PollOptions) *PipelineConfig[T] {
+	src := ConfigSource(func(_ context.Context) ([]byte, error) {
+		return os.ReadFile(path)
+	})
+	return NewPollingConfig(src, dec, opts)
 }

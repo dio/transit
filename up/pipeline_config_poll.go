@@ -2,59 +2,59 @@ package up
 
 import (
 	"context"
+	"math/rand"
+	"sync"
 	"time"
 )
 
-// RefreshEvent is passed to observer callbacks on each refresh attempt.
-type RefreshEvent struct {
-	Version  string        // new snapshot version, empty on error
-	Duration time.Duration // how long the fetch+decode took
-	Err      error         // nil on success
-}
-
-// RefreshObserver is called after every Refresh attempt (success or failure).
-type RefreshObserver func(RefreshEvent)
-
-// WithObserver adds an observer called after every Refresh attempt.
-// Must be called before StartPolling. Safe to call multiple times.
-func (p *PipelineConfig[T]) WithObserver(obs RefreshObserver) {
-	p.obsMu.Lock()
-	p.observers = append(p.observers, obs)
-	p.obsMu.Unlock()
-}
-
-// StartPolling starts a background goroutine that calls Refresh at the given
-// interval. The goroutine stops when ctx is cancelled. Each Refresh uses a
-// per-attempt context with the given timeout (0 = no timeout).
-// The first Refresh fires immediately before the first tick.
-// Calling StartPolling again on the same PipelineConfig is a no-op.
-func (p *PipelineConfig[T]) StartPolling(ctx context.Context, interval, timeout time.Duration) {
-	p.pollOnce.Do(func() {
-		go func() {
-			// Fire immediately before the first tick.
-			p.doRefresh(ctx, timeout)
-
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-					p.doRefresh(ctx, timeout)
-				}
-			}
-		}()
-	})
-}
-
-// doRefresh calls Refresh with a per-attempt context respecting the given timeout.
-func (p *PipelineConfig[T]) doRefresh(ctx context.Context, timeout time.Duration) {
-	if timeout <= 0 {
-		p.Refresh(ctx) //nolint:errcheck
-		return
+// Start launches the background polling goroutine. No-op for static configs.
+// The first fetch fires immediately; subsequent fetches tick at Interval ± Jitter.
+// The returned stop func cancels polling and waits for any in-flight fetch to finish.
+// Wire through up.WithGroup or call from Cluster.ServerInitialized / OnDestroy.
+func (p *PipelineConfig[T]) Start(ctx context.Context) (stop func()) {
+	if p.isStatic {
+		return func() {}
 	}
-	aCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	p.Refresh(aCtx) //nolint:errcheck
+
+	innerCtx, cancel := context.WithCancel(ctx)
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+		p.pollFetch(innerCtx) // immediate first fetch
+
+		interval := p.opts.Interval
+		for {
+			tick := interval
+			if p.opts.Jitter > 0 {
+				// #nosec G404 — jitter is not security-sensitive
+				tick += time.Duration(rand.Int63n(int64(p.opts.Jitter)))
+			}
+			timer := time.NewTimer(tick)
+			select {
+			case <-innerCtx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+				p.pollFetch(innerCtx)
+			}
+		}
+	}()
+
+	return func() {
+		cancel()
+		wg.Wait()
+	}
+}
+
+// pollFetch wraps fetchAndStore with the per-attempt timeout from PollOptions.
+func (p *PipelineConfig[T]) pollFetch(ctx context.Context) {
+	fetchCtx := ctx
+	var cancel context.CancelFunc
+	if p.opts.Timeout > 0 {
+		fetchCtx, cancel = context.WithTimeout(ctx, p.opts.Timeout)
+		defer cancel()
+	}
+	p.fetchAndStore(fetchCtx) //nolint:errcheck
 }

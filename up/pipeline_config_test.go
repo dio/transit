@@ -3,9 +3,12 @@ package up
 import (
 	"context"
 	"errors"
-	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -13,198 +16,184 @@ import (
 
 // testStruct is a simple type for decoder round-trip tests.
 type testStruct struct {
-	Name  string `json:"name"`
-	Value int    `json:"value"`
+	Name  string `json:"name" yaml:"name"`
+	Value int    `json:"value" yaml:"value"`
 }
 
-// errSource is a ConfigSource that always returns an error.
-type errSource struct{ err error }
-
-func (e *errSource) Fetch(_ context.Context) ([]byte, error) { return nil, e.err }
-
-// errDecoder is a ConfigDecoder that always returns an error.
-type errDecoder[T any] struct{ err error }
-
-func (d errDecoder[T]) Decode(_ []byte) (T, error) {
-	var zero T
-	return zero, d.err
+// staticSrc returns a ConfigSource that always yields data.
+func staticSrc(data []byte) ConfigSource {
+	cp := make([]byte, len(data))
+	copy(cp, data)
+	return func(_ context.Context) ([]byte, error) { return cp, nil }
 }
 
-func TestPipelineConfig_InitialNoSnapshot(t *testing.T) {
-	p := New(StaticSource([]byte(`{"name":"x","value":1}`)), JSONDecoder[testStruct]())
-	_, ok := p.Snapshot()
-	require.False(t, ok, "expected no snapshot before Refresh")
+// errSrc returns a ConfigSource that always fails.
+func errSrc(err error) ConfigSource {
+	return func(_ context.Context) ([]byte, error) { return nil, err }
 }
 
-func TestPipelineConfig_NewStatic_ImmediateSnapshot(t *testing.T) {
+// --------------------------------------------------------------------------
+// Static config
+// --------------------------------------------------------------------------
+
+func TestNewStaticConfig_ImmediateSnapshot(t *testing.T) {
 	v := testStruct{Name: "static", Value: 42}
-	p := NewStatic(v)
-	snap, ok := p.Snapshot()
-	require.True(t, ok, "expected snapshot to be immediately available from NewStatic")
-	require.Equal(t, v, snap.Value)
-	require.Equal(t, "static", snap.Version)
-	require.False(t, snap.FetchedAt.IsZero(), "expected non-zero FetchedAt")
+	p := NewStaticConfig(v)
+	require.Equal(t, v, p.Snapshot())
 }
 
-func TestPipelineConfig_Refresh_PublishesSnapshot(t *testing.T) {
+func TestNewStaticConfig_StartStopNoOp(t *testing.T) {
+	p := NewStaticConfig(testStruct{Name: "x"})
+	stop := p.Start(context.Background())
+	// If Start launched a goroutine it would race; stopping immediately is safe.
+	stop()
+	// Snapshot must still return original value.
+	require.Equal(t, "x", p.Snapshot().Name)
+}
+
+// --------------------------------------------------------------------------
+// RefreshOnce
+// --------------------------------------------------------------------------
+
+func TestRefreshOnce_UpdatesSnapshot(t *testing.T) {
 	data := []byte(`{"name":"hello","value":7}`)
-	p := New(StaticSource(data), JSONDecoder[testStruct]())
-
-	require.NoError(t, p.Refresh(context.Background()))
-	snap, ok := p.Snapshot()
-	require.True(t, ok, "expected snapshot after Refresh")
-	require.Equal(t, "hello", snap.Value.Name)
-	require.Equal(t, 7, snap.Value.Value)
-	require.False(t, snap.FetchedAt.IsZero(), "expected non-zero FetchedAt")
+	p := NewPollingConfig(staticSrc(data), JSONDecoder[testStruct](), PollOptions{})
+	require.NoError(t, p.RefreshOnce(context.Background()))
+	require.Equal(t, testStruct{Name: "hello", Value: 7}, p.Snapshot())
 }
 
-func TestPipelineConfig_FetchError_KeepsLastGood(t *testing.T) {
+func TestRefreshOnce_FetchErrorKeepsLastGood(t *testing.T) {
 	data := []byte(`{"name":"good","value":1}`)
+	var fail atomic.Bool
+	src := ConfigSource(func(ctx context.Context) ([]byte, error) {
+		if fail.Load() {
+			return nil, errors.New("network down")
+		}
+		return data, nil
+	})
+	p := NewPollingConfig(src, JSONDecoder[testStruct](), PollOptions{})
+	require.NoError(t, p.RefreshOnce(context.Background()))
+	good := p.Snapshot()
 
-	// Use a switchable source for simplicity.
-	sw := &switchableSource{current: StaticSource(data)}
-	pc := New(sw, JSONDecoder[testStruct]())
-	require.NoError(t, pc.Refresh(context.Background()))
-	snapBefore, _ := pc.Snapshot()
-
-	sw.setErr(errors.New("network down"))
-	require.Error(t, pc.Refresh(context.Background()))
-
-	snapAfter, ok := pc.Snapshot()
-	require.True(t, ok, "expected last-good snapshot to remain after fetch error")
-	require.Equal(t, snapBefore.Value, snapAfter.Value)
+	fail.Store(true)
+	require.Error(t, p.RefreshOnce(context.Background()))
+	require.Equal(t, good, p.Snapshot())
 }
 
-func TestPipelineConfig_DecodeError_KeepsLastGood(t *testing.T) {
+func TestRefreshOnce_DecodeErrorKeepsLastGood(t *testing.T) {
 	good := []byte(`{"name":"good","value":1}`)
-	sw := &switchableSource{current: StaticSource(good)}
-	sd := &switchableDecoder[testStruct]{current: JSONDecoder[testStruct]()}
-	pc := New(sw, sd)
+	var failDec atomic.Bool
+	dec := ConfigDecoder[testStruct](func(data []byte) (testStruct, error) {
+		if failDec.Load() {
+			return testStruct{}, errors.New("bad schema")
+		}
+		return JSONDecoder[testStruct]()(data)
+	})
+	p := NewPollingConfig(staticSrc(good), dec, PollOptions{})
+	require.NoError(t, p.RefreshOnce(context.Background()))
+	good2 := p.Snapshot()
 
-	require.NoError(t, pc.Refresh(context.Background()))
-	snapBefore, _ := pc.Snapshot()
-
-	sd.setErr(errors.New("bad schema"))
-	require.Error(t, pc.Refresh(context.Background()))
-
-	snapAfter, ok := pc.Snapshot()
-	require.True(t, ok, "expected last-good snapshot to remain after decode error")
-	require.Equal(t, snapBefore.Value, snapAfter.Value)
+	failDec.Store(true)
+	require.Error(t, p.RefreshOnce(context.Background()))
+	require.Equal(t, good2, p.Snapshot())
 }
 
-func TestPipelineConfig_ConcurrentRefreshRead(t *testing.T) {
-	// Ensure readers never see a partial update and no races.
+func TestRefreshOnce_CtxCancellation(t *testing.T) {
+	unblock := make(chan struct{})
+	src := ConfigSource(func(ctx context.Context) ([]byte, error) {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-unblock:
+			return []byte(`{}`), nil
+		}
+	})
+	p := NewPollingConfig(src, JSONDecoder[testStruct](), PollOptions{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- p.RefreshOnce(ctx) }()
+
+	cancel()
+	select {
+	case err := <-errCh:
+		require.Error(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("RefreshOnce did not honour ctx cancellation")
+	}
+	close(unblock)
+}
+
+// --------------------------------------------------------------------------
+// Concurrent snapshot reads
+// --------------------------------------------------------------------------
+
+func TestPipelineConfig_ConcurrentSnapshotReads(t *testing.T) {
 	data := []byte(`{"name":"concurrent","value":99}`)
-	p := New(StaticSource(data), JSONDecoder[testStruct]())
-	require.NoError(t, p.Refresh(context.Background()))
+	p := NewPollingConfig(staticSrc(data), JSONDecoder[testStruct](), PollOptions{})
+	require.NoError(t, p.RefreshOnce(context.Background()))
 
 	const goroutines = 50
 	const iterations = 200
 	var wg sync.WaitGroup
 	wg.Add(goroutines * 2)
 
-	// Writers.
 	for i := 0; i < goroutines; i++ {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < iterations; j++ {
-				_ = p.Refresh(context.Background())
+			for range iterations {
+				p.RefreshOnce(context.Background()) //nolint:errcheck
 			}
 		}()
 	}
-	// Readers.
 	for i := 0; i < goroutines; i++ {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < iterations; j++ {
-				snap, ok := p.Snapshot()
-				if ok {
-					// Use assert (not require) — require.FailNow panics in goroutines.
-					assert.False(t, snap.FetchedAt.IsZero(), "FetchedAt is zero in concurrent snapshot")
-				}
+			for range iterations {
+				snap := p.Snapshot()
+				assert.NotEmpty(t, snap.Name, "concurrent read saw empty Name")
 			}
 		}()
 	}
 	wg.Wait()
 }
 
-func TestPipelineConfig_MustSnapshot_PanicsWhenEmpty(t *testing.T) {
-	p := New(StaticSource([]byte(`{}`)), JSONDecoder[testStruct]())
-	require.Panics(t, func() { p.MustSnapshot() })
+// --------------------------------------------------------------------------
+// File source
+// --------------------------------------------------------------------------
+
+func TestNewFileConfig_ReadsFreshOnSwap(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cfg.json")
+
+	require.NoError(t, os.WriteFile(path, []byte(`{"name":"first","value":1}`), 0o600))
+	p := NewFileConfig(path, JSONDecoder[testStruct](), PollOptions{})
+	require.NoError(t, p.RefreshOnce(context.Background()))
+	require.Equal(t, "first", p.Snapshot().Name)
+
+	require.NoError(t, os.WriteFile(path, []byte(`{"name":"second","value":2}`), 0o600))
+	require.NoError(t, p.RefreshOnce(context.Background()))
+	require.Equal(t, "second", p.Snapshot().Name)
 }
 
-func TestPipelineConfig_MustSnapshot_ReturnsValue(t *testing.T) {
-	v := testStruct{Name: "must", Value: 3}
-	p := NewStatic(v)
-	require.Equal(t, v, p.MustSnapshot())
+func TestNewFileConfig_MissingFileReturnsError(t *testing.T) {
+	p := NewFileConfig("/no/such/file.json", JSONDecoder[testStruct](), PollOptions{})
+	require.Error(t, p.RefreshOnce(context.Background()))
 }
+
+// --------------------------------------------------------------------------
+// JSON / YAML decoders
+// --------------------------------------------------------------------------
 
 func TestJSONDecoder_RoundTrip(t *testing.T) {
-	d := JSONDecoder[testStruct]()
-	input := testStruct{Name: "round", Value: 5}
-	data := fmt.Appendf(nil, `{"name":%q,"value":%d}`, input.Name, input.Value)
-	got, err := d.Decode(data)
+	dec := JSONDecoder[testStruct]()
+	got, err := dec([]byte(`{"name":"round","value":5}`))
 	require.NoError(t, err)
-	require.Equal(t, input, got)
+	require.Equal(t, testStruct{Name: "round", Value: 5}, got)
 }
 
 func TestJSONDecoder_Error(t *testing.T) {
-	d := JSONDecoder[testStruct]()
-	_, err := d.Decode([]byte(`not json`))
+	dec := JSONDecoder[testStruct]()
+	_, err := dec([]byte(`not json`))
 	require.Error(t, err)
-}
-
-func TestStaticSource_AlwaysReturnsData(t *testing.T) {
-	data := []byte(`hello`)
-	src := StaticSource(data)
-	for range 5 {
-		got, err := src.Fetch(context.Background())
-		require.NoError(t, err)
-		require.Equal(t, "hello", string(got))
-	}
-}
-
-// switchableSource lets tests change the underlying source mid-test.
-type switchableSource struct {
-	mu      sync.Mutex
-	current ConfigSource
-	err     error
-}
-
-func (s *switchableSource) Fetch(ctx context.Context) ([]byte, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.err != nil {
-		return nil, s.err
-	}
-	return s.current.Fetch(ctx)
-}
-
-func (s *switchableSource) setErr(err error) {
-	s.mu.Lock()
-	s.err = err
-	s.mu.Unlock()
-}
-
-// switchableDecoder lets tests swap decoder behavior.
-type switchableDecoder[T any] struct {
-	mu      sync.Mutex
-	current ConfigDecoder[T]
-	err     error
-}
-
-func (d *switchableDecoder[T]) Decode(data []byte) (T, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.err != nil {
-		var zero T
-		return zero, d.err
-	}
-	return d.current.Decode(data)
-}
-
-func (d *switchableDecoder[T]) setErr(err error) {
-	d.mu.Lock()
-	d.err = err
-	d.mu.Unlock()
 }

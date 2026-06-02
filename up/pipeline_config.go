@@ -5,168 +5,126 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
-	"sync"
 	"sync/atomic"
 	"time"
 )
 
-// ConfigSource fetches raw config bytes from an external source.
-// Fetch must be safe to call concurrently.
-type ConfigSource interface {
-	Fetch(ctx context.Context) ([]byte, error)
+const (
+	// DefaultPollInterval is used when PollOptions.Interval is zero.
+	DefaultPollInterval = 30 * time.Second
+	// DefaultPollTimeout is used when PollOptions.Timeout is zero.
+	DefaultPollTimeout = 5 * time.Second
+)
+
+// ConfigDecoder[T] parses raw bytes into a typed snapshot.
+// Called from the background polling goroutine; must be safe to call concurrently.
+type ConfigDecoder[T any] func(data []byte) (T, error)
+
+// ConfigSource fetches raw config bytes. May be called from a background goroutine.
+// A non-nil error keeps the last-good snapshot.
+type ConfigSource func(ctx context.Context) ([]byte, error)
+
+// ConfigEvent carries diagnostics from one refresh cycle.
+type ConfigEvent struct {
+	Version  string        // opaque; hash or counter; empty on error
+	Duration time.Duration // fetch+decode wall time
+	Err      error         // non-nil means last-good snapshot was kept
 }
 
-// ConfigDecoder[T] decodes raw bytes into a typed snapshot.
-type ConfigDecoder[T any] interface {
-	Decode(data []byte) (T, error)
+// PollOptions configures the polling behaviour for NewPollingConfig / NewFileConfig.
+type PollOptions struct {
+	Interval time.Duration // zero → DefaultPollInterval
+	Timeout  time.Duration // zero → DefaultPollTimeout; applied per fetch attempt
+	Jitter   time.Duration // random [0, Jitter) added to each interval
+
+	// Observe is called after every refresh cycle (success or failure).
+	// Called from the polling goroutine; must not block indefinitely.
+	Observe func(ConfigEvent)
 }
 
-// Snapshot[T] is an immutable config snapshot with provenance metadata.
-type Snapshot[T any] struct {
-	Value     T
-	Version   string    // opaque; source may set to checksum, etag, seq, etc.
-	FetchedAt time.Time
-}
-
-// PipelineConfig[T] holds an atomically published config snapshot.
-// Last-good semantics: if Refresh fails the previous snapshot remains visible.
-// Safe for concurrent use.
+// PipelineConfig[T] holds a decoded config snapshot refreshable from a source.
+// Snapshot() is safe from any goroutine. The request path never calls the source.
 type PipelineConfig[T any] struct {
-	source  ConfigSource
-	decoder ConfigDecoder[T]
-	// stored value is *snapshotHolder[T]; nil means no snapshot yet.
-	current atomic.Pointer[snapshotHolder[T]]
-
-	// observer support (guarded by obsMu)
-	obsMu     sync.Mutex
-	observers []RefreshObserver
-
-	// polling guard
-	pollOnce sync.Once
+	source   ConfigSource
+	decoder  ConfigDecoder[T]
+	opts     PollOptions
+	current  atomic.Pointer[T]
+	isStatic bool
 }
 
-// snapshotHolder wraps a Snapshot so we can store *snapshotHolder in atomic.Pointer.
-type snapshotHolder[T any] struct {
-	snap Snapshot[T]
-}
-
-// New creates a PipelineConfig that fetches from source and decodes with decoder.
-// The snapshot is NOT loaded until the first call to Refresh or Load.
-func New[T any](source ConfigSource, decoder ConfigDecoder[T]) *PipelineConfig[T] {
-	return &PipelineConfig[T]{
-		source:  source,
-		decoder: decoder,
-	}
-}
-
-// Refresh fetches and decodes a new snapshot. On success it atomically replaces
-// the current snapshot. On failure the previous snapshot is unchanged and the
-// error is returned. Safe to call concurrently.
-// After each attempt (success or failure), all registered observers are called.
-func (p *PipelineConfig[T]) Refresh(ctx context.Context) error {
-	start := time.Now()
-	data, err := p.source.Fetch(ctx)
-	if err != nil {
-		wrapped := fmt.Errorf("pipeline_config: fetch: %w", err)
-		p.notifyObservers(RefreshEvent{Duration: time.Since(start), Err: wrapped})
-		return wrapped
-	}
-	value, err := p.decoder.Decode(data)
-	if err != nil {
-		wrapped := fmt.Errorf("pipeline_config: decode: %w", err)
-		p.notifyObservers(RefreshEvent{Duration: time.Since(start), Err: wrapped})
-		return wrapped
-	}
-	sum := sha256.Sum256(data)
-	version := hex.EncodeToString(sum[:8])
-	holder := &snapshotHolder[T]{
-		snap: Snapshot[T]{
-			Value:     value,
-			Version:   version,
-			FetchedAt: time.Now(),
-		},
-	}
-	p.current.Store(holder)
-	dur := time.Since(start)
-	p.notifyObservers(RefreshEvent{Version: version, Duration: dur})
-	return nil
-}
-
-// notifyObservers calls all registered observers with ev.
-func (p *PipelineConfig[T]) notifyObservers(ev RefreshEvent) {
-	p.obsMu.Lock()
-	obs := p.observers
-	p.obsMu.Unlock()
-	for _, o := range obs {
-		o(ev)
-	}
-}
-
-// Snapshot returns (snapshot, true) if at least one successful Refresh has
-// completed, or (zero, false) otherwise.
-func (p *PipelineConfig[T]) Snapshot() (Snapshot[T], bool) {
-	h := p.current.Load()
-	if h == nil {
-		var zero Snapshot[T]
-		return zero, false
-	}
-	return h.snap, true
-}
-
-// MustSnapshot returns the current snapshot value, panicking if no snapshot
-// has been loaded yet. Suitable for call sites that load config at startup.
-func (p *PipelineConfig[T]) MustSnapshot() T {
-	snap, ok := p.Snapshot()
-	if !ok {
-		panic("pipeline_config: no snapshot loaded")
-	}
-	return snap.Value
-}
-
-// StaticSource returns a ConfigSource that always returns the given bytes.
-// Useful for tests and for embedding config literals in code.
-func StaticSource(data []byte) ConfigSource {
-	cp := make([]byte, len(data))
-	copy(cp, data)
-	return &staticSource{data: cp}
-}
-
-type staticSource struct {
-	data []byte
-}
-
-func (s *staticSource) Fetch(_ context.Context) ([]byte, error) {
-	return s.data, nil
-}
-
-// NewStatic creates a PipelineConfig[T] pre-loaded with value v using a static
-// source. Snapshot() immediately returns (snap, true) without calling Refresh.
-func NewStatic[T any](v T) *PipelineConfig[T] {
-	p := &PipelineConfig[T]{}
-	holder := &snapshotHolder[T]{
-		snap: Snapshot[T]{
-			Value:     v,
-			Version:   "static",
-			FetchedAt: time.Now(),
-		},
-	}
-	p.current.Store(holder)
+// NewStaticConfig returns a PipelineConfig whose snapshot never changes.
+// Start is a no-op. Snapshot() returns v immediately.
+func NewStaticConfig[T any](v T) *PipelineConfig[T] {
+	p := &PipelineConfig[T]{isStatic: true}
+	vv := v
+	p.current.Store(&vv)
 	return p
 }
 
-// jsonDecoder is the implementation of ConfigDecoder[T] for JSON.
-type jsonDecoder[T any] struct{}
-
-func (d jsonDecoder[T]) Decode(data []byte) (T, error) {
-	var v T
-	if err := json.Unmarshal(data, &v); err != nil {
-		return v, err
+// NewPollingConfig returns a PipelineConfig backed by an arbitrary source.
+// The first fetch fires immediately on Start; subsequent fetches tick at Interval ± Jitter.
+func NewPollingConfig[T any](src ConfigSource, dec ConfigDecoder[T], opts PollOptions) *PipelineConfig[T] {
+	if opts.Interval == 0 {
+		opts.Interval = DefaultPollInterval
 	}
-	return v, nil
+	if opts.Timeout == 0 {
+		opts.Timeout = DefaultPollTimeout
+	}
+	return &PipelineConfig[T]{source: src, decoder: dec, opts: opts}
+}
+
+// Snapshot returns the current decoded config. Returns the zero value if no
+// successful fetch has completed yet. Never returns a partially-updated value.
+func (p *PipelineConfig[T]) Snapshot() T {
+	v := p.current.Load()
+	if v == nil {
+		var zero T
+		return zero
+	}
+	return *v
+}
+
+// RefreshOnce fetches and decodes a single snapshot, blocking until done or
+// ctx is cancelled. Updates Snapshot() on success; on error keeps last-good.
+// Useful for warming the cache before Start() begins ticking.
+func (p *PipelineConfig[T]) RefreshOnce(ctx context.Context) error {
+	return p.fetchAndStore(ctx)
+}
+
+// fetchAndStore performs one fetch+decode cycle, atomically publishing on success.
+// Calls Observe (if set) after every attempt.
+func (p *PipelineConfig[T]) fetchAndStore(ctx context.Context) error {
+	start := time.Now()
+	data, err := p.source(ctx)
+	if err != nil {
+		if p.opts.Observe != nil {
+			p.opts.Observe(ConfigEvent{Duration: time.Since(start), Err: err})
+		}
+		return err
+	}
+	v, err := p.decoder(data)
+	if err != nil {
+		if p.opts.Observe != nil {
+			p.opts.Observe(ConfigEvent{Duration: time.Since(start), Err: err})
+		}
+		return err
+	}
+	sum := sha256.Sum256(data)
+	version := hex.EncodeToString(sum[:8])
+	p.current.Store(&v)
+	if p.opts.Observe != nil {
+		p.opts.Observe(ConfigEvent{Version: version, Duration: time.Since(start)})
+	}
+	return nil
 }
 
 // JSONDecoder[T] decodes JSON bytes into T using encoding/json.
 func JSONDecoder[T any]() ConfigDecoder[T] {
-	return jsonDecoder[T]{}
+	return func(data []byte) (T, error) {
+		var v T
+		if err := json.Unmarshal(data, &v); err != nil {
+			return v, err
+		}
+		return v, nil
+	}
 }
