@@ -29,8 +29,12 @@ type streamFinalizedEntry struct {
 // streamFinalizedRegistry is a process-wide map keyed by (filter name,
 // stream key). Entries are deposited by the filter on its first request
 // callback and drained by the SDK-internal access logger at
-// [AccessLogTypeDownstreamEnd]. [filter.OnStreamComplete] drains any
-// leftover entry as a safety net.
+// [AccessLogTypeDownstreamEnd]. If the listener YAML lacks the matching
+// access_log stanza the entry is never drained — that is a configuration
+// error. [filter.OnStreamComplete] cannot drain it safely because in this
+// Envoy version OnStreamComplete fires before the access logger's OnLog,
+// so draining there would race and prevent OnStreamFinalized from ever
+// firing.
 //
 // Composite key form: name + "\x00" + streamKey. The filter name disambiguates
 // concurrent filters that share an x-request-id (multiple filter chains, or
@@ -62,15 +66,6 @@ func takeFinalizedEntry(key string) (*streamFinalizedEntry, bool) {
 	}
 	streamFinalizedMu.Unlock()
 	return e, ok
-}
-
-// dropFinalizedEntry removes the entry for key without invoking the callback.
-// Called by [filter.OnStreamComplete] as a safety net in case the access
-// logger never fired (e.g. listener YAML lacks the access_log stanza).
-func dropFinalizedEntry(key string) {
-	streamFinalizedMu.Lock()
-	delete(streamFinalizedEntries, key)
-	streamFinalizedMu.Unlock()
 }
 
 // finalizedFallbackKey is a 16-byte hex nonce used when the stream has no
