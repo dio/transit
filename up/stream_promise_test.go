@@ -5,18 +5,16 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // TestStreamPromise_unresolvedResult: Result returns (zero, false) before Resolve.
 func TestStreamPromise_unresolvedResult(t *testing.T) {
 	p := NewStreamPromise[string]()
 	v, ok := p.Result()
-	if ok {
-		t.Errorf("Result() = (%q, true) before Resolve; want (zero, false)", v)
-	}
-	if v != "" {
-		t.Errorf("Result() non-zero before Resolve: %q", v)
-	}
+	require.False(t, ok, "Result() returned true before Resolve")
+	require.Empty(t, v)
 }
 
 // TestStreamPromise_resolveResult: Result returns (v, true) after Resolve.
@@ -25,12 +23,8 @@ func TestStreamPromise_resolveResult(t *testing.T) {
 	p.Resolve(42)
 
 	v, ok := p.Result()
-	if !ok {
-		t.Fatal("Result() returned false after Resolve")
-	}
-	if v != 42 {
-		t.Errorf("Result() = %d, want 42", v)
-	}
+	require.True(t, ok, "Result() returned false after Resolve")
+	require.Equal(t, 42, v)
 }
 
 // TestStreamPromise_firstResolveWins: second Resolve returns false and does not
@@ -41,17 +35,12 @@ func TestStreamPromise_firstResolveWins(t *testing.T) {
 	first := p.Resolve("alpha")
 	second := p.Resolve("beta")
 
-	if !first {
-		t.Error("first Resolve returned false; want true")
-	}
-	if second {
-		t.Error("second Resolve returned true; want false")
-	}
+	require.True(t, first, "first Resolve returned false")
+	require.False(t, second, "second Resolve returned true")
 
 	v, ok := p.Result()
-	if !ok || v != "alpha" {
-		t.Errorf("Result() = (%q, %v); want (alpha, true)", v, ok)
-	}
+	require.True(t, ok)
+	require.Equal(t, "alpha", v)
 }
 
 // TestStreamPromise_doneClosedOnResolve: Done() channel is closed after Resolve.
@@ -61,7 +50,7 @@ func TestStreamPromise_doneClosedOnResolve(t *testing.T) {
 	// Done should not be closed yet.
 	select {
 	case <-p.Done():
-		t.Fatal("Done() channel closed before Resolve")
+		require.Fail(t, "Done() channel closed before Resolve")
 	default:
 	}
 
@@ -71,7 +60,7 @@ func TestStreamPromise_doneClosedOnResolve(t *testing.T) {
 	case <-p.Done():
 		// expected
 	case <-time.After(time.Second):
-		t.Fatal("Done() channel not closed after Resolve")
+		require.Fail(t, "Done() channel not closed after Resolve")
 	}
 }
 
@@ -89,12 +78,8 @@ func TestStreamPromise_callbackBeforeResolve(t *testing.T) {
 
 	p.Resolve(7)
 
-	if !fired.Load() {
-		t.Fatal("callback did not fire after Resolve")
-	}
-	if gotVal != 7 {
-		t.Errorf("callback received %d, want 7", gotVal)
-	}
+	require.True(t, fired.Load(), "callback did not fire after Resolve")
+	require.Equal(t, 7, gotVal)
 }
 
 // TestStreamPromise_callbackAfterResolve: callback registered after Resolve
@@ -106,15 +91,11 @@ func TestStreamPromise_callbackAfterResolve(t *testing.T) {
 	var fired bool
 	p.OnResolve(func(v string) {
 		fired = true
-		if v != "hello" {
-			t.Errorf("inline callback got %q, want hello", v)
-		}
+		require.Equal(t, "hello", v)
 	})
 	// Because the promise was already resolved, the callback must have fired
 	// synchronously inside OnResolve — before we reach the check below.
-	if !fired {
-		t.Fatal("callback did not fire inline for already-resolved promise")
-	}
+	require.True(t, fired, "callback did not fire inline for already-resolved promise")
 }
 
 // TestStreamPromise_cancelBeforeResolve: cancel before Resolve prevents callback.
@@ -129,9 +110,7 @@ func TestStreamPromise_cancelBeforeResolve(t *testing.T) {
 	cancel()
 	p.Resolve(1)
 
-	if fired.Load() {
-		t.Error("canceled callback fired after Resolve")
-	}
+	require.False(t, fired.Load(), "canceled callback fired after Resolve")
 }
 
 // TestStreamPromise_cancelAfterResolve: cancel after Resolve is a no-op and
@@ -145,11 +124,7 @@ func TestStreamPromise_cancelAfterResolve(t *testing.T) {
 	})
 
 	p.Resolve(2)
-
-	// Callback should have already fired.
-	if !fired.Load() {
-		t.Fatal("callback did not fire on Resolve")
-	}
+	require.True(t, fired.Load(), "callback did not fire on Resolve")
 
 	// Calling cancel after the callback already fired must not panic.
 	cancel()
@@ -174,15 +149,9 @@ func TestStreamPromise_multipleCallbacks(t *testing.T) {
 
 	p.Resolve(10)
 
-	if !fired[0].Load() {
-		t.Error("callback A did not fire")
-	}
-	if fired[1].Load() {
-		t.Error("canceled callback B fired")
-	}
-	if !fired[2].Load() {
-		t.Error("callback C did not fire")
-	}
+	require.True(t, fired[0].Load(), "callback A did not fire")
+	require.False(t, fired[1].Load(), "canceled callback B fired")
+	require.True(t, fired[2].Load(), "callback C did not fire")
 }
 
 // TestStreamPromise_concurrentResolveSafe: concurrent Resolve + OnResolve must
@@ -222,15 +191,13 @@ func TestStreamPromise_concurrentResolveSafe(t *testing.T) {
 		wg.Wait()
 
 		// Exactly one Resolve must have won.
-		if n := resolved.Load(); n != 1 {
-			t.Errorf("iter %d: %d goroutines won the Resolve race, want exactly 1", iter, n)
-		}
+		require.EqualValues(t, 1, resolved.Load(), "iter %d: wrong number of winners", iter)
 
 		// Done must be closed.
 		select {
 		case <-p.Done():
 		case <-time.After(time.Second):
-			t.Fatalf("iter %d: Done() not closed after concurrent Resolve", iter)
+			require.Fail(t, "Done() not closed after concurrent Resolve", "iter %d", iter)
 		}
 	}
 }

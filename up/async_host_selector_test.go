@@ -126,7 +126,7 @@ func TestAsyncHostSelector_alreadyResolved(t *testing.T) {
 	select {
 	case <-fired:
 	default:
-		t.Fatal("Complete was not called for an already-resolved promise")
+		require.Fail(t, "Complete was not called for an already-resolved promise")
 	}
 	require.NotNil(t, *gotHost)
 	require.Empty(t, *gotErr)
@@ -152,7 +152,7 @@ func TestAsyncHostSelector_laterResolved(t *testing.T) {
 	// Complete must not have fired yet.
 	select {
 	case <-fired:
-		t.Fatal("Complete fired before promise resolved")
+		require.Fail(t, "Complete fired before promise resolved")
 	default:
 	}
 
@@ -161,7 +161,7 @@ func TestAsyncHostSelector_laterResolved(t *testing.T) {
 	select {
 	case <-fired:
 	default:
-		t.Fatal("Complete did not fire after promise resolved")
+		require.Fail(t, "Complete did not fire after promise resolved")
 	}
 	require.NotNil(t, *gotHost)
 	require.Empty(t, *gotErr)
@@ -198,7 +198,7 @@ func TestAsyncHostSelector_cancelBeforeResolve(t *testing.T) {
 
 	select {
 	case <-fired:
-		t.Fatal("Complete fired after Cancel")
+		require.Fail(t, "Complete fired after Cancel")
 	default:
 	}
 }
@@ -227,7 +227,7 @@ func TestAsyncHostSelector_cancelAfterResolve(t *testing.T) {
 	select {
 	case <-fired:
 	default:
-		t.Fatal("Complete did not fire after Resolve")
+		require.Fail(t, "Complete did not fire after Resolve")
 	}
 
 	// Cancel afterwards — must not panic or double-fire.
@@ -282,7 +282,7 @@ func TestAsyncHostSelector_lookupError(t *testing.T) {
 	select {
 	case <-fired:
 	default:
-		t.Fatal("Complete did not fire after Resolve (error path)")
+		require.Fail(t, "Complete did not fire after Resolve (error path)")
 	}
 	require.Equal(t, "lookup.failed", failedDetail)
 	require.Nil(t, *gotHost)
@@ -313,7 +313,7 @@ func TestAsyncHostSelector_lookupSuccess(t *testing.T) {
 	select {
 	case <-fired:
 	default:
-		t.Fatal("Complete did not fire after Resolve")
+		require.Fail(t, "Complete did not fire after Resolve")
 	}
 	require.NotNil(t, selectedHost)
 	require.Equal(t, selectedHost, *gotHost)
@@ -341,7 +341,7 @@ func TestAsyncHostSelector_deferredSchedule(t *testing.T) {
 	// Complete must not have fired yet (Schedule is deferred).
 	select {
 	case <-fired:
-		t.Fatal("Complete fired before scheduled fns ran")
+		require.Fail(t, "Complete fired before scheduled fns ran")
 	default:
 	}
 
@@ -350,7 +350,7 @@ func TestAsyncHostSelector_deferredSchedule(t *testing.T) {
 	select {
 	case <-fired:
 	default:
-		t.Fatal("Complete did not fire after scheduled fns ran")
+		require.Fail(t, "Complete did not fire after scheduled fns ran")
 	}
 	require.NotNil(t, *gotHost)
 }

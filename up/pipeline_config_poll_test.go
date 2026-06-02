@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // ---------------------------------------------------------------------------
@@ -17,48 +19,34 @@ func TestFileSource_ReadsContents(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cfg.json")
 	want := []byte(`{"name":"file","value":42}`)
-	if err := os.WriteFile(path, want, 0o600); err != nil {
-		t.Fatalf("write file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(path, want, 0o600))
 
 	src := FileSource(path)
 	got, err := src.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("Fetch error: %v", err)
-	}
-	if string(got) != string(want) {
-		t.Fatalf("got %q, want %q", got, want)
-	}
+	require.NoError(t, err)
+	require.Equal(t, string(want), string(got))
 }
 
 func TestFileSource_ReadsFreshOnEachCall(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cfg.json")
-	if err := os.WriteFile(path, []byte(`first`), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(`first`), 0o600))
 
 	src := FileSource(path)
-	got1, _ := src.Fetch(context.Background())
-	if string(got1) != "first" {
-		t.Fatalf("first fetch: %q", got1)
-	}
+	got1, err := src.Fetch(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "first", string(got1))
 
-	if err := os.WriteFile(path, []byte(`second`), 0o600); err != nil {
-		t.Fatalf("update: %v", err)
-	}
-	got2, _ := src.Fetch(context.Background())
-	if string(got2) != "second" {
-		t.Fatalf("second fetch: %q", got2)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(`second`), 0o600))
+	got2, err := src.Fetch(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "second", string(got2))
 }
 
 func TestFileSource_MissingFileReturnsError(t *testing.T) {
 	src := FileSource("/no/such/file/does/not/exist.json")
 	_, err := src.Fetch(context.Background())
-	if err == nil {
-		t.Fatal("expected error for missing file")
-	}
+	require.Error(t, err)
 }
 
 // ---------------------------------------------------------------------------
@@ -68,9 +56,7 @@ func TestFileSource_MissingFileReturnsError(t *testing.T) {
 func TestWithObserver_CalledOnSuccess(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cfg.json")
-	if err := os.WriteFile(path, []byte(`{"name":"obs","value":1}`), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(`{"name":"obs","value":1}`), 0o600))
 
 	p := New[testStruct](FileSource(path), JSONDecoder[testStruct]())
 
@@ -79,27 +65,16 @@ func TestWithObserver_CalledOnSuccess(t *testing.T) {
 		events = append(events, ev)
 	})
 
-	if err := p.Refresh(context.Background()); err != nil {
-		t.Fatalf("Refresh: %v", err)
-	}
+	require.NoError(t, p.Refresh(context.Background()))
 
-	if len(events) != 1 {
-		t.Fatalf("expected 1 observer call, got %d", len(events))
-	}
+	require.Len(t, events, 1)
 	ev := events[0]
-	if ev.Err != nil {
-		t.Fatalf("expected nil Err on success, got %v", ev.Err)
-	}
-	if ev.Version == "" {
-		t.Fatal("expected non-empty Version on success")
-	}
-	if ev.Duration <= 0 {
-		t.Fatal("expected positive Duration")
-	}
+	require.NoError(t, ev.Err)
+	require.NotEmpty(t, ev.Version)
+	require.Positive(t, ev.Duration)
 }
 
 func TestWithObserver_CalledOnError(t *testing.T) {
-	// Use a missing file so Fetch returns an error.
 	p := New[testStruct](FileSource("/no/such/path.json"), JSONDecoder[testStruct]())
 
 	var events []RefreshEvent
@@ -107,28 +82,17 @@ func TestWithObserver_CalledOnError(t *testing.T) {
 		events = append(events, ev)
 	})
 
-	err := p.Refresh(context.Background())
-	if err == nil {
-		t.Fatal("expected Refresh to return error")
-	}
-	if len(events) != 1 {
-		t.Fatalf("expected 1 observer call, got %d", len(events))
-	}
+	require.Error(t, p.Refresh(context.Background()))
+	require.Len(t, events, 1)
 	ev := events[0]
-	if ev.Err == nil {
-		t.Fatal("expected non-nil Err in observer on fetch failure")
-	}
-	if ev.Version != "" {
-		t.Fatalf("expected empty Version on error, got %q", ev.Version)
-	}
+	require.Error(t, ev.Err)
+	require.Empty(t, ev.Version)
 }
 
 func TestWithObserver_MultipleObservers(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cfg.json")
-	if err := os.WriteFile(path, []byte(`{"name":"multi","value":2}`), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(`{"name":"multi","value":2}`), 0o600))
 
 	p := New[testStruct](FileSource(path), JSONDecoder[testStruct]())
 
@@ -139,12 +103,8 @@ func TestWithObserver_MultipleObservers(t *testing.T) {
 		})
 	}
 
-	if err := p.Refresh(context.Background()); err != nil {
-		t.Fatalf("Refresh: %v", err)
-	}
-	if got := atomic.LoadInt32(&count); got != 3 {
-		t.Fatalf("expected 3 observer calls, got %d", got)
-	}
+	require.NoError(t, p.Refresh(context.Background()))
+	require.EqualValues(t, 3, atomic.LoadInt32(&count))
 }
 
 // ---------------------------------------------------------------------------
@@ -154,9 +114,7 @@ func TestWithObserver_MultipleObservers(t *testing.T) {
 func TestStartPolling_TriggersRepeatedRefreshes(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cfg.json")
-	if err := os.WriteFile(path, []byte(`{"name":"poll","value":7}`), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(`{"name":"poll","value":7}`), 0o600))
 
 	p := New[testStruct](FileSource(path), JSONDecoder[testStruct]())
 
@@ -183,17 +141,13 @@ func TestStartPolling_TriggersRepeatedRefreshes(t *testing.T) {
 	}
 	cancel()
 
-	if got := atomic.LoadInt32(&count); got < 3 {
-		t.Fatalf("expected at least 3 refreshes, got %d", got)
-	}
+	require.GreaterOrEqual(t, atomic.LoadInt32(&count), int32(3))
 }
 
 func TestStartPolling_NoOpOnSecondCall(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cfg.json")
-	if err := os.WriteFile(path, []byte(`{"name":"noop","value":0}`), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(`{"name":"noop","value":0}`), 0o600))
 
 	p := New[testStruct](FileSource(path), JSONDecoder[testStruct]())
 
@@ -219,20 +173,14 @@ func TestStartPolling_NoOpOnSecondCall(t *testing.T) {
 	// roughly double. We can't assert an exact count because timing varies, but
 	// we verify the call doesn't panic and the config is still readable.
 	snap, ok := p.Snapshot()
-	if !ok {
-		t.Fatal("expected snapshot after polling")
-	}
-	if snap.Value.Name != "noop" {
-		t.Fatalf("unexpected value: %+v", snap.Value)
-	}
+	require.True(t, ok, "expected snapshot after polling")
+	require.Equal(t, "noop", snap.Value.Name)
 }
 
 func TestStartPolling_StopsOnContextCancel(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cfg.json")
-	if err := os.WriteFile(path, []byte(`{"name":"stop","value":5}`), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(`{"name":"stop","value":5}`), 0o600))
 
 	p := New[testStruct](FileSource(path), JSONDecoder[testStruct]())
 
@@ -254,7 +202,6 @@ func TestStartPolling_StopsOnContextCancel(t *testing.T) {
 	countLater := atomic.LoadInt32(&count)
 
 	// Allow up to 2 extra calls due to in-flight goroutine scheduling.
-	if countLater > countAfterCancel+2 {
-		t.Fatalf("polling continued after cancel: before=%d after=%d", countAfterCancel, countLater)
-	}
+	require.LessOrEqual(t, countLater, countAfterCancel+2,
+		"polling continued after cancel: before=%d after=%d", countAfterCancel, countLater)
 }

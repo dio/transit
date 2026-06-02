@@ -3,15 +3,15 @@ package up
 import (
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/dio/transit/up/testutil"
 )
 
 // TestStreamKey_keyRoundTrip: Key() returns the string passed to NewStreamKey.
 func TestStreamKey_keyRoundTrip(t *testing.T) {
 	k := NewStreamKey[string]("orange.decision")
-	if got := k.Key(); got != "orange.decision" {
-		t.Errorf("Key() = %q, want %q", got, "orange.decision")
-	}
+	require.Equal(t, "orange.decision", k.Key())
 }
 
 // TestStreamKey_setGetWriter: typed set/get round-trip through Writer.
@@ -23,12 +23,8 @@ func TestStreamKey_setGetWriter(t *testing.T) {
 	k.Set(w, 99)
 
 	got, ok := k.Get(w)
-	if !ok {
-		t.Fatal("Get returned false after Set")
-	}
-	if got != 99 {
-		t.Errorf("Get = %d, want 99", got)
-	}
+	require.True(t, ok, "Get returned false after Set")
+	require.Equal(t, 99, got)
 }
 
 // TestStreamKey_getMissing: Get returns (zero, false) when the key was never set.
@@ -38,12 +34,8 @@ func TestStreamKey_getMissing(t *testing.T) {
 
 	k := NewStreamKey[string]("missing.key")
 	v, ok := k.Get(w)
-	if ok {
-		t.Errorf("Get returned true for an unset key, value = %q", v)
-	}
-	if v != "" {
-		t.Errorf("Get returned non-zero value for an unset key: %q", v)
-	}
+	require.False(t, ok, "Get returned true for an unset key")
+	require.Empty(t, v, "Get returned non-zero value for an unset key")
 }
 
 // TestStreamKey_structType: StreamKey works with a struct pointer type.
@@ -61,12 +53,9 @@ func TestStreamKey_structType(t *testing.T) {
 	k.Set(w, want)
 
 	got, ok := k.Get(w)
-	if !ok {
-		t.Fatal("Get returned false")
-	}
-	if got.Model != want.Model || got.Score != want.Score {
-		t.Errorf("got %+v, want %+v", got, want)
-	}
+	require.True(t, ok, "Get returned false")
+	require.Equal(t, want.Model, got.Model)
+	require.InDelta(t, want.Score, got.Score, 1e-9)
 }
 
 // TestStreamKey_getFromCtx: a value Set via Writer is readable through
@@ -82,12 +71,8 @@ func TestStreamKey_getFromCtx(t *testing.T) {
 	ctx := testutil.NewFakeClusterLBContext(h)
 
 	got, ok := k.GetFromCtx(ctx)
-	if !ok {
-		t.Fatal("GetFromCtx returned false")
-	}
-	if got != "sess-abc" {
-		t.Errorf("GetFromCtx = %q, want %q", got, "sess-abc")
-	}
+	require.True(t, ok, "GetFromCtx returned false")
+	require.Equal(t, "sess-abc", got)
 }
 
 // TestStreamKey_getFromCtxNoValue: GetFromCtx returns (zero, false) when no
@@ -99,9 +84,8 @@ func TestStreamKey_getFromCtxNoValue(t *testing.T) {
 
 	k := NewStreamKey[int]("noop.key")
 	v, ok := k.GetFromCtx(ctx)
-	if ok {
-		t.Errorf("GetFromCtx returned true with value %d for an empty context", v)
-	}
+	require.False(t, ok, "GetFromCtx returned true for an empty context")
+	require.Zero(t, v)
 }
 
 // TestStreamKey_multipleKeys: multiple StreamKey instances on the same stream
@@ -117,13 +101,12 @@ func TestStreamKey_multipleKeys(t *testing.T) {
 	kb.Set(w, "hello")
 
 	a, ok := ka.Get(w)
-	if !ok || a != 42 {
-		t.Errorf("ka.Get = %d, %v; want 42, true", a, ok)
-	}
+	require.True(t, ok)
+	require.Equal(t, 42, a)
+
 	b, ok := kb.Get(w)
-	if !ok || b != "hello" {
-		t.Errorf("kb.Get = %q, %v; want hello, true", b, ok)
-	}
+	require.True(t, ok)
+	require.Equal(t, "hello", b)
 }
 
 // TestStreamKey_compileTimeTypeSafety documents that the generics prevent
