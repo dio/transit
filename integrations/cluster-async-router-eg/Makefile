@@ -5,7 +5,7 @@
 
 ROOT := $(abspath $(CURDIR)/../..)
 
-ENVOY_TAG ?= envoy-0d6e3c60
+ENVOY_TAG ?= envoy-0d6e3c60-auto-host-sni
 ENVOY_GATEWAY_VERSION ?= v1.8.0
 K3S_TAG ?= v1.31.6-k3s1
 IMAGE_TAG := $(shell date +%s)

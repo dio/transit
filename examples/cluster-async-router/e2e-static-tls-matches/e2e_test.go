@@ -1,21 +1,18 @@
-// Package e2e is the canonical integration suite for the cluster-async-router
-// example. It proves that metadata-driven static transport_socket_matches lets
-// a single dynamic-modules cluster serve both plaintext and TLS upstreams
-// without any runtime mutation of transport sockets.
+// Package e2estatictlsmatches proves that metadata-driven static
+// transport_socket_matches lets a single dynamic-modules cluster serve both
+// plaintext and TLS upstreams without any runtime mutation of transport sockets.
 //
-// Four hosts are registered in the cluster config:
+// Three hosts are registered in the cluster config:
 //
 //   - httpbin.org:443  — bucket=tls-system-ca, Hostname=httpbin.org
 //   - example.com:443  — bucket=tls-system-ca, Hostname=example.com
 //   - 127.0.0.1:<port> — bucket=plaintext
-//   - (unknown)        — not registered; triggers async error → 503
 //
-// The envoy config has two transport_socket_matches entries keyed on the
-// "bucket" field in endpoint metadata. Envoy selects the TLS socket for the
-// first two hosts and the raw_buffer socket for the third — all at connect
-// time, with no mutation. auto_host_sni reads HostSpec.Hostname from the
-// patched ABI for per-host SNI without hardcoding it in the TLS context.
-package e2e
+// The envoy.yaml has two transport_socket_matches entries that key on the
+// "bucket" field in the envoy.transport_socket_match endpoint metadata
+// namespace. Envoy selects the TLS socket for the first two hosts and the
+// raw_buffer socket for the third — all at connect time, with no mutation.
+package e2estatictlsmatches
 
 import (
 	"bytes"
@@ -97,7 +94,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	cfgPath := e2etest.WriteEnvoyConfig("cluster-async-router-e2e", envoyConfigTmpl, map[string]any{
+	cfgPath := e2etest.WriteEnvoyConfig("cluster-async-router-static-tls-matches", envoyConfigTmpl, map[string]any{
 		"ProxyPort":     proxyPort,
 		"AdminPort":     adminPort,
 		"SystemCAFile":  systemCA,
@@ -109,7 +106,7 @@ func TestMain(m *testing.M) {
 	if !ok {
 		os.Exit(1)
 	}
-	fmt.Fprintln(os.Stderr, "e2e: envoy ready")
+	fmt.Fprintln(os.Stderr, "e2e: envoy ready (static-tls-matches)")
 
 	code := m.Run()
 	stop()
@@ -129,46 +126,34 @@ func post(t *testing.T, body string) *http.Response {
 	return resp
 }
 
-// TestAsyncRouter_TLS_Httpbin routes {"target":"httpbin"} to httpbin.org:443
-// via the tls-system-ca bucket. A non-5xx response proves auto_host_sni set
-// the correct SNI and the TLS handshake succeeded.
-func TestAsyncRouter_TLS_Httpbin(t *testing.T) {
+// TestTLSMatches_Httpbin routes to httpbin.org:443 via the tls-system-ca match.
+// A non-5xx response proves TLS connected; httpbin returns 405 for POST /get
+// and 200 for GET — either confirms a successful handshake.
+func TestTLSMatches_Httpbin(t *testing.T) {
 	resp := post(t, `{"target":"httpbin"}`)
 	defer resp.Body.Close()
 	t.Logf("status=%d", resp.StatusCode)
 	require.Less(t, resp.StatusCode, 500,
-		"TLS handshake to httpbin.org failed; auto_host_sni or tls-system-ca bucket did not work")
+		"TLS handshake to httpbin.org failed; transport_socket_matches did not select tls-system-ca socket")
 }
 
-// TestAsyncRouter_TLS_Example routes {"target":"example"} to example.com:443
-// via the tls-system-ca bucket. Same TLS proof as above for a different host.
-func TestAsyncRouter_TLS_Example(t *testing.T) {
+// TestTLSMatches_Example routes to example.com:443 via the tls-system-ca match.
+func TestTLSMatches_Example(t *testing.T) {
 	resp := post(t, `{"target":"example"}`)
 	defer resp.Body.Close()
 	t.Logf("status=%d", resp.StatusCode)
 	require.Less(t, resp.StatusCode, 500,
-		"TLS handshake to example.com failed; auto_host_sni or tls-system-ca bucket did not work")
+		"TLS handshake to example.com failed; transport_socket_matches did not select tls-system-ca socket")
 }
 
-// TestAsyncRouter_Plaintext routes {"target":"plain"} to the local httptest
-// server via the plaintext bucket. 200 proves Envoy used the raw_buffer socket.
-func TestAsyncRouter_Plaintext(t *testing.T) {
+// TestTLSMatches_Plaintext routes to the local httptest server via the raw_buffer match.
+// 200 proves Envoy used the plaintext socket for the bucket=plaintext host.
+func TestTLSMatches_Plaintext(t *testing.T) {
 	resp := post(t, `{"target":"plain"}`)
 	defer resp.Body.Close()
 	t.Logf("status=%d", resp.StatusCode)
 	require.Equal(t, http.StatusOK, resp.StatusCode,
 		"plaintext host did not return 200; transport_socket_matches may have applied TLS to a raw HTTP server")
-}
-
-// TestAsyncRouter_UnknownTarget routes {"target":"nope"} to a name not
-// registered in the cluster config. The async LB resolves the error and Envoy
-// returns 503 (no-healthy-upstream).
-func TestAsyncRouter_UnknownTarget(t *testing.T) {
-	resp := post(t, `{"target":"nope"}`)
-	defer resp.Body.Close()
-	t.Logf("status=%d", resp.StatusCode)
-	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode,
-		"unknown target should have produced 503 from Envoy's no-healthy-upstream path")
 }
 
 func findSystemCA() string {

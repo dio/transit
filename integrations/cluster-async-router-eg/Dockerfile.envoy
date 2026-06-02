@@ -3,14 +3,15 @@ ARG TARGETARCH
 FROM debian:bookworm-slim
 
 ARG TARGETARCH
-ARG ENVOY_TAG=envoy-0d6e3c60
+ARG ENVOY_TAG=envoy-0d6e3c60-auto-host-sni
+ARG ENVOY_ASSET_SUFFIX=-auto-host-sni
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl \
   && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL -o /usr/local/bin/envoy \
-  "https://github.com/dio/envoy-builder/releases/download/${ENVOY_TAG}/envoy-linux-${TARGETARCH}" \
+  "https://github.com/dio/envoy-builder/releases/download/${ENVOY_TAG}/envoy-linux-${TARGETARCH}${ENVOY_ASSET_SUFFIX}" \
   && chmod +x /usr/local/bin/envoy
 
 COPY dist/libcluster-async-router.linux-${TARGETARCH}.so /etc/envoy/dynamic-modules/libcluster-async-router.so

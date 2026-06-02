@@ -179,7 +179,8 @@ type clusterConfig struct {
 type hostEntry struct {
 	Name    string `json:"name"`
 	Address string `json:"address"`
-	SNI     string `json:"sni,omitempty"` // if set, host metadata "sni" is populated so transport_socket_matches can select the right UpstreamTlsContext
+	SNI     string `json:"sni,omitempty"`    // if set, host metadata "sni" is populated so transport_socket_matches can select the right UpstreamTlsContext
+	Bucket  string `json:"bucket,omitempty"` // if set, host metadata "bucket" is populated for transport_socket_matches selection
 }
 
 type factory struct{}
@@ -227,6 +228,12 @@ func (c *cluster) Init(h up.ClusterHandle) {
 		if he.SNI != "" {
 			spec.Hostname = he.SNI
 			spec.Metadata = map[string]string{"sni": he.SNI}
+		}
+		if he.Bucket != "" {
+			if spec.Metadata == nil {
+				spec.Metadata = make(map[string]string)
+			}
+			spec.Metadata["bucket"] = he.Bucket
 		}
 		ptrs := h.AddHosts([]up.HostSpec{spec})
 		if len(ptrs) == 0 {
