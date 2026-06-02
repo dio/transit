@@ -2,8 +2,11 @@ package up
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -34,6 +37,13 @@ type PipelineConfig[T any] struct {
 	decoder ConfigDecoder[T]
 	// stored value is *snapshotHolder[T]; nil means no snapshot yet.
 	current atomic.Pointer[snapshotHolder[T]]
+
+	// observer support (guarded by obsMu)
+	obsMu     sync.Mutex
+	observers []RefreshObserver
+
+	// polling guard
+	pollOnce sync.Once
 }
 
 // snapshotHolder wraps a Snapshot so we can store *snapshotHolder in atomic.Pointer.
@@ -53,23 +63,44 @@ func New[T any](source ConfigSource, decoder ConfigDecoder[T]) *PipelineConfig[T
 // Refresh fetches and decodes a new snapshot. On success it atomically replaces
 // the current snapshot. On failure the previous snapshot is unchanged and the
 // error is returned. Safe to call concurrently.
+// After each attempt (success or failure), all registered observers are called.
 func (p *PipelineConfig[T]) Refresh(ctx context.Context) error {
+	start := time.Now()
 	data, err := p.source.Fetch(ctx)
 	if err != nil {
-		return fmt.Errorf("pipeline_config: fetch: %w", err)
+		wrapped := fmt.Errorf("pipeline_config: fetch: %w", err)
+		p.notifyObservers(RefreshEvent{Duration: time.Since(start), Err: wrapped})
+		return wrapped
 	}
 	value, err := p.decoder.Decode(data)
 	if err != nil {
-		return fmt.Errorf("pipeline_config: decode: %w", err)
+		wrapped := fmt.Errorf("pipeline_config: decode: %w", err)
+		p.notifyObservers(RefreshEvent{Duration: time.Since(start), Err: wrapped})
+		return wrapped
 	}
+	sum := sha256.Sum256(data)
+	version := hex.EncodeToString(sum[:8])
 	holder := &snapshotHolder[T]{
 		snap: Snapshot[T]{
 			Value:     value,
+			Version:   version,
 			FetchedAt: time.Now(),
 		},
 	}
 	p.current.Store(holder)
+	dur := time.Since(start)
+	p.notifyObservers(RefreshEvent{Version: version, Duration: dur})
 	return nil
+}
+
+// notifyObservers calls all registered observers with ev.
+func (p *PipelineConfig[T]) notifyObservers(ev RefreshEvent) {
+	p.obsMu.Lock()
+	obs := p.observers
+	p.obsMu.Unlock()
+	for _, o := range obs {
+		o(ev)
+	}
 }
 
 // Snapshot returns (snapshot, true) if at least one successful Refresh has

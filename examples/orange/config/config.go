@@ -7,13 +7,14 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
+	"github.com/dio/transit/up"
 	"gopkg.in/yaml.v3"
 )
 
@@ -78,40 +79,74 @@ type HostpickCfg struct {
 	UpstreamKey string `yaml:"upstream_key"`
 }
 
-var (
-	once   sync.Once
-	loaded *Config
-	loaErr error
-)
+// configDecoder implements up.ConfigDecoder[*Config].
+// It applies the same defaults and secret resolution as LoadFile.
+type configDecoder struct{}
 
-// Get returns the parsed config, loading it once from ORANGE_CONFIG.
-// Subsequent calls return the cached value.
-func Get() *Config {
-	once.Do(func() { loaded, loaErr = load() })
-	if loaErr != nil {
-		panic(loaErr)
+func (configDecoder) Decode(data []byte) (*Config, error) {
+	cfg := &Config{}
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("orange/config: parse: %w", err)
 	}
-	return loaded
+	applyDefaults(cfg)
+	if err := resolveSecrets(cfg); err != nil {
+		return nil, err
+	}
+	return cfg, nil
 }
 
-// MustReload clears the cache. Intended for tests only.
-func MustReload() {
-	once = sync.Once{}
-	loaded = nil
-	loaErr = nil
+// pc is the package-level PipelineConfig.
+// It is initialised (lazily) with the path from ORANGE_CONFIG.
+var pc *up.PipelineConfig[*Config]
+
+// init sets up the package-level PipelineConfig using ORANGE_CONFIG.
+// The snapshot is not loaded until the first Get() call.
+func init() {
+	path := resolvedPath()
+	if path != "" {
+		pc = up.New[*Config](up.FileSource(path), configDecoder{})
+	}
 }
 
-func load() (*Config, error) {
+// resolvedPath returns the absolute path from ORANGE_CONFIG, or "".
+func resolvedPath() string {
 	path := os.Getenv(EnvVar)
 	if strings.TrimSpace(path) == "" {
-		return nil, fmt.Errorf("orange/config: %s is required", EnvVar)
+		return ""
 	}
 	if !filepath.IsAbs(path) {
 		if abs, err := filepath.Abs(path); err == nil {
 			path = abs
 		}
 	}
-	return LoadFile(path)
+	return path
+}
+
+// Get returns the parsed config, loading it once on the first call.
+// Subsequent calls return the cached last-good snapshot.
+// Panics if ORANGE_CONFIG is unset, unreadable, or invalid.
+func Get() *Config {
+	if pc == nil {
+		panic(fmt.Sprintf("orange/config: %s is required", EnvVar))
+	}
+	// Load on first call if no snapshot yet.
+	if _, ok := pc.Snapshot(); !ok {
+		if err := pc.Refresh(context.Background()); err != nil {
+			panic(err)
+		}
+	}
+	return pc.MustSnapshot()
+}
+
+// MustReload clears the cached snapshot and re-initialises the PipelineConfig.
+// Intended for tests only.
+func MustReload() {
+	path := resolvedPath()
+	if path != "" {
+		pc = up.New[*Config](up.FileSource(path), configDecoder{})
+	} else {
+		pc = nil
+	}
 }
 
 // LoadFile parses orange.yaml at the given path. Exposed for tests.
@@ -124,6 +159,15 @@ func LoadFile(path string) (*Config, error) {
 	if err := yaml.Unmarshal(raw, cfg); err != nil {
 		return nil, fmt.Errorf("orange/config: parse %s: %w", path, err)
 	}
+	applyDefaults(cfg)
+	if err := resolveSecrets(cfg); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// applyDefaults fills in zero-value fields with their defaults.
+func applyDefaults(cfg *Config) {
 	if cfg.Classify.ModelField == "" {
 		cfg.Classify.ModelField = "model"
 	}
@@ -136,6 +180,10 @@ func LoadFile(path string) (*Config, error) {
 	if cfg.Hostpick.UpstreamKey == "" {
 		cfg.Hostpick.UpstreamKey = "orange.upstream"
 	}
+}
+
+// resolveSecrets populates cfg.resolvedSecrets from provider Auth.Secret refs.
+func resolveSecrets(cfg *Config) error {
 	cfg.resolvedSecrets = make(map[string]string, len(cfg.Providers))
 	for name, p := range cfg.Providers {
 		if p.Auth.Secret == "" {
@@ -143,11 +191,11 @@ func LoadFile(path string) (*Config, error) {
 		}
 		v, err := resolveSecret(p.Auth.Secret)
 		if err != nil {
-			return nil, fmt.Errorf("orange/config: provider %q: %w", name, err)
+			return fmt.Errorf("orange/config: provider %q: %w", name, err)
 		}
 		cfg.resolvedSecrets[name] = v
 	}
-	return cfg, nil
+	return nil
 }
 
 // resolveSecret expands secret references. Currently only `env://NAME` is
