@@ -131,7 +131,7 @@ sequencing review load, not a contract.
 Phase 0  ─── WS-B (TLS spike) ─────────────────┐
              gates WS-D API, gates WS-H path   │
                                                ▼
-Phase 1  ─── WS-A (config) ────┬── WS-C (rendezvous) ────┐
+Phase 1  ─── WS-A (config) ────┬── WS-C (rendezvous) ──┐
              no WS-B coupling │   no WS-B coupling    │
                               │                       ▼
 Phase 2                       ├─────► WS-D (async host selector)
