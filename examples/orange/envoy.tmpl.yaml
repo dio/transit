@@ -103,6 +103,15 @@ static_resources:
                 filter_config:
                   "@type": type.googleapis.com/google.protobuf.StringValue
                   value: '{}'
+            - name: orange-tap
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                dynamic_module_config:
+                  name: orange
+                filter_name: orange-tap
+                filter_config:
+                  "@type": type.googleapis.com/google.protobuf.StringValue
+                  value: '{}'
             - name: envoy.filters.http.upstream_codec
               typed_config:
                 "@type": type.googleapis.com/envoy.extensions.filters.http.upstream_codec.v3.UpstreamCodec

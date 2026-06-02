@@ -4,6 +4,7 @@
 //
 // Endpoints:
 //
+//	GET /debug/pprof/  — standard Go pprof suite.
 //	GET /pending/size  — {"size": N}, current pending.registry entry count.
 //	GET /healthz       — "ok\n", trivial readiness probe.
 //
@@ -14,11 +15,11 @@ package debug
 
 import (
 	"encoding/json"
-	"net"
 	"net/http"
 	"os"
 
 	"github.com/dio/transit/down"
+	"github.com/dio/transit/up"
 )
 
 func init() {
@@ -26,19 +27,13 @@ func init() {
 	if addr == "" {
 		return
 	}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/pending/size", func(w http.ResponseWriter, _ *http.Request) {
+	admin := up.NewAdminServer(up.AdminServerOptions{ListenAddr: addr})
+	admin.RegisterPprof()
+	admin.HandleFunc("/pending/size", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]int{"size": down.StreamObjectBagCount()})
 	})
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+	admin.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok\n"))
 	})
-
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return
-	}
-	srv := &http.Server{Handler: mux}
-	go func() { _ = srv.Serve(ln) }()
+	up.Register("orange-debug", func(*up.Writer, *up.Request) {}, up.WithAdminServer(admin))
 }
