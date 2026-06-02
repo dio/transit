@@ -2,9 +2,15 @@
 package wsproxy_test
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"sync"
 	"testing"
 
+	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 	"github.com/stretchr/testify/require"
 
 	wsproxy "github.com/dio/transit/examples/ws-proxy"
@@ -106,4 +112,66 @@ func TestResolveEnv(t *testing.T) {
 	// Unset var: leave unexpanded.
 	got2 := wsproxy.ResolveEnv("Bearer ${WS_PROXY_UNSET}")
 	require.Equal(t, "Bearer ${WS_PROXY_UNSET}", got2)
+}
+
+// TestWSProxy_TraceHeadersPropagatedToUpstream verifies that Envoy-carried W3C trace
+// context headers (traceparent, tracestate, x-request-id) on the inbound request are
+// forwarded to the upstream WebSocket dial.
+func TestWSProxy_TraceHeadersPropagatedToUpstream(t *testing.T) {
+	// Capture headers received at the mock upstream.
+	var mu sync.Mutex
+	var capturedHeaders http.Header
+
+	// Mock upstream: accepts WS, captures headers, echoes one message, then closes.
+	mockSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		capturedHeaders = r.Header.Clone()
+		mu.Unlock()
+
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		ctx := r.Context()
+		_, data, _ := conn.Read(ctx)
+		conn.Write(ctx, websocket.MessageText, data) //nolint:errcheck
+	}))
+	defer mockSrv.Close()
+
+	// Proxy pointing at mock upstream in direct-dial mode.
+	upstreamURL := "ws" + mockSrv.URL[len("http"):]
+	proxy := wsproxy.NewProxy(upstreamURL, "", "")
+	proxySrv := httptest.NewServer(proxy)
+	defer proxySrv.Close()
+
+	// Dial the proxy with W3C trace headers set.
+	ctx := context.Background()
+	conn, _, err := websocket.Dial(ctx, "ws"+proxySrv.URL[len("http"):]+"/v1/responses", &websocket.DialOptions{
+		HTTPHeader: http.Header{
+			"Traceparent":  {"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"},
+			"Tracestate":   {"rojo=00f067aa0ba902b7"},
+			"X-Request-Id": {"test-req-id-001"},
+		},
+	})
+	require.NoError(t, err)
+	defer conn.CloseNow()
+
+	// Send a frame so the mock upstream goroutine proceeds past Read.
+	require.NoError(t, wsjson.Write(ctx, conn, map[string]any{"type": "ping"}))
+	// Read echo.
+	var echo map[string]any
+	require.NoError(t, wsjson.Read(ctx, conn, &echo))
+
+	mu.Lock()
+	got := capturedHeaders
+	mu.Unlock()
+
+	require.Equal(t,
+		"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+		got.Get("Traceparent"),
+		"traceparent must be forwarded to upstream",
+	)
+	require.Equal(t, "rojo=00f067aa0ba902b7", got.Get("Tracestate"))
+	require.Equal(t, "test-req-id-001", got.Get("X-Request-Id"))
 }

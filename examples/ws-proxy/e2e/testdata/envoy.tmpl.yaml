@@ -53,6 +53,54 @@ static_resources:
                             cluster: mock-upstream
                             timeout: 5s
 
+    # Inbound listener (direct-dial) — routes to ws-proxy-direct-local.
+    - name: main-direct
+      address:
+        socket_address: { address: 127.0.0.1, port_value: {{.InboundDirectPort}} }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: ingress_direct
+                upgrade_configs:
+                  - upgrade_type: websocket
+                http_filters:
+                  - name: ws-proxy-direct
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: ws-proxy
+                      filter_name: ws-proxy-direct
+                      filter_config:
+                        "@type": type.googleapis.com/google.protobuf.StringValue
+                        value: '{"listen_addr":"127.0.0.1:{{.LoopbackDirectPort}}"}'
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: main-direct
+                  virtual_hosts:
+                    - name: services-direct
+                      domains: ["*"]
+                      routes:
+                        - match:
+                            prefix: "/"
+                            headers:
+                              - name: upgrade
+                                string_match:
+                                  exact: websocket
+                                  ignore_case: true
+                          route:
+                            cluster: ws-proxy-direct-local
+                            upgrade_configs:
+                              - upgrade_type: websocket
+                            timeout: 0s
+                        - match: { prefix: "/" }
+                          route:
+                            cluster: mock-upstream
+                            timeout: 5s
+
     # Egress listener — embedded WSProxy dials here (ws://127.0.0.1:{{.EgressPort}}).
     # Envoy routes the WS upgrade to mock-upstream (in prod: ws-proxy-egress cluster
     # with TLS + ws-auth credential injection).
@@ -100,6 +148,16 @@ static_resources:
               - endpoint:
                   address:
                     socket_address: { address: 127.0.0.1, port_value: {{.LoopbackPort}} }
+
+    - name: ws-proxy-direct-local
+      type: STATIC
+      load_assignment:
+        cluster_name: ws-proxy-direct-local
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: 127.0.0.1, port_value: {{.LoopbackDirectPort}} }
 
     # In e2e the mock upstream handles both inbound HTTP and egress WS connections.
     # ws-auth is omitted — credentials are not needed against the mock.

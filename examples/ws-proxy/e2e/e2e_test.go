@@ -32,13 +32,15 @@ import (
 var envoyConfigTmpl string
 
 var (
-	proxyURL       string
-	adminURL       string
-	loopbackPort   int
-	egressPort     int
-	mockPort       int
-	sessionLogFile string
-	examplesRoot   string
+	proxyURL             string
+	adminURL             string
+	loopbackPort         int
+	egressPort           int
+	mockPort             int
+	sessionLogFile       string
+	examplesRoot         string
+	directProxyURL       string
+	directStartupLogFile string
 )
 
 func TestMain(m *testing.M) {
@@ -61,6 +63,8 @@ func TestMain(m *testing.M) {
 	loopbackPort = e2etest.FreePort()
 	egressPort = e2etest.FreePort()
 	adminPort := e2etest.FreePort()
+	loopbackDirectPort := e2etest.FreePort()
+	inboundDirectPort := e2etest.FreePort()
 
 	// Temp file for structured session log assertions.
 	f, err := os.CreateTemp("", "ws-proxy-sessions-*.jsonl")
@@ -71,15 +75,27 @@ func TestMain(m *testing.M) {
 	sessionLogFile = f.Name()
 	f.Close()
 
+	// Temp file for direct-dial startup rationale assertions.
+	fDirect, err := os.CreateTemp("", "ws-proxy-direct-startup-*.log")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "e2e: create direct startup log: %v\n", err)
+		os.Exit(1)
+	}
+	directStartupLogFile = fDirect.Name()
+	fDirect.Close()
+
 	proxyURL = fmt.Sprintf("ws://127.0.0.1:%d", proxyPort)
 	adminURL = fmt.Sprintf("http://127.0.0.1:%d", adminPort)
+	directProxyURL = fmt.Sprintf("ws://127.0.0.1:%d", inboundDirectPort)
 
 	cfgPath := e2etest.WriteEnvoyConfig("ws-proxy", envoyConfigTmpl, map[string]int{
-		"ProxyPort":    proxyPort,
-		"LoopbackPort": loopbackPort,
-		"EgressPort":   egressPort,
-		"AdminPort":    adminPort,
-		"MockPort":     mockPort,
+		"ProxyPort":         proxyPort,
+		"LoopbackPort":      loopbackPort,
+		"EgressPort":        egressPort,
+		"AdminPort":         adminPort,
+		"MockPort":          mockPort,
+		"InboundDirectPort": inboundDirectPort,
+		"LoopbackDirectPort": loopbackDirectPort,
 	})
 
 	wsProxyDir := filepath.Join(examplesRoot, "ws-proxy")
@@ -91,6 +107,10 @@ func TestMain(m *testing.M) {
 		fmt.Sprintf("WSPROXY_EGRESS_URL=ws://127.0.0.1:%d", egressPort),
 		"WSPROXY_AUTH_VALUE=", // no auth against mock
 		"WSPROXY_SESSION_LOG=" + sessionLogFile,
+		// Direct-dial mode sidecar env vars.
+		fmt.Sprintf("WSPROXY_DIRECT_LISTEN_ADDR=127.0.0.1:%d", loopbackDirectPort),
+		fmt.Sprintf("WSPROXY_DIRECT_UPSTREAM_URL=ws://127.0.0.1:%d", mockPort),
+		"WSPROXY_DIRECT_STARTUP_LOG=" + directStartupLogFile,
 	})
 	if !ok {
 		os.Exit(1)
@@ -99,7 +119,8 @@ func TestMain(m *testing.M) {
 
 	code := m.Run()
 	stop()
-	os.Remove(sessionLogFile) //nolint:errcheck
+	os.Remove(sessionLogFile)       //nolint:errcheck
+	os.Remove(directStartupLogFile) //nolint:errcheck
 	os.Exit(code)
 }
 
@@ -371,4 +392,79 @@ func TestWsProxy_TokenUsageExtracted(t *testing.T) {
 	usage := resp["usage"].(map[string]any)
 	require.Equal(t, float64(100), usage["input_tokens"])
 	require.Equal(t, float64(42), usage["output_tokens"])
+}
+
+// TestDirect_ConnectsAndExchangesFrames connects via directProxyURL (direct-dial
+// mode, no egress cluster) and exchanges frames with the mock upstream.
+func TestDirect_ConnectsAndExchangesFrames(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, directProxyURL+"/v1/responses", &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": {"Bearer sk-test"}},
+	})
+	require.NoError(t, err)
+	defer conn.CloseNow()
+
+	req := map[string]any{
+		"type":  "response.create",
+		"model": "gpt-4.1",
+		"input": []map[string]any{},
+	}
+	require.NoError(t, wsjson.Write(ctx, conn, req))
+
+	var ev map[string]any
+	require.NoError(t, wsjson.Read(ctx, conn, &ev))
+	require.Equal(t, "response.completed", ev["type"])
+}
+
+// TestDirect_SessionRecord connects via directProxyURL, exchanges frames, and
+// verifies the session log is written.
+func TestDirect_SessionRecord(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	fi, err := os.Stat(sessionLogFile)
+	require.NoError(t, err)
+	startOffset := fi.Size()
+
+	conn, _, err := websocket.Dial(ctx, directProxyURL+"/v1/responses", &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": {"Bearer sk-test"}},
+	})
+	require.NoError(t, err)
+
+	req := map[string]any{
+		"type":  "response.create",
+		"model": "gpt-4.1",
+		"input": []map[string]any{},
+	}
+	require.NoError(t, wsjson.Write(ctx, conn, req))
+
+	for i := 0; i < 2; i++ {
+		_, _, err := conn.Read(ctx)
+		require.NoError(t, err)
+	}
+	conn.Close(websocket.StatusNormalClosure, "done")
+
+	var rec wsproxy.SessionRecord
+	require.Eventually(t, func() bool {
+		recs := readSessionRecords(t, sessionLogFile, startOffset)
+		if len(recs) == 0 {
+			return false
+		}
+		rec = recs[len(recs)-1]
+		return true
+	}, 3*time.Second, 50*time.Millisecond, "direct session record not written in time")
+
+	require.Equal(t, "/v1/responses", rec.Path)
+}
+
+// TestDirect_RationaleLoggedAtStartup verifies that the direct-dial sidecar
+// writes its rationale to StartupLogFile at startup.
+func TestDirect_RationaleLoggedAtStartup(t *testing.T) {
+	data, err := os.ReadFile(directStartupLogFile)
+	require.NoError(t, err, "startup log file must exist")
+	content := string(data)
+	require.Contains(t, content, "direct-dial", "startup log must mention direct-dial mode")
+	require.Contains(t, content, "ws-proxy", "startup log must include filter name")
 }

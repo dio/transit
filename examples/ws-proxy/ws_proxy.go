@@ -50,7 +50,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"time"
@@ -170,6 +169,14 @@ func (p *WSProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		dialBase = p.egressURL
 	} else if p.authHeader != "" && p.authValue != "" {
 		upstreamHeader.Set(p.authHeader, p.authValue)
+	}
+
+	// Forward Envoy-carried W3C trace context headers to the upstream call so
+	// the egress hop (Envoy egress listener or direct upstream) can propagate them.
+	for _, h := range []string{"traceparent", "tracestate", "x-request-id"} {
+		if v := r.Header.Get(h); v != "" {
+			upstreamHeader.Set(h, v)
+		}
 	}
 
 	ctx := r.Context()
@@ -321,9 +328,9 @@ func resolveEnv(v string) string {
 	})
 }
 
-// Register wires the ws-proxy filter into Envoy via up.Register + up.WithGroup.
+// Register wires the ws-proxy filter into Envoy via up.Register + up.WithSidecar.
 // The filter itself is a no-op for regular HTTP — it only starts the embedded
-// WebSocket proxy server via the Group goroutine.
+// WebSocket proxy server via the Sidecar.
 // ws-auth (upstream filter) is registered separately in auth.go's init().
 func Register() {
 	cfg := parseConfig(nil) // defaults; runtime overrides via WSPROXY_* env vars for e2e
@@ -352,23 +359,52 @@ func Register() {
 		egressURL:   cfg.EgressURL,
 		log:         slog.Default(),
 	}
-
-	g := up.NewGroup()
-	g.Add(
-		func() error {
-			ln, err := net.Listen("tcp", cfg.ListenAddress)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "ws-proxy: listen %s: %v\n", cfg.ListenAddress, err)
-				return err
-			}
-			fmt.Fprintf(os.Stderr, "ws-proxy: listening on %s\n", ln.Addr())
-			srv := &http.Server{Handler: proxy}
-			return srv.Serve(ln)
-		},
-		func() {}, // context cancel via g.Stop is sufficient; Serve returns on listener close
-	)
-
-	// No-op HTTP filter: presence in the filter chain starts the embedded server
-	// (via the group) but does not alter normal HTTP requests.
-	up.Register(ExtensionName, func(w *up.Writer, r *up.Request) {}, up.WithGroup(g))
+	s := up.NewSidecar(proxy, up.SidecarOptions{
+		ListenAddr:      cfg.ListenAddress,
+		ShutdownTimeout: parseDuration(cfg.ShutdownTimeout, 5*time.Second),
+		EgressURL:       cfg.EgressURL,
+		Rationale:       "direct-dial for ws-proxy: egress cluster not yet configured",
+		OnSession:       wrapSessionRecord,
+	})
+	up.Register(ExtensionName, func(w *up.Writer, r *up.Request) {}, up.WithSidecar(s))
 }
+
+// parseDuration parses s as a time.Duration, returning fallback on error or empty.
+func parseDuration(s string, fallback time.Duration) time.Duration {
+	if s == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return fallback
+	}
+	return d
+}
+
+// wrapSessionRecord is the OnSession callback. Basic lifecycle logging.
+// Detailed model/token recording is still done by recordActorSession in ServeHTTP.
+func wrapSessionRecord(e up.SidecarSessionEvent) {
+	// Session lifecycle hook — detailed recording (model, tokens) happens in ServeHTTP.
+	_ = e
+}
+
+// RegisterDirect registers a second named filter instance in direct-dial mode.
+func RegisterDirect(name string, cfg Config) {
+	proxy := &WSProxy{
+		upstreamURL: cfg.UpstreamURL,
+		authHeader:  cfg.AuthHeader,
+		authValue:   resolveEnv(cfg.AuthValue),
+		log:         slog.Default(),
+		// egressURL deliberately empty — direct-dial
+	}
+	startupLogFile := os.Getenv("WSPROXY_DIRECT_STARTUP_LOG")
+	s := up.NewSidecar(proxy, up.SidecarOptions{
+		ListenAddr:      cfg.ListenAddress,
+		ShutdownTimeout: parseDuration(cfg.ShutdownTimeout, 5*time.Second),
+		Rationale:       "direct-dial for ws-proxy: egress cluster not yet configured",
+		OnSession:       wrapSessionRecord,
+		StartupLogFile:  startupLogFile,
+	})
+	up.Register(name, func(w *up.Writer, r *up.Request) {}, up.WithSidecar(s))
+}
+
