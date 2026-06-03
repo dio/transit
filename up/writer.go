@@ -3,6 +3,8 @@ package up
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
@@ -122,6 +124,141 @@ func (w *Writer) queued() bool {
 // Log emits a message via Envoy's logging mechanism at the given severity.
 func (w *Writer) Log(level LogLevel, format string, args ...any) {
 	w.f.handle.Log(shared.LogLevel(level), format, args...)
+}
+
+// Slog returns a [*slog.Logger] whose handler routes through Envoy's logging
+// mechanism. The logger automatically prepends filter=<name> to every line,
+// followed by any attributes registered via [WithAttributes]. Call once at the
+// top of a handler and reuse the result rather than calling Slog repeatedly.
+func (w *Writer) Slog() *slog.Logger {
+	return slog.New(&writerHandler{w: w, attrs: w.f.logAttrs})
+}
+
+// AddLogAttrs appends key-value pairs to the per-request log context.
+//
+// When [WithLogMetadata] is configured, each attr is also written to
+// dynamic metadata under the filter's namespace so it is accessible from
+// the Envoy access log via %DYNAMIC_METADATA(ns:key)%. Value types that
+// Envoy's metadata store does not natively support (structs, slices, etc.)
+// are serialised to their string representation rather than panicking.
+//
+// By default the attrs are NOT printed inline in the process-log message;
+// they flow to the access log through metadata. Use [WithInlineLogAttrs] to
+// also print them inline (useful for local debugging without a JSON access log).
+//
+// For a one-off derived logger without persisting attrs on the writer, use
+// w.Slog().With(kvs...) directly instead.
+func (w *Writer) AddLogAttrs(kvs ...any) {
+	attrs := argsToAttrs(kvs)
+	w.f.reqLogAttrs = append(w.f.reqLogAttrs, attrs...)
+	if ns := w.f.logMetadataNS; ns != "" {
+		for _, a := range attrs {
+			w.SetMetadata(ns, a.Key, attrToMetadataValue(a))
+		}
+	}
+}
+
+// attrToMetadataValue extracts a metadata-safe value from a slog.Attr.
+// Numeric, string, and bool kinds are returned as their native Go types.
+// All other kinds (Duration, Time, Group, Any with unsupported type) fall
+// back to the slog string representation — never panics.
+func attrToMetadataValue(a slog.Attr) any {
+	v := a.Value.Resolve()
+	switch v.Kind() {
+	case slog.KindString:
+		return v.String()
+	case slog.KindBool:
+		return v.Bool()
+	case slog.KindInt64:
+		return v.Int64()
+	case slog.KindUint64:
+		return v.Uint64()
+	case slog.KindFloat64:
+		return v.Float64()
+	case slog.KindAny:
+		switch raw := v.Any().(type) {
+		case string, bool,
+			int, int8, int16, int32, int64,
+			uint, uint8, uint16, uint32, uint64,
+			float32, float64:
+			return raw
+		default:
+			_ = raw
+			return v.String()
+		}
+	default:
+		return v.String()
+	}
+}
+
+// writerHandler is the slog.Handler backing Writer.Slog.
+type writerHandler struct {
+	w     *Writer
+	attrs []slog.Attr
+	group string
+}
+
+func (h *writerHandler) Enabled(_ context.Context, _ slog.Level) bool { return true }
+
+func (h *writerHandler) Handle(_ context.Context, r slog.Record) error {
+	var b strings.Builder
+	b.WriteString(r.Message)
+	b.WriteString(" filter=")
+	b.WriteString(h.w.f.name)
+	if id := h.w.f.reqID; id != "" {
+		b.WriteString(" request_id=")
+		b.WriteString(id)
+	}
+	writeAttrs := func(attrs []slog.Attr) {
+		for _, a := range attrs {
+			b.WriteByte(' ')
+			b.WriteString(a.Key)
+			b.WriteByte('=')
+			b.WriteString(a.Value.String())
+		}
+	}
+	writeAttrs(h.attrs)
+	r.Attrs(func(a slog.Attr) bool {
+		b.WriteByte(' ')
+		if h.group != "" {
+			b.WriteString(h.group)
+			b.WriteByte('.')
+		}
+		b.WriteString(a.Key)
+		b.WriteByte('=')
+		b.WriteString(a.Value.String())
+		return true
+	})
+	h.w.f.handle.Log(shared.LogLevel(slogLevelToUp(r.Level)), "%s", b.String())
+	return nil
+}
+
+func (h *writerHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	merged := make([]slog.Attr, len(h.attrs)+len(attrs))
+	copy(merged, h.attrs)
+	copy(merged[len(h.attrs):], attrs)
+	return &writerHandler{w: h.w, attrs: merged, group: h.group}
+}
+
+func (h *writerHandler) WithGroup(name string) slog.Handler {
+	return &writerHandler{w: h.w, attrs: h.attrs, group: name}
+}
+
+func slogLevelToUp(l slog.Level) LogLevel {
+	switch {
+	case l >= slog.LevelError+4:
+		return LogCritical
+	case l >= slog.LevelError:
+		return LogError
+	case l >= slog.LevelWarn:
+		return LogWarn
+	case l >= slog.LevelInfo:
+		return LogInfo
+	case l >= slog.LevelDebug:
+		return LogDebug
+	default:
+		return LogTrace
+	}
 }
 
 // SendLocalResponse queues (or immediately sends) a client response.

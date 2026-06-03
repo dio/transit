@@ -38,15 +38,15 @@ func (f *fakeCtx) GetStreamObject(key string) (any, bool) {
 func (f *fakeCtx) NewCompletion() *ClusterLBCompletion { return f.completion }
 
 // Remaining ClusterLBContext no-ops.
-func (f *fakeCtx) GetAllHeaders() [][2]string                                          { return nil }
-func (f *fakeCtx) GetFilterState(_ string) (string, bool)                              { return "", false }
-func (f *fakeCtx) GetFilterStateTyped(_ string) (string, bool)                         { return "", false }
-func (f *fakeCtx) GetOverrideHost() (string, bool)                                     { return "", false }
-func (f *fakeCtx) GetHeader(_ string) (string, bool)                                   { return "", false }
-func (f *fakeCtx) GetDownstreamSNI() (string, bool)                                    { return "", false }
-func (f *fakeCtx) ComputeHashKey() (uint64, bool)                                      { return 0, false }
-func (f *fakeCtx) GetHostSelectionRetryCount() uint32                                  { return 0 }
-func (f *fakeCtx) ShouldSelectAnotherHost(_ ClusterLBHandle, _ uint32, _ int) bool     { return false }
+func (f *fakeCtx) GetAllHeaders() [][2]string                                      { return nil }
+func (f *fakeCtx) GetFilterState(_ string) (string, bool)                          { return "", false }
+func (f *fakeCtx) GetFilterStateTyped(_ string) (string, bool)                     { return "", false }
+func (f *fakeCtx) GetOverrideHost() (string, bool)                                 { return "", false }
+func (f *fakeCtx) GetHeader(_ string) (string, bool)                               { return "", false }
+func (f *fakeCtx) GetDownstreamSNI() (string, bool)                                { return "", false }
+func (f *fakeCtx) ComputeHashKey() (uint64, bool)                                  { return 0, false }
+func (f *fakeCtx) GetHostSelectionRetryCount() uint32                              { return 0 }
+func (f *fakeCtx) ShouldSelectAnotherHost(_ ClusterLBHandle, _ uint32, _ int) bool { return false }
 
 // fakeHandle is a minimal ClusterHandle that runs Schedule callbacks synchronously.
 type fakeHandle struct {
@@ -54,8 +54,8 @@ type fakeHandle struct {
 	runSync   bool // when true, Schedule executes fn() immediately
 }
 
-func newSyncHandle() *fakeHandle   { return &fakeHandle{runSync: true} }
-func newDeferHandle() *fakeHandle  { return &fakeHandle{runSync: false} }
+func newSyncHandle() *fakeHandle  { return &fakeHandle{runSync: true} }
+func newDeferHandle() *fakeHandle { return &fakeHandle{runSync: false} }
 
 func (h *fakeHandle) Schedule(fn func()) {
 	if h.runSync {

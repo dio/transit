@@ -213,8 +213,8 @@ func TestSidecar_StartupWarningNoRationale(t *testing.T) {
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
 	s := NewSidecar(h, SidecarOptions{
 		ListenAddr:     "127.0.0.1:0",
-		EgressURL:      "",  // direct-dial mode
-		Rationale:      "",  // no rationale — should warn
+		EgressURL:      "", // direct-dial mode
+		Rationale:      "", // no rationale — should warn
 		StartupLogFile: logFile,
 	})
 

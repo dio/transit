@@ -2,6 +2,15 @@ package up
 
 import "github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
 
+// HTTP/2 pseudo-header names used by Envoy. Prefer these constants over
+// bare string literals when calling SetRequestHeader.
+const (
+	HeaderAuthority = ":authority"
+	HeaderMethod    = ":method"
+	HeaderPath      = ":path"
+	HeaderScheme    = ":scheme"
+)
+
 // Request holds the per-request fields populated before the handler is called.
 type Request struct {
 	Method     string

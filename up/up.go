@@ -1,6 +1,8 @@
 package up
 
 import (
+	"log/slog"
+
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
 
 	"github.com/dio/transit/down"
@@ -118,6 +120,19 @@ func WithStreamingBody(rb RequestBodyHandlerFunc) FilterOption {
 // request body is not of interest). Use Writer.SetRequestBody /
 // SetResponseBody to replace body content. Mutually exclusive with
 // [WithStreamingBody].
+//
+// # Upstream vs downstream body source
+//
+// In downstream (listener-side) filters, Envoy pre-fills BufferedRequestBody
+// across StopAndBuffer calls so the handler always receives the complete body
+// via BodyChunk.Data.
+//
+// In upstream (cluster-side) filters, Envoy does NOT pre-fill
+// BufferedRequestBody when endOfStream=true arrives on the very first body
+// call — i.e. when no prior StopAndBuffer has occurred, which is the common
+// case for small single-frame requests. The framework handles this
+// automatically: BodyChunk.Data is always the full body regardless of which
+// filter chain the filter runs in.
 func WithMutableBody(rb RequestBodyHandlerFunc) FilterOption {
 	return func(cf *configFactory) {
 		cf.requestBodyHandler = rb
@@ -157,6 +172,43 @@ func WithOnStreamComplete(fn OnStreamCompleteFunc) FilterOption {
 // the callback needs finalized durations, byte counts, or response flags.
 func WithOnStreamFinalized(fn OnStreamFinalizedFunc) FilterOption {
 	return func(cf *configFactory) { cf.onStreamFinalized = fn }
+}
+
+// WithAttributes pre-bakes key-value pairs into every log line emitted via
+// [Writer.Slog] for this filter. kvs follows the same alternating key/value
+// convention as [log/slog.Logger.With]: WithAttributes("scope", "match",
+// "region", "us-west"). The filter name is always included automatically; only
+// pass additional attributes here. Pairs with a non-string key are skipped.
+func WithAttributes(kvs ...any) FilterOption {
+	attrs := argsToAttrs(kvs)
+	return func(cf *configFactory) { cf.logAttrs = attrs }
+}
+
+// WithLogMetadata sets the dynamic-metadata namespace that [Writer.AddLogAttrs]
+// writes through to. When set, every w.AddLogAttrs("k", v) call also writes
+// w.SetMetadata(ns, "k", v), making those attrs available to the Envoy access
+// log via %DYNAMIC_METADATA(namespace:key)%.
+//
+// Use a reverse-DNS namespace to avoid collisions:
+//
+//	up.WithLogMetadata("com.example.myfilter")
+//
+// Unsupported value types (structs, slices, etc.) are serialised to their
+// string representation rather than panicking — see [Writer.AddLogAttrs].
+func WithLogMetadata(ns string) FilterOption {
+	return func(cf *configFactory) { cf.logMetadataNS = ns }
+}
+
+func argsToAttrs(kvs []any) []slog.Attr {
+	attrs := make([]slog.Attr, 0, len(kvs)/2)
+	for i := 0; i+1 < len(kvs); i += 2 {
+		k, ok := kvs[i].(string)
+		if !ok {
+			continue
+		}
+		attrs = append(attrs, slog.Any(k, kvs[i+1]))
+	}
+	return attrs
 }
 
 // Middleware wraps a HandlerFunc, enabling before/after logic around a handler.

@@ -207,6 +207,25 @@ func TestFilter_OnRequestBody_buffered_endOfStream_callsHandlerWithBufferedData(
 	require.True(t, got.EndStream)
 }
 
+// Buffered mode: upstream filter chains don't pre-fill BufferedRequestBody on
+// the first endOfStream=true call (no prior StopAndBuffer). The body argument
+// must be used as fallback so the handler sees the actual data, not an empty slice.
+func TestFilter_OnRequestBody_buffered_upstreamChain_usesBodyWhenBufferEmpty(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	handle := newMockHandle(ctrl)
+	emptyBuf := fake.NewFakeBodyBuffer(nil)
+	handle.EXPECT().BufferedRequestBody().Return(emptyBuf).AnyTimes()
+
+	var got *BodyChunk
+	f := newFilterWithBodyBuffered(handle, func(_ *Writer, c *BodyChunk) { got = c })
+
+	status := f.OnRequestBody(fake.NewFakeBodyBuffer([]byte("upstream body")), true)
+
+	require.Equal(t, shared.BodyStatusContinue, status)
+	require.Equal(t, []byte("upstream body"), got.Data)
+	require.True(t, got.EndStream)
+}
+
 // Buffered mode with SetRequestBody: the buffer must be drained and refilled
 // with the replacement, and content-length must be updated.
 func TestFilter_OnRequestBody_buffered_replacement_updatesBufferAndHeader(t *testing.T) {

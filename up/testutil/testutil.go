@@ -462,13 +462,13 @@ func (c *FakeClusterLBContext) GetStreamObject(key string) (any, bool) {
 }
 
 // Remaining ClusterLBContext methods — all no-ops for test use.
-func (c *FakeClusterLBContext) GetAllHeaders() [][2]string                                 { return nil }
-func (c *FakeClusterLBContext) GetFilterStateTyped(_ string) (string, bool)                { return "", false }
-func (c *FakeClusterLBContext) GetOverrideHost() (string, bool)                            { return "", false }
-func (c *FakeClusterLBContext) GetHeader(_ string) (string, bool)                          { return "", false }
-func (c *FakeClusterLBContext) GetDownstreamSNI() (string, bool)                           { return "", false }
-func (c *FakeClusterLBContext) ComputeHashKey() (uint64, bool)                             { return 0, false }
-func (c *FakeClusterLBContext) GetHostSelectionRetryCount() uint32                         { return 0 }
+func (c *FakeClusterLBContext) GetAllHeaders() [][2]string                  { return nil }
+func (c *FakeClusterLBContext) GetFilterStateTyped(_ string) (string, bool) { return "", false }
+func (c *FakeClusterLBContext) GetOverrideHost() (string, bool)             { return "", false }
+func (c *FakeClusterLBContext) GetHeader(_ string) (string, bool)           { return "", false }
+func (c *FakeClusterLBContext) GetDownstreamSNI() (string, bool)            { return "", false }
+func (c *FakeClusterLBContext) ComputeHashKey() (uint64, bool)              { return 0, false }
+func (c *FakeClusterLBContext) GetHostSelectionRetryCount() uint32          { return 0 }
 func (c *FakeClusterLBContext) ShouldSelectAnotherHost(_ down.ClusterLBHandle, _ uint32, _ int) bool {
 	return false
 }

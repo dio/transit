@@ -31,6 +31,11 @@ type SelectorObserver struct {
 //
 // T is the decision type resolved by the body filter (e.g. a struct with
 // provider name, model, error code). lookup maps a T to a HostResult.
+//
+// The OnResolve callback may fire from a worker goroutine; AsyncHostSelector
+// always marshals completion.Complete back to the main thread via
+// handle.Schedule — the canonical example of the main-thread contract.
+// See .agents/skills/transit-cluster-main-thread/SKILL.md.
 type AsyncHostSelector[T any] struct {
 	handle ClusterHandle
 	key    StreamKey[*StreamPromise[T]]

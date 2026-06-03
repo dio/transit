@@ -107,6 +107,24 @@ Filters registered with `up.Register` run on the listener (downstream) side by
 default. To run a filter on the upstream side, configure the dynamic module
 filter under `HttpProtocolOptions.http_filters` on a cluster.
 
+### Body buffering difference vs downstream
+
+Downstream filters using `WithMutableBody` (buffered mode) rely on
+`BufferedRequestBody()` to read the accumulated request body. Envoy pre-fills
+this buffer across `StopAndBuffer` calls, so by the time the handler sees
+`endOfStream=true`, `BufferedRequestBody()` holds all data.
+
+**Upstream filter chains behave differently:** Envoy does not pre-fill the
+buffer when `endOfStream=true` arrives on the first body call (i.e. when no
+prior `StopAndBuffer` has occurred — common for small single-frame requests).
+In that case the body is only available in the `body` argument passed to
+`OnRequestBody`, not in `BufferedRequestBody()`.
+
+The `up` framework handles this transparently: when `WithMutableBody` is used,
+`OnRequestBody` falls back to the `body` argument when `BufferedRequestBody()`
+returns an empty buffer, so `BodyChunk.Data` always contains the correct body
+regardless of which filter chain the filter runs in.
+
 ## Log levels
 
 `up.LogTrace`, `up.LogDebug`, `up.LogInfo`, `up.LogWarn`, `up.LogError`,

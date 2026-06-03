@@ -3,6 +3,7 @@ package up
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"sync/atomic"
 
@@ -19,6 +20,8 @@ type configFactory struct {
 	onStreamFinalized  OnStreamFinalizedFunc
 	bufferBody         bool
 	group              *Group
+	logAttrs           []slog.Attr
+	logMetadataNS      string
 }
 
 // configHandleImpl wraps shared.HttpFilterConfigHandle to implement ConfigHandle.
@@ -68,6 +71,8 @@ func (f *configFactory) Create(h shared.HttpFilterConfigHandle, _ []byte) (share
 		onStreamFinalized:  f.onStreamFinalized,
 		bufferBody:         f.bufferBody,
 		stop:               stop,
+		logAttrs:           f.logAttrs,
+		logMetadataNS:      f.logMetadataNS,
 	}, nil
 }
 
@@ -82,6 +87,8 @@ type filterFactory struct {
 	onStreamFinalized  OnStreamFinalizedFunc
 	bufferBody         bool
 	stop               func()
+	logAttrs           []slog.Attr
+	logMetadataNS      string
 }
 
 func (f *filterFactory) Create(handle shared.HttpFilterHandle) shared.HttpFilter {
@@ -94,6 +101,8 @@ func (f *filterFactory) Create(handle shared.HttpFilterHandle) shared.HttpFilter
 		onStreamComplete:   f.onStreamComplete,
 		onStreamFinalized:  f.onStreamFinalized,
 		bufferBody:         f.bufferBody,
+		logAttrs:           f.logAttrs,
+		logMetadataNS:      f.logMetadataNS,
 	}
 }
 
@@ -146,6 +155,10 @@ type filter struct {
 	onStreamComplete   OnStreamCompleteFunc
 	onStreamFinalized  OnStreamFinalizedFunc
 	bufferBody         bool
+	logAttrs           []slog.Attr
+	logMetadataNS      string
+	reqID              string
+	reqLogAttrs        []slog.Attr
 	context            any
 
 	// finalizedKey is the registry key used to correlate the filter with the
@@ -355,6 +368,9 @@ func (f *filter) flush(continueReq bool) {
 //
 // See filter type comment for the HTTPCallout state machine and goroutine rules.
 func (f *filter) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool) shared.HeadersStatus {
+	if f.reqID == "" {
+		f.reqID = headers.GetOne("x-request-id").ToString()
+	}
 	if f.requestBodyHandler != nil {
 		f.requestContentType = headers.GetOne("content-type").ToString()
 		f.requestContentEncoding = headers.GetOne("content-encoding").ToString()
@@ -425,6 +441,19 @@ func (f *filter) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool) sh
 // Body replacement flags are cleared after application so they cannot replay
 // if another body frame arrives (buffered mode delivers all frames at endOfStream,
 // but defensive clearing prevents confusion).
+//
+// # Buffered-mode body source (upstream vs downstream)
+//
+// In downstream filters, Envoy accumulates body data into BufferedRequestBody
+// across all StopAndBuffer returns, so by the time endOfStream=true is seen
+// BufferedRequestBody holds the complete body and the body argument to the
+// final call is empty.
+//
+// In upstream (cluster-side) filters, BufferedRequestBody is NOT pre-filled
+// when endOfStream=true arrives on the first call (no prior StopAndBuffer).
+// The body argument contains the frame data instead. To handle both cases
+// transparently, buffered mode prefers BufferedRequestBody when it is
+// non-empty, and falls back to body otherwise.
 func (f *filter) OnRequestBody(body shared.BodyBuffer, endOfStream bool) shared.BodyStatus {
 	if f.requestBodyHandler == nil {
 		return shared.BodyStatusContinue
@@ -436,7 +465,12 @@ func (f *filter) OnRequestBody(body shared.BodyBuffer, endOfStream bool) shared.
 	var data []byte
 	src := body
 	if f.bufferBody {
-		src = f.handle.BufferedRequestBody()
+		// Upstream filter chains don't pre-fill BufferedRequestBody on the first
+		// endOfStream=true call (no prior StopAndBuffer). Fall back to body so
+		// single-frame upstream requests aren't silently delivered as empty.
+		if buf := f.handle.BufferedRequestBody(); buf != nil && buf.GetSize() > 0 {
+			src = buf
+		}
 	}
 	for _, chunk := range src.GetChunks() {
 		data = append(data, chunk.ToBytes()...)

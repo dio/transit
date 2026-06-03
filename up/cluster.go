@@ -13,6 +13,13 @@ type (
 	ClusterLBContext     = down.ClusterLBContext
 	ClusterLBHandle      = down.ClusterLBHandle
 	ClusterLB            = down.ClusterLB
+	// ClusterHandle gives a Cluster access to Envoy cluster operations.
+	// All methods except Schedule must be called on the main thread —
+	// AddHosts, RemoveHosts, UpdateHostHealth, FindHostByAddress, and
+	// PreInitComplete will silently no-op (and log an envoy_bug error) if
+	// invoked from a background goroutine. Use Schedule to marshal mutations
+	// back to the main thread from refresh loops or async callbacks.
+	// See .agents/skills/transit-cluster-main-thread/SKILL.md for the pattern.
 	ClusterHandle        = down.ClusterHandle
 	Cluster              = down.Cluster
 	ClusterConfigFactory = down.ClusterConfigFactory

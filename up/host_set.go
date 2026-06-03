@@ -48,7 +48,10 @@ func NewHostSet[K comparable](handle ClusterHandle) *HostSet[K] {
 	return s
 }
 
-// Apply replaces the desired host snapshot. It must be called on the cluster main thread.
+// Apply replaces the desired host snapshot. It must be called on the cluster
+// main thread — it calls AddHosts, UpdateHostHealth, and RemoveHosts, all of
+// which are main-thread-only. From a background goroutine, build the snapshot
+// off-thread and use ClusterHandle.Schedule to invoke Apply on the main thread.
 //
 // Ordering guarantee: add → publish → remove so ChooseHost never sees a
 // dangling pointer.
