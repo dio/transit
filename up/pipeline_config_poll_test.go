@@ -100,8 +100,8 @@ func TestPolling_StopWaitsForInFlight(t *testing.T) {
 	})
 
 	p := NewPollingConfig(src, JSONDecoder[testStruct](), PollOptions{
-		Interval: time.Hour,    // only the immediate fetch fires
-		Timeout:  time.Hour,    // long timeout so per-attempt ctx stays alive
+		Interval: time.Hour, // only the immediate fetch fires
+		Timeout:  time.Hour, // long timeout so per-attempt ctx stays alive
 	})
 	stop := p.Start(context.Background())
 

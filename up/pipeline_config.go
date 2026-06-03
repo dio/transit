@@ -45,11 +45,13 @@ type PollOptions struct {
 // PipelineConfig[T] holds a decoded config snapshot refreshable from a source.
 // Snapshot() is safe from any goroutine. The request path never calls the source.
 type PipelineConfig[T any] struct {
-	source   ConfigSource
-	decoder  ConfigDecoder[T]
-	opts     PollOptions
-	current  atomic.Pointer[T]
-	isStatic bool
+	source      ConfigSource
+	decoder     ConfigDecoder[T]
+	opts        PollOptions
+	current     atomic.Pointer[T]
+	lastVersion atomic.Value // stores string; empty if no version yet
+	isStatic    bool
+	refreshNow  chan struct{}
 }
 
 // NewStaticConfig returns a PipelineConfig whose snapshot never changes.
@@ -70,7 +72,7 @@ func NewPollingConfig[T any](src ConfigSource, dec ConfigDecoder[T], opts PollOp
 	if opts.Timeout == 0 {
 		opts.Timeout = DefaultPollTimeout
 	}
-	return &PipelineConfig[T]{source: src, decoder: dec, opts: opts}
+	return &PipelineConfig[T]{source: src, decoder: dec, opts: opts, refreshNow: make(chan struct{}, 1)}
 }
 
 // Snapshot returns the current decoded config. Returns the zero value if no
@@ -91,6 +93,15 @@ func (p *PipelineConfig[T]) RefreshOnce(ctx context.Context) error {
 	return p.fetchAndStore(ctx)
 }
 
+// SignalRefresh requests an immediate refresh (called by file watchers, etc).
+// Non-blocking; ignored if a refresh is already pending.
+func (p *PipelineConfig[T]) SignalRefresh() {
+	select {
+	case p.refreshNow <- struct{}{}:
+	default:
+	}
+}
+
 // fetchAndStore performs one fetch+decode cycle, atomically publishing on success.
 // Calls Observe (if set) after every attempt.
 func (p *PipelineConfig[T]) fetchAndStore(ctx context.Context) error {
@@ -102,6 +113,20 @@ func (p *PipelineConfig[T]) fetchAndStore(ctx context.Context) error {
 		}
 		return err
 	}
+
+	sum := sha256.Sum256(data)
+	version := hex.EncodeToString(sum[:8])
+
+	// Skip decode if checksum hasn't changed.
+	lastVer, _ := p.lastVersion.Load().(string)
+	if lastVer == version {
+		// Notify observer with empty version to indicate no change (skip logging).
+		if p.opts.Observe != nil {
+			p.opts.Observe(ConfigEvent{Version: "", Duration: time.Since(start)})
+		}
+		return nil
+	}
+
 	v, err := p.decoder(data)
 	if err != nil {
 		if p.opts.Observe != nil {
@@ -109,9 +134,8 @@ func (p *PipelineConfig[T]) fetchAndStore(ctx context.Context) error {
 		}
 		return err
 	}
-	sum := sha256.Sum256(data)
-	version := hex.EncodeToString(sum[:8])
 	p.current.Store(&v)
+	p.lastVersion.Store(version)
 	if p.opts.Observe != nil {
 		p.opts.Observe(ConfigEvent{Version: version, Duration: time.Since(start)})
 	}

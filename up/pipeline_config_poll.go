@@ -36,6 +36,9 @@ func (p *PipelineConfig[T]) Start(ctx context.Context) (stop func()) {
 			case <-innerCtx.Done():
 				timer.Stop()
 				return
+			case <-p.refreshNow:
+				timer.Stop()
+				p.pollFetch(innerCtx)
 			case <-timer.C:
 				p.pollFetch(innerCtx)
 			}

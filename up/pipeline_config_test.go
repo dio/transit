@@ -82,6 +82,14 @@ func TestRefreshOnce_FetchErrorKeepsLastGood(t *testing.T) {
 
 func TestRefreshOnce_DecodeErrorKeepsLastGood(t *testing.T) {
 	good := []byte(`{"name":"good","value":1}`)
+	bad := []byte(`{"name":"bad","value":2}`)
+	var useBad atomic.Bool
+	src := ConfigSource(func(ctx context.Context) ([]byte, error) {
+		if useBad.Load() {
+			return bad, nil
+		}
+		return good, nil
+	})
 	var failDec atomic.Bool
 	dec := ConfigDecoder[testStruct](func(data []byte) (testStruct, error) {
 		if failDec.Load() {
@@ -89,10 +97,12 @@ func TestRefreshOnce_DecodeErrorKeepsLastGood(t *testing.T) {
 		}
 		return JSONDecoder[testStruct]()(data)
 	})
-	p := NewPollingConfig(staticSrc(good), dec, PollOptions{})
+	p := NewPollingConfig(src, dec, PollOptions{})
 	require.NoError(t, p.RefreshOnce(context.Background()))
 	good2 := p.Snapshot()
 
+	// Switch to new file content and broken decoder to trigger decode error.
+	useBad.Store(true)
 	failDec.Store(true)
 	require.Error(t, p.RefreshOnce(context.Background()))
 	require.Equal(t, good2, p.Snapshot())
@@ -196,4 +206,132 @@ func TestJSONDecoder_Error(t *testing.T) {
 	dec := JSONDecoder[testStruct]()
 	_, err := dec([]byte(`not json`))
 	require.Error(t, err)
+}
+
+// --------------------------------------------------------------------------
+// Checksum caching
+// --------------------------------------------------------------------------
+
+func TestRefreshOnce_ChecksumCachingSkipsRedundantDecodes(t *testing.T) {
+	data := []byte(`{"name":"cached","value":42}`)
+	var decodeCount atomic.Int32
+	dec := ConfigDecoder[testStruct](func(b []byte) (testStruct, error) {
+		decodeCount.Add(1)
+		return JSONDecoder[testStruct]()(b)
+	})
+	p := NewPollingConfig(staticSrc(data), dec, PollOptions{})
+
+	// First refresh decodes.
+	require.NoError(t, p.RefreshOnce(context.Background()))
+	require.Equal(t, int32(1), decodeCount.Load())
+
+	// Second refresh with same data: decode skipped, count unchanged.
+	require.NoError(t, p.RefreshOnce(context.Background()))
+	require.Equal(t, int32(1), decodeCount.Load())
+
+	// Different data: decode runs again.
+	p2 := NewPollingConfig(staticSrc([]byte(`{"name":"new","value":99}`)), dec, PollOptions{})
+	require.NoError(t, p2.RefreshOnce(context.Background()))
+	require.Equal(t, int32(2), decodeCount.Load())
+}
+
+// --------------------------------------------------------------------------
+// File watching
+// --------------------------------------------------------------------------
+
+func TestStartFileWatch_TriggersRefreshOnChange(t *testing.T) {
+	tmpFile := filepath.Join(t.TempDir(), "config.json")
+	data := []byte(`{"name":"watch","value":1}`)
+	require.NoError(t, os.WriteFile(tmpFile, data, 0o644))
+
+	var refreshCount atomic.Int32
+	src := ConfigSource(func(ctx context.Context) ([]byte, error) {
+		refreshCount.Add(1)
+		return os.ReadFile(tmpFile)
+	})
+
+	var observedRefresh atomic.Bool
+	opts := PollOptions{
+		Interval: 10 * time.Second, // long interval; file watch should trigger sooner
+		Observe: func(ev ConfigEvent) {
+			if ev.Err == nil && ev.Version != "" {
+				observedRefresh.Store(true)
+			}
+		},
+	}
+	p := NewPollingConfig(src, JSONDecoder[testStruct](), opts)
+	require.NoError(t, p.RefreshOnce(context.Background()))
+
+	// Start polling loop and file watching.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	stopPoll := p.Start(ctx)
+	defer stopPoll()
+
+	stopWatch := StartFileWatch(p, tmpFile)
+	defer stopWatch()
+
+	// Clear the flag from initial Start refresh.
+	time.Sleep(50 * time.Millisecond)
+	observedRefresh.Store(false)
+
+	// Modify file to trigger watcher.
+	require.NoError(t, os.WriteFile(tmpFile, []byte(`{"name":"watch","value":2}`), 0o644))
+
+	// Wait for watcher to detect and trigger refresh.
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if observedRefresh.Load() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Verify refresh was observed.
+	require.True(t, observedRefresh.Load(), "file watch did not trigger refresh")
+}
+
+// --------------------------------------------------------------------------
+// ModTime caching
+// --------------------------------------------------------------------------
+
+func TestNewFileConfig_CachesModTimeAndSize(t *testing.T) {
+	tmpFile := filepath.Join(t.TempDir(), "config.json")
+	data1 := []byte(`{"name":"test","value":1}`)
+	require.NoError(t, os.WriteFile(tmpFile, data1, 0o644))
+
+	p := NewFileConfig(tmpFile, JSONDecoder[testStruct](), PollOptions{})
+
+	// First refresh succeeds and caches ModTime.
+	require.NoError(t, p.RefreshOnce(context.Background()))
+	snap1 := p.Snapshot()
+
+	// Second refresh with same file (same ModTime) succeeds.
+	// The source uses cached data instead of reading.
+	require.NoError(t, p.RefreshOnce(context.Background()))
+	snap2 := p.Snapshot()
+	require.Equal(t, snap1, snap2)
+
+	// Modify file: ModTime changes, source reads again.
+	time.Sleep(10 * time.Millisecond)
+	require.NoError(t, os.WriteFile(tmpFile, []byte(`{"name":"test","value":2}`), 0o644))
+	require.NoError(t, p.RefreshOnce(context.Background()))
+	snap3 := p.Snapshot()
+	require.NotEqual(t, snap1.Value, snap3.Value)
+}
+
+func TestNewFileConfig_HandlesStatErrorGracefully(t *testing.T) {
+	tmpFile := filepath.Join(t.TempDir(), "config.json")
+	data := []byte(`{"name":"stat","value":99}`)
+	require.NoError(t, os.WriteFile(tmpFile, data, 0o644))
+
+	p := NewFileConfig(tmpFile, JSONDecoder[testStruct](), PollOptions{})
+	require.NoError(t, p.RefreshOnce(context.Background()))
+
+	// Delete the file: Stat fails on next refresh.
+	require.NoError(t, os.Remove(tmpFile))
+
+	// Refresh returns cached data instead of failing (graceful degradation).
+	require.NoError(t, p.RefreshOnce(context.Background()))
+	require.Equal(t, "stat", p.Snapshot().Name)
 }
