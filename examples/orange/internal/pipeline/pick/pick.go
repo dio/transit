@@ -1,52 +1,10 @@
-// Package pick is the cluster extension that picks an upstream host for
-// each request.
+// Package pick is the dynamic-modules cluster extension that selects an
+// upstream host for each request based on the match.Decision stored in the
+// per-stream object bag by the orange-match downstream filter.
 //
-// On Init it resolves every upstream listed in orange.yaml, registers each
-// host with the cluster, and remembers the resolvedUpstream by provider name.
-// A background refresh loop (started in ServerInitialized) re-resolves upstreams
-// when their DNS TTL expires and reconciles the host set via RemoveHosts/AddHosts
-// when IPs change — similar to Envoy's STRICT_DNS cluster type.
-// See docs/orange-pick-strict-dns.md for the full design.
-//
-// # Multi-IP round-robin
-//
-// Each provider endpoint may resolve to multiple A records (e.g. api.openai.com
-// returns two Cloudflare IPs). All IPs are registered as distinct HostPtrs so
-// that when one IP becomes unreachable, requests still reach the other.
-//
-// resolvedUpstream holds []addrs and []ptrs (parallel slices) plus an
-// atomic.Uint64 round-robin counter (rr). lookupHost increments rr and selects
-// ptrs[rr % len(ptrs)], distributing requests evenly across all IPs without any
-// synchronisation on the hot path.
-//
-// resolvedUpstream is heap-allocated (*resolvedUpstream in the hosts map) so rr
-// is never copied — atomic.Uint64 has a noCopy guard. The rr counter is
-// preserved across DNS refreshes: applyResolved copies old.rr.Load() into the
-// new entry whenever the provider's IP set changes, preventing a counter reset
-// from bunching requests onto ptrs[0].
-//
-// pickAddrs sorts A records by byte value before returning them. This makes the
-// slice order deterministic regardless of DNS round-robin rotation, so
-// applyResolved can detect IP-set changes by slice equality rather than
-// permutation.
-//
-// See docs/orange-pick-p2c.md for the planned upgrade to power-of-two-choices
-// once ClusterHandle.HostStatByPtr is available.
-//
-// IMPORTANT: AddHosts/RemoveHosts/UpdateHostHealth must be called on the Envoy
-// main thread. The refresh loop resolves DNS on the goroutine (resolveAddrs)
-// and schedules host mutations back to the main thread (applyResolved via
-// ClusterHandle.Schedule). See .agents/skills/transit-cluster-main-thread/SKILL.md.
-//
-// ChooseHost and CancelHostSelection are delegated to [up.AsyncHostSelector],
-// which owns the completion lifecycle, the cancel guard, and the scheduling
-// back to the cluster main thread. The only orange-specific logic is the
-// lookup func that maps a [match.Decision] to a [up.HostResult].
-//
-// See .agents/skills/transit-body-driven-cluster-routing/SKILL.md for the
-// rationale (header iteration finishes across all filters before the body
-// arrives, so synchronous filter-state writes from a body callback are too
-// late to influence ChooseHost).
+// See README.md for design details: lifecycle, STRICT_DNS-style DNS refresh,
+// multi-IP round-robin, cluster main-thread contract, and the async
+// body-driven host-selection pattern.
 package pick
 
 import (
@@ -57,6 +15,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"math/rand"
 	"sort"
 	"sync/atomic"
 	"time"
@@ -86,7 +45,7 @@ const (
 )
 
 func init() {
-	Register(nil) // TODO: pass a configured logger
+	Register(nil) // TODO(dio): pass a configured logger
 }
 
 // Register registers the pick cluster factory. Pass a non-nil logger to
@@ -286,7 +245,7 @@ func (c *cluster) applyResolved(h up.ClusterHandle, resolved map[string]dnsResul
 			// host, but schedule a retry soon.
 			if current != nil {
 				if old, ok := (*current)[name]; ok {
-					entry := &resolvedUpstream{addrs: old.addrs, ptrs: old.ptrs, nextRefresh: time.Now().Add(minTTLFloor)}
+					entry := &resolvedUpstream{addrs: old.addrs, ptrs: old.ptrs, nextRefresh: time.Now().Add(retryDelay())}
 					entry.rr.Store(old.rr.Load())
 					out[name] = entry
 				}
@@ -294,13 +253,10 @@ func (c *cluster) applyResolved(h up.ClusterHandle, resolved map[string]dnsResul
 			continue
 		}
 
-		ttl := r.ttl
-		if ttl < minTTLFloor {
-			ttl = minTTLFloor
-		}
-		nextRefresh := time.Now().Add(ttl)
+		ttl := max(r.ttl, minTTLFloor)
+		nextRefresh := time.Now().Add(ttl + jitter(minTTLFloor))
 
-		// Build a map of existing addr → HostPtr for this provider.
+		// Build a map of existing addr -> HostPtr for this provider.
 		existing := map[string]up.HostPtr{}
 		var oldRR uint64
 		if current != nil {
@@ -333,7 +289,7 @@ func (c *cluster) applyResolved(h up.ClusterHandle, resolved map[string]dnsResul
 				added := h.AddHosts([]up.HostSpec{{
 					Address:  addr,
 					Hostname: r.hostname,
-					Metadata: map[string]string{"sni": r.hostname}, // DIAGNOSTIC: cluster-async-router sets this too; testing if absence causes auto_host_sni SNI leak across hosts.
+					Metadata: map[string]string{"sni": r.hostname},
 				}})
 				if len(added) == 0 {
 					c.logger.Warn("skipping addr: AddHosts returned no ptrs", "upstream", name, "addr", addr)
@@ -432,28 +388,17 @@ func resolveUpstream(ctx context.Context, endpoint string) (addrs []string, ttl 
 	return result, ttl, nil
 }
 
-// pickAddrs sorts addrs so DNS round-robin rotation yields a stable result,
-// then returns all IPv4 addresses (falling back to all addresses) as "ip:port"
-// strings. Sorting ensures applyResolved detects set changes by slice equality
-// rather than permutation.
+// pickAddrs sorts addrs by byte value so DNS round-robin rotation yields a
+// stable result, then returns all addresses as "ip:port" strings. Sorting
+// ensures applyResolved detects IP-set changes by slice equality rather than
+// permutation. Since lookupWithTTL only queries TypeA, all addresses are IPv4.
 func pickAddrs(addrs []net.IPAddr, port string) []string {
 	sort.Slice(addrs, func(i, j int) bool {
 		return bytes.Compare(addrs[i].IP, addrs[j].IP) < 0
 	})
-	var out []string
-	for _, a := range addrs {
-		if v4 := a.IP.To4(); v4 != nil {
-			out = append(out, net.JoinHostPort(v4.String(), port))
-		}
-	}
-	if len(out) > 0 {
-		// DIAGNOSTIC: clamp to first IP so each provider has exactly 1 host.
-		// If both providers now work, the auto_host_sni bug needs >1 host with
-		// the same hostname in the cluster.
-		return out[:1]
-	}
-	for _, a := range addrs {
-		out = append(out, net.JoinHostPort(a.IP.String(), port))
+	out := make([]string, len(addrs))
+	for i, a := range addrs {
+		out[i] = net.JoinHostPort(a.IP.String(), port)
 	}
 	return out
 }
@@ -546,4 +491,21 @@ func splitEndpoint(endpoint string) (string, string, error) {
 		return "", "", fmt.Errorf("endpoint %q: missing host", endpoint)
 	}
 	return host, port, nil
+}
+
+// retryDelay returns a jittered retry interval for a failed DNS resolve:
+// minTTLFloor + rand[0, minTTLFloor). Spreading retries over a [10s, 20s)
+// window prevents instances that synchronised on a failure from storming the
+// in-cluster DNS server when it recovers.
+func retryDelay() time.Duration {
+	// #nosec G404 — jitter is not security-sensitive
+	return minTTLFloor + time.Duration(rand.Int63n(int64(minTTLFloor)))
+}
+
+// jitter returns a random duration in [0, spread) to add to a TTL-based
+// nextRefresh, desynchronising instances that resolved the same hostname at
+// the same time.
+func jitter(spread time.Duration) time.Duration {
+	// #nosec G404 — jitter is not security-sensitive
+	return time.Duration(rand.Int63n(int64(spread)))
 }
