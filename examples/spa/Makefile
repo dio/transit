@@ -8,11 +8,13 @@ OUTPUT := libspa.so
 ROOT := $(abspath $(CURDIR)/../..)
 ENVOY_BIN ?= $(ROOT)/.bin/envoy
 
+include $(ROOT)/scripts/zig.mk
+
 .PHONY: build test e2e e2e-js clean download-envoy
 
 ## build: compile libspa.so for the current host
-build:
-	cd $(ROOT)/examples && CGO_ENABLED=1 go build -trimpath -buildmode=c-shared \
+build: $(ZIG_BIN)
+	cd $(ROOT)/examples && $(ZIG_BUILD_ENV) go build -trimpath -buildmode=c-shared \
 	  -o spa/$(OUTPUT) ./spa/cmd
 	@echo "built: $(OUTPUT)"
 

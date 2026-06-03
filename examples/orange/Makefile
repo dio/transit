@@ -9,6 +9,8 @@ OUTPUT  := liborange.so
 ROOT := $(abspath $(CURDIR)/../..)
 ENVOY_BIN ?= $(ROOT)/.bin/envoy
 
+include $(ROOT)/scripts/zig.mk
+
 # TLS trust bundle for upstream HTTPS (auto_san_validation needs a root CA).
 # Override with `make run ORANGE_TRUSTED_CA=/path/to/bundle.pem`.
 UNAME_S := $(shell uname -s)
@@ -18,12 +20,28 @@ else
 ORANGE_TRUSTED_CA ?= $(firstword $(wildcard /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/cert.pem))
 endif
 
-.PHONY: build test e2e run demo clean download-envoy
+.PHONY: build build-linux-amd64 build-linux-arm64 test e2e run demo clean download-envoy
 
-build:
-	cd $(ROOT)/examples && CGO_ENABLED=1 go build -trimpath -buildmode=c-shared \
-	  -o $(EXAMPLE)/$(OUTPUT) ./$(EXAMPLE)/cmd
+build: $(ZIG_BIN)
+	@mkdir -p $(ROOT)/.bin
+	cd $(ROOT)/.bin && $(ZIG_BUILD_ENV) \
+	  go build -trimpath -buildmode=c-shared \
+	    -o $(CURDIR)/$(OUTPUT) $(ROOT)/examples/$(EXAMPLE)/cmd
 	@echo "built: $(OUTPUT)"
+
+build-linux-amd64: $(ZIG_BIN)
+	@mkdir -p $(ROOT)/.bin
+	cd $(ROOT)/.bin && $(ZIG_BUILD_ENV_LINUX_AMD64) \
+	  go build -trimpath -buildmode=c-shared \
+	    -o $(CURDIR)/$(OUTPUT:.so=.linux-amd64.so) $(ROOT)/examples/$(EXAMPLE)/cmd
+	@echo "built: $(OUTPUT:.so=.linux-amd64.so)"
+
+build-linux-arm64: $(ZIG_BIN)
+	@mkdir -p $(ROOT)/.bin
+	cd $(ROOT)/.bin && $(ZIG_BUILD_ENV_LINUX_ARM64) \
+	  go build -trimpath -buildmode=c-shared \
+	    -o $(CURDIR)/$(OUTPUT:.so=.linux-arm64.so) $(ROOT)/examples/$(EXAMPLE)/cmd
+	@echo "built: $(OUTPUT:.so=.linux-arm64.so)"
 
 test:
 	cd $(ROOT)/examples && go test ./$(EXAMPLE)/...
@@ -57,9 +75,9 @@ demo:
 	@echo "   curl -s :8080/v1/chat/completions -H 'content-type: application/json' \\"
 	@echo "     -d '{\"model\":\"gpt-4o-mini\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'"
 	@echo ""
-	@echo "   # Anthropic (claude-3-5-haiku-latest → routed to api.anthropic.com)"
+	@echo "   # Anthropic (claude-haiku-4-5 → routed to api.anthropic.com)"
 	@echo "   curl -s :8080/v1/messages -H 'content-type: application/json' \\"
-	@echo "     -d '{\"model\":\"claude-3-5-haiku-latest\",\"max_tokens\":32,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'"
+	@echo "     -d '{\"model\":\"claude-haiku-4-5\",\"max_tokens\":32,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'"
 	@echo ""
 	@echo "   # Streaming (SSE): add -N to curl and \"stream\": true to the body."
 	@echo ""
@@ -77,7 +95,10 @@ $(CURDIR)/envoy.yaml: $(CURDIR)/envoy.tmpl.yaml
 	ORANGE_TRUSTED_CA=$(ORANGE_TRUSTED_CA) envsubst '$$ORANGE_TRUSTED_CA' < $< > $@
 
 clean:
-	rm -f $(OUTPUT) $(OUTPUT:.so=.h) $(CURDIR)/envoy.yaml
+	rm -f $(OUTPUT) $(OUTPUT:.so=.h) \
+	  $(OUTPUT:.so=.linux-amd64.so) $(OUTPUT:.so=.linux-amd64.h) \
+	  $(OUTPUT:.so=.linux-arm64.so) $(OUTPUT:.so=.linux-arm64.h) \
+	  $(CURDIR)/envoy.yaml
 
 download-envoy:
 	$(MAKE) -C $(ROOT) download-envoy

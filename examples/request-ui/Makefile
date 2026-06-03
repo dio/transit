@@ -8,13 +8,15 @@ OUTPUT  := librequest-ui.so
 
 ROOT := $(abspath $(CURDIR)/../..)
 ENVOY_BIN ?= $(ROOT)/.bin/envoy
+
+include $(ROOT)/scripts/zig.mk
 GOARCH    ?= $(shell go env GOARCH)
 
 .PHONY: build test e2e simulate run clean download-envoy
 
 ## build: compile librequest-ui.so for the current host
-build:
-	cd $(ROOT)/examples && CGO_ENABLED=1 go build -trimpath -buildmode=c-shared \
+build: $(ZIG_BIN)
+	cd $(ROOT)/examples && $(ZIG_BUILD_ENV) go build -trimpath -buildmode=c-shared \
 	  -o $(EXAMPLE)/$(OUTPUT) ./$(EXAMPLE)/cmd
 	@echo "built: $(OUTPUT)"
 

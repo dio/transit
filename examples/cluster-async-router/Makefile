@@ -6,10 +6,12 @@ OUTPUT  := libcluster-async-router.so
 ROOT := $(abspath $(CURDIR)/../..)
 ENVOY_BIN ?= $(ROOT)/.bin/envoy
 
-.PHONY: build test e2e e2e-static-tls e2e-static-tls-matches run clean download-envoy
+include $(ROOT)/scripts/zig.mk
 
-build:
-	cd $(ROOT)/examples && CGO_ENABLED=1 GOWORK=off go build -trimpath -buildmode=c-shared \
+.PHONY: build test e2e e2e-static-tls e2e-static-tls-matches e2e-llm-tls run clean download-envoy
+
+build: $(ZIG_BIN)
+	cd $(ROOT)/examples && $(ZIG_BUILD_ENV) GOWORK=off go build -trimpath -buildmode=c-shared \
 	  -o $(EXAMPLE)/$(OUTPUT) ./$(EXAMPLE)/cmd
 	@echo "built: $(OUTPUT)"
 
@@ -24,6 +26,9 @@ e2e-static-tls: build
 
 e2e-static-tls-matches: build
 	cd $(ROOT)/examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./$(EXAMPLE)/e2e-static-tls-matches/... -v -timeout=60s -count=1
+
+e2e-llm-tls: build
+	cd $(ROOT)/examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./$(EXAMPLE)/e2e-llm-tls/... -v -timeout=60s -count=1
 
 run: build $(ENVOY_BIN)
 	GODEBUG=cgocheck=0 \

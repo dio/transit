@@ -1,5 +1,7 @@
 ROOT := $(abspath $(CURDIR)/../..)
 
+include $(ROOT)/scripts/zig.mk
+
 ENVOY_TAG ?= envoy-0d6e3c60
 ENVOY_GATEWAY_VERSION ?= v1.8.0
 K3S_TAG ?= v1.31.6-k3s1
@@ -18,8 +20,6 @@ RESET_CLUSTER ?= 1
 
 ARCH := $(shell go env GOARCH)
 PLATFORM := linux/$(ARCH)
-ZIG_ARCH := $(if $(filter amd64,$(ARCH)),x86_64,$(if $(filter arm64,$(ARCH)),aarch64,$(ARCH)))
-ZIG_TARGET := $(ZIG_ARCH)-linux-gnu.2.28
 MOCK_BIN := dist/tiered-ws-proxy-mock.linux-$(ARCH)
 
 .PHONY: test build-modules build-mock l1-image l2-image mock-image publish eg-install e2e clean
@@ -27,17 +27,12 @@ MOCK_BIN := dist/tiered-ws-proxy-mock.linux-$(ARCH)
 test:
 	go test ./... -count=1
 
-build-modules:
-	$(MAKE) -C $(ROOT) download-zig
+build-modules: $(ZIG_BIN)
 	@mkdir -p $(ROOT)/dist
-	cd $(ROOT)/examples && TARGET=$(ZIG_TARGET) \
-	  CC=$(ROOT)/scripts/zigcc.sh \
-	  CGO_ENABLED=1 GOOS=linux GOARCH=$(ARCH) \
+	cd $(ROOT)/examples && $(ZIG_BUILD_ENV_LINUX) \
 	  go build -trimpath -buildmode=c-shared \
 	    -o $(ROOT)/dist/libcluster-shard-router.linux-$(ARCH).so ./cluster-shard-router/cmd
-	cd $(ROOT)/examples && TARGET=$(ZIG_TARGET) \
-	  CC=$(ROOT)/scripts/zigcc.sh \
-	  CGO_ENABLED=1 GOOS=linux GOARCH=$(ARCH) \
+	cd $(ROOT)/examples && $(ZIG_BUILD_ENV_LINUX) \
 	  go build -trimpath -buildmode=c-shared \
 	    -o $(ROOT)/dist/libws-proxy.linux-$(ARCH).so ./ws-proxy/cmd
 

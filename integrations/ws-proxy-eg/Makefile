@@ -1,5 +1,7 @@
 ROOT := $(abspath $(CURDIR)/../..)
 
+include $(ROOT)/scripts/zig.mk
+
 ENVOY_TAG ?= envoy-0d6e3c60
 ENVOY_GATEWAY_VERSION ?= v1.8.0
 K3S_TAG ?= v1.31.6-k3s1
@@ -16,20 +18,15 @@ RESET_CLUSTER ?= 1
 
 ARCH := $(shell go env GOARCH)
 PLATFORM := linux/$(ARCH)
-ZIG_ARCH := $(if $(filter amd64,$(ARCH)),x86_64,$(if $(filter arm64,$(ARCH)),aarch64,$(ARCH)))
-ZIG_TARGET := $(ZIG_ARCH)-linux-gnu.2.28
 
 .PHONY: test build-module build-pause image pause-image publish eg-install e2e clean
 
 test:
 	go test ./... -count=1
 
-build-module:
-	$(MAKE) -C $(ROOT) download-zig
+build-module: $(ZIG_BIN)
 	@mkdir -p $(ROOT)/dist
-	cd $(ROOT) && TARGET=$(ZIG_TARGET) \
-	  CC=$(ROOT)/scripts/zigcc.sh \
-	  CGO_ENABLED=1 GOOS=linux GOARCH=$(ARCH) \
+	cd $(ROOT) && $(ZIG_BUILD_ENV_LINUX) \
 	  go build -trimpath -buildmode=c-shared \
 	    -o $(ROOT)/dist/libws-proxy-echo.linux-$(ARCH).so ./integrations/ws-proxy-eg/echo/cmd
 

@@ -6,10 +6,12 @@ OUTPUT  := libmcp-streaming-sidecar.so
 ROOT     := $(abspath $(CURDIR)/../..)
 ENVOY_BIN ?= $(ROOT)/.bin/envoy
 
+include $(ROOT)/scripts/zig.mk
+
 .PHONY: build test clean download-envoy
 
-build:
-	cd $(ROOT)/examples/mcp-streaming-sidecar && CGO_ENABLED=1 GOWORK=off go build -trimpath -buildmode=c-shared \
+build: $(ZIG_BIN)
+	cd $(ROOT)/examples/mcp-streaming-sidecar && $(ZIG_BUILD_ENV) GOWORK=off go build -trimpath -buildmode=c-shared \
 	  -o $(OUTPUT) ./cmd
 	@echo "built: $(OUTPUT)"
 

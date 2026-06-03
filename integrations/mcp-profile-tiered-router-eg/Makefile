@@ -1,5 +1,7 @@
 ROOT := $(abspath $(CURDIR)/../..)
 
+include $(ROOT)/scripts/zig.mk
+
 ENVOY_TAG ?= envoy-0d6e3c60
 ENVOY_GATEWAY_VERSION ?= v1.8.0
 K3S_TAG ?= v1.31.6-k3s1
@@ -16,8 +18,6 @@ RESET_CLUSTER ?= 1
 
 ARCH := $(shell go env GOARCH)
 PLATFORM := linux/$(ARCH)
-ZIG_ARCH := $(if $(filter amd64,$(ARCH)),x86_64,$(if $(filter arm64,$(ARCH)),aarch64,$(ARCH)))
-ZIG_TARGET := $(ZIG_ARCH)-linux-gnu.2.28
 CONTROL_PLANE_BIN := dist/mcp-profile-tiered-router-demo.linux-$(ARCH)
 
 .PHONY: test build-modules image control-plane-binary control-plane-image publish e2e eg-install clean
@@ -25,22 +25,15 @@ CONTROL_PLANE_BIN := dist/mcp-profile-tiered-router-demo.linux-$(ARCH)
 test:
 	cd $(ROOT)/integrations && go test ./mcp-profile-tiered-router-eg/... -count=1
 
-build-modules:
-	$(MAKE) -C $(ROOT) download-zig
+build-modules: $(ZIG_BIN)
 	@mkdir -p $(ROOT)/dist
-	cd $(ROOT)/examples && TARGET=$(ZIG_TARGET) \
-	  CC=$(ROOT)/scripts/zigcc.sh \
-	  CGO_ENABLED=1 GOOS=linux GOARCH=$(ARCH) \
+	cd $(ROOT)/examples && $(ZIG_BUILD_ENV_LINUX) \
 	  go build -trimpath -buildmode=c-shared \
 	    -o $(ROOT)/dist/libmcp-profile-gateway.linux-$(ARCH).so ./mcp-profile-gateway/cmd
-	cd $(ROOT)/examples && TARGET=$(ZIG_TARGET) \
-	  CC=$(ROOT)/scripts/zigcc.sh \
-	  CGO_ENABLED=1 GOOS=linux GOARCH=$(ARCH) \
+	cd $(ROOT)/examples && $(ZIG_BUILD_ENV_LINUX) \
 	  go build -trimpath -buildmode=c-shared \
 	    -o $(ROOT)/dist/libmcp-catalog-router.linux-$(ARCH).so ./mcp-catalog-router/cmd
-	cd $(ROOT)/examples && TARGET=$(ZIG_TARGET) \
-	  CC=$(ROOT)/scripts/zigcc.sh \
-	  CGO_ENABLED=1 GOOS=linux GOARCH=$(ARCH) \
+	cd $(ROOT)/examples && $(ZIG_BUILD_ENV_LINUX) \
 	  go build -trimpath -buildmode=c-shared \
 	    -o $(ROOT)/dist/libcluster-router.linux-$(ARCH).so ./cluster-router/cmd
 

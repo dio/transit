@@ -8,12 +8,14 @@ COMBO_OUTPUT := lib$(EXAMPLE)-combo.so
 ROOT := $(abspath $(CURDIR)/../..)
 ENVOY_BIN ?= $(ROOT)/.bin/envoy
 
+include $(ROOT)/scripts/zig.mk
+
 .PHONY: build test e2e run clean download-envoy
 
-build:
+build: $(ZIG_BIN)
 	cd $(ROOT)/examples && go build -trimpath -o $(EXAMPLE)/$(BIN) ./$(EXAMPLE)/cmd
-	cd $(ROOT)/examples && CGO_ENABLED=1 go build -trimpath -buildmode=c-shared -o $(EXAMPLE)/$(OUTPUT) ./$(EXAMPLE)/modules/alacarte
-	cd $(ROOT)/examples && CGO_ENABLED=1 go build -trimpath -buildmode=c-shared -o $(EXAMPLE)/$(COMBO_OUTPUT) ./$(EXAMPLE)/modules/combo
+	cd $(ROOT)/examples && $(ZIG_BUILD_ENV) go build -trimpath -buildmode=c-shared -o $(EXAMPLE)/$(OUTPUT) ./$(EXAMPLE)/modules/alacarte
+	cd $(ROOT)/examples && $(ZIG_BUILD_ENV) go build -trimpath -buildmode=c-shared -o $(EXAMPLE)/$(COMBO_OUTPUT) ./$(EXAMPLE)/modules/combo
 	@echo "built: $(BIN)"
 	@echo "built: $(OUTPUT)"
 	@echo "built: $(COMBO_OUTPUT)"
