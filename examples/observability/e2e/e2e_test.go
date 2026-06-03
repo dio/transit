@@ -29,13 +29,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	otlplogs "go.opentelemetry.io/proto/otlp/logs/v1"
 	otlpmetrics "go.opentelemetry.io/proto/otlp/metrics/v1"
 	otlptrace "go.opentelemetry.io/proto/otlp/trace/v1"
 
 	"github.com/dio/transit/examples/internal/e2etest"
 	"github.com/dio/transit/examples/internal/otelsink"
-	"github.com/stretchr/testify/require"
 )
 
 //go:embed testdata/envoy.tmpl.yaml

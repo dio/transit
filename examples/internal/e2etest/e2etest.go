@@ -17,9 +17,12 @@ import (
 // .bin/envoy path used by make download-envoy.
 func EnvoyBin(examplesRoot string) string {
 	if b := os.Getenv("ENVOY_BIN"); b != "" {
+		fmt.Fprintf(os.Stderr, "e2e: using ENVOY_BIN=%s\n", b)
 		return b
 	}
-	return filepath.Join(examplesRoot, "..", ".bin", "envoy")
+	path := filepath.Join(examplesRoot, "..", ".bin", "envoy")
+	fmt.Fprintf(os.Stderr, "e2e: using default envoy binary at %s\n", path)
+	return path
 }
 
 // CheckSharedLibrary verifies that the example Makefile has already built the
@@ -70,9 +73,20 @@ func WriteEnvoyConfig(name, tmpl string, data any) string {
 // extraEnv is appended after GODEBUG and ENVOY_DYNAMIC_MODULES_SEARCH_PATH.
 // The returned stop func kills the process and removes cfgPath; call it before
 // os.Exit. Returns (nil, false) on failure after printing to stderr.
+//
+// Set ENVOY_LOG_LEVEL=debug (or any Envoy log level) before running tests to
+// get verbose Envoy output for diagnostic runs.
 func StartEnvoy(bin, cfgPath, searchPath string, adminPort int, extraEnv []string) (stop func(), ok bool) {
-	cmd := exec.Command(bin, "-c", cfgPath, "--log-level", "warning",
-		"--component-log-level", "dynamic_modules:info")
+	logLevel := os.Getenv("ENVOY_LOG_LEVEL")
+	if logLevel == "" {
+		logLevel = "warning"
+	}
+	componentLogLevel := os.Getenv("ENVOY_COMPONENT_LOG_LEVEL")
+	if componentLogLevel == "" {
+		componentLogLevel = "dynamic_modules:info"
+	}
+	cmd := exec.Command(bin, "-c", cfgPath, "--log-level", logLevel,
+		"--component-log-level", componentLogLevel)
 	cmd.Env = append(os.Environ(),
 		"GODEBUG=cgocheck=0",
 		"ENVOY_DYNAMIC_MODULES_SEARCH_PATH="+searchPath,

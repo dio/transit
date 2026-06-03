@@ -407,4 +407,3 @@ func RegisterDirect(name string, cfg Config) {
 	})
 	up.Register(name, func(w *up.Writer, r *up.Request) {}, up.WithSidecar(s))
 }
-

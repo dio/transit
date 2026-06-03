@@ -168,4 +168,5 @@ in `ChooseHost`.
 
 **"I want per-request fields in Envoy access logs."**
 → `w.SetMetadata(ns, key, value)` — Envoy access log formatter reads it via
-`%DYNAMIC_METADATA(namespace:key)%`. See `docs/metadata.md` for the full guide.
+`%DYNAMIC_METADATA(namespace:key)%`. See `docs/structured-log-fields.md` for
+the full two-track guide (process log vs access log, YAML config, pitfalls).

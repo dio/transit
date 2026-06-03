@@ -122,8 +122,8 @@ type Sink struct {
 	stopOnce      sync.Once
 	stopCh        chan struct{} // closed by Stop to signal shutdown
 	writerDone    chan struct{} // closed when writer goroutine exits
-	writerStarted atomic.Bool  // set true before writer goroutine launches
-	srv           *http.Server // set by Start; used by Stop for graceful shutdown
+	writerStarted atomic.Bool   // set true before writer goroutine launches
+	srv           *http.Server  // set by Start; used by Stop for graceful shutdown
 }
 
 // New creates a Sink. Call Start() to connect/initialise and begin serving.

@@ -89,12 +89,12 @@ func TestMain(m *testing.M) {
 	directProxyURL = fmt.Sprintf("ws://127.0.0.1:%d", inboundDirectPort)
 
 	cfgPath := e2etest.WriteEnvoyConfig("ws-proxy", envoyConfigTmpl, map[string]int{
-		"ProxyPort":         proxyPort,
-		"LoopbackPort":      loopbackPort,
-		"EgressPort":        egressPort,
-		"AdminPort":         adminPort,
-		"MockPort":          mockPort,
-		"InboundDirectPort": inboundDirectPort,
+		"ProxyPort":          proxyPort,
+		"LoopbackPort":       loopbackPort,
+		"EgressPort":         egressPort,
+		"AdminPort":          adminPort,
+		"MockPort":           mockPort,
+		"InboundDirectPort":  inboundDirectPort,
 		"LoopbackDirectPort": loopbackDirectPort,
 	})
 

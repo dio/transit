@@ -6,10 +6,10 @@
 // Two endpoints are exposed by the loopback server (addr =
 // E2E_STREAM_COMPLETE_LOOPBACK_ADDR, started via WithGroup):
 //
-//   GET /          — returned to clients that route through Envoy; "ok\n".
-//   GET /counters  — JSON snapshot of the counters. Tests hit this directly
-//                    on the loopback port so the read does not itself drive
-//                    OnStreamComplete.
+//	GET /          — returned to clients that route through Envoy; "ok\n".
+//	GET /counters  — JSON snapshot of the counters. Tests hit this directly
+//	                 on the loopback port so the read does not itself drive
+//	                 OnStreamComplete.
 package filters
 
 import (
