@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/dio/transit/examples/orange/orange.schema.json",
+  "title": "orange configuration",
+  "description": "Configuration for the orange LLM proxy (orange.yaml).",
+  "type": "object",
+  "required": ["providers", "models"],
+  "additionalProperties": false,
+  "properties": {
+    "providers": {
+      "description": "Map of provider name to provider definition.",
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/Provider" }
+    },
+    "models": {
+      "description": "Map of client-facing model ID to routing entry. Keys are the exact strings clients send in the request body `model` field.",
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/ModelEntry" }
+    }
+  },
+  "$defs": {
+    "Provider": {
+      "description": "A single upstream provider definition.",
+      "type": "object",
+      "required": ["kind", "endpoint", "auth"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "description": "Client API schema this provider serves. Drives translator selection unless backend_schema overrides it.",
+          "type": "string",
+          "enum": ["openai", "anthropic"]
+        },
+        "backend_schema": {
+          "description": "Translator registry key. Defaults to kind. Set when the client schema differs from the backend wire format (e.g. kind=openai, backend_schema=azureopenai).",
+          "type": "string",
+          "enum": ["openai", "anthropic", "azureopenai", "awsbedrock", "awsanthropic", "gcpvertexai", "gcpanthropic"]
+        },
+        "endpoint": {
+          "description": "Upstream base URL. The hostname drives SNI selection and :authority rewrite.",
+          "type": "string",
+          "format": "uri"
+        },
+        "path_prefix": {
+          "description": "URL path prefix for backend requests. Defaults to /v1. Set for non-standard providers (Azure, Bedrock, Vertex, Groq, DeepInfra).",
+          "type": "string",
+          "default": "/v1"
+        },
+        "extra": {
+          "description": "Free-form string map for translator and auth handler configuration. Common keys: anthropic_version, aws_region, azure_api_version, gcp_project, gcp_location.",
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "properties": {
+            "anthropic_version": {
+              "description": "Anthropic API version header value (e.g. 2023-06-01). Required for anthropic and gcpanthropic providers.",
+              "type": "string"
+            },
+            "aws_region": {
+              "description": "AWS region for SigV4 signing. Required when auth.type is aws.",
+              "type": "string"
+            },
+            "azure_api_version": {
+              "description": "Azure OpenAI API version query parameter (e.g. 2025-01-01-preview). Required for azureopenai providers.",
+              "type": "string"
+            },
+            "gcp_project": {
+              "description": "GCP project ID for Vertex AI endpoints.",
+              "type": "string"
+            },
+            "gcp_location": {
+              "description": "GCP region for Vertex AI endpoints (e.g. us-central1).",
+              "type": "string"
+            }
+          }
+        },
+        "auth": { "$ref": "#/$defs/Auth" }
+      }
+    },
+    "Auth": {
+      "description": "Credential injection configuration for a provider.",
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "description": "Auth handler name. bearer/x-api-key/anthropic require secret_ref. aws reads extra.aws_region. gcp uses Application Default Credentials.",
+          "type": "string",
+          "enum": ["bearer", "x-api-key", "anthropic", "aws", "gcp"]
+        },
+        "secret_ref": {
+          "description": "URI reference to a credential resolved at config load. Only env://VAR_NAME is supported. Required for bearer, x-api-key, and anthropic types.",
+          "type": "string",
+          "pattern": "^env://.+"
+        }
+      },
+      "if": {
+        "properties": { "type": { "enum": ["bearer", "x-api-key", "anthropic"] } }
+      },
+      "then": {
+        "required": ["secret_ref"]
+      }
+    },
+    "ModelEntry": {
+      "description": "Routing entry for a single client-facing model ID.",
+      "type": "object",
+      "required": ["provider"],
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "description": "Provider name. Must exist in providers.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Model name written into the request body (or path) before forwarding to the backend. Defaults to the model map key. Use to strip gateway-side prefixes (e.g. groq/llama-3.1-8b-instant → llama-3.1-8b-instant) or pin to a versioned backend ID.",
+          "type": "string"
+        },
+        "metadata": {
+          "description": "Free-form object emitted verbatim as the metadata field in /v1/models responses. Common keys follow DeepInfra/OpenAI conventions.",
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "description": {
+              "description": "Human-readable description of the model.",
+              "type": "string"
+            },
+            "context_length": {
+              "description": "Maximum number of tokens in the context window.",
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_tokens": {
+              "description": "Maximum number of tokens the model will generate per response.",
+              "type": "integer",
+              "minimum": 1
+            },
+            "tags": {
+              "description": "Categorical tags (e.g. chat, fast, code, vision).",
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "pricing": {
+              "description": "Pricing information. Shape is provider-defined.",
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        }
+      }
+    }
+  }
+}

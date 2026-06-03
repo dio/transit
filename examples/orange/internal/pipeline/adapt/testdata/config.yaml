@@ -1,0 +1,22 @@
+providers:
+  openai_direct:
+    kind: openai
+    endpoint: https://api.openai.com
+    auth:
+      type: bearer
+      secret_ref: env://OPENAI_API_KEY
+
+  anthropic_direct:
+    kind: anthropic
+    endpoint: https://api.anthropic.com
+    extra:
+      anthropic_version: "2023-06-01"
+    auth:
+      type: anthropic
+      secret_ref: env://ANTHROPIC_API_KEY
+
+models:
+  gpt-4o:
+    provider: openai_direct
+  claude-3-5-sonnet-20241022:
+    provider: anthropic_direct

@@ -5,11 +5,12 @@ package main
 
 import (
 	_ "github.com/dio/transit/down/abi_impl"
-	_ "github.com/dio/transit/examples/orange/classify"
-	_ "github.com/dio/transit/examples/orange/debug"
-	_ "github.com/dio/transit/examples/orange/hostpick"
-	_ "github.com/dio/transit/examples/orange/tap"
-	_ "github.com/dio/transit/examples/orange/translate"
+	_ "github.com/dio/transit/examples/orange/internal/debug"
+	_ "github.com/dio/transit/examples/orange/internal/pipeline/adapt"
+	_ "github.com/dio/transit/examples/orange/internal/pipeline/match"
+	_ "github.com/dio/transit/examples/orange/internal/pipeline/meter"
+	_ "github.com/dio/transit/examples/orange/internal/pipeline/pick"
+	_ "github.com/dio/transit/examples/orange/internal/translator"
 )
 
 func main() {}

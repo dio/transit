@@ -1,0 +1,12 @@
+# auth.type is not one of the registered enum values.
+providers:
+  openai:
+    kind: openai
+    endpoint: https://api.openai.com
+    auth:
+      type: magic-token
+      secret_ref: env://TEST_OPENAI_KEY
+
+models:
+  gpt-4o:
+    provider: openai

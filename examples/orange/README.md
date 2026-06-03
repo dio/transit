@@ -1,33 +1,34 @@
 # orange — multi-provider LLM proxy
 
 A single Envoy listener that routes OpenAI and Anthropic API traffic based on
-the `model` field of the request body, injects the right provider credential
-on the upstream side, and handshakes each provider with its own SNI off a
-single dynamic cluster.
+the `model` field of the request body, translates the wire format to each
+backend's native schema, injects the right provider credential, and performs
+TLS per provider off a single dynamic cluster.
 
 ```
-client ──► :8080/v1/chat/completions ──► classify (body: model=…)
-                                          │
+client ──► :8080/v1/chat/completions ──► match (body: model=…)
+                                          │  rewrites :authority → provider host
                                           ▼
-                                       hostpick.ChooseHost
-                                          │  (waits on classify body)
+                                       pick.ChooseHost
+                                          │  (waits on match promise)
                                           ▼
                                        orange_default cluster
-                                          │  (per-host TLS via
-                                          │   transport_socket_matches)
+                                          │  (auto_host_sni derives SNI
+                                          │   from :authority rewritten by match)
                               ┌───────────┴────────────┐
                               ▼                        ▼
                        api.openai.com            api.anthropic.com
                        (Bearer ...)              (x-api-key + anthropic-version)
 ```
 
-Three dynamic modules ship in one `.so`:
+Four dynamic modules ship in one `.so`:
 
-| Module       | Phase                    | Job |
-|--------------|--------------------------|-----|
-| `classify`   | downstream HTTP filter   | Parse `model` from the JSON body, look up the upstream, rewrite `:authority`, resolve the per-request pending so `hostpick` can complete. |
-| `hostpick`   | dynamic-modules cluster  | `ChooseHost` returns a `ClusterLBCompletion` and registers a callback on the pending from `classify`. When `classify` resolves the pending, the callback hops to the cluster main thread and completes with the matching host. |
-| `translate`  | upstream HTTP filter     | Strip client-supplied auth, rewrite path prefix, inject the provider credential. OpenAI → `Authorization: Bearer …`. Anthropic → `x-api-key` + `anthropic-version`. |
+| Module         | Phase                    | Job |
+|----------------|--------------------------|-----|
+| `orange-match` | downstream HTTP filter   | Parses `model` from the JSON body, looks up the provider, rewrites `:authority` to the provider host (so `auto_host_sni` picks the right SNI), writes routing filter state, and resolves the per-request `StreamPromise` so `pick` can complete. |
+| `orange-pick`  | dynamic-modules cluster  | `ChooseHost` waits on the `StreamPromise` set by `match`. On `ServerInitialized` starts a STRICT_DNS-style background loop that re-resolves provider hostnames on TTL expiry and reconciles the host set. |
+| `orange-adapt` | upstream HTTP filter     | Drives a four-phase translator pipeline (request headers → request body → response headers → response body chunks). Translates between client schema and backend wire format (OpenAI, Anthropic, Azure, Bedrock, Vertex, Groq, DeepInfra). Injects provider auth. |
+| `orange-meter` | upstream HTTP filter     | Extracts LLM token usage from both streaming (SSE ring-buffer) and non-streaming (full JSON) responses. Emits `orange_input_tokens` / `orange_output_tokens` Envoy counters and dynamic metadata. |
 
 ## Why this is not just "header-based routing"
 
@@ -37,59 +38,66 @@ header. Envoy's router opens the upstream connection during
 naive "write filter state from the body handler, read it in `ChooseHost`"
 design races and loses.
 
-`classify` mints a per-request token at headers phase, registers a
-`pending.Pending` under it, and writes the token to filter state. `hostpick`
-returns a `ClusterLBCompletion` and installs an `OnResolve` callback on that
-pending. When the body arrives, `classify.bodyHandler` parses the model and
-resolves the pending; the callback fires inline, hops back to the cluster's
-main thread via `handle.Schedule`, and completes the selection. No
-per-request goroutine is parked. See
+`match` stores a `*up.StreamPromise[Decision]` in the per-stream object bag at
+headers phase. `pick` returns a `ClusterLBCompletion` and waits on that
+promise via `up.AsyncHostSelector`. When the body arrives, `match.bodyHandler`
+parses the model, resolves the promise, and `pick` hops back to the cluster
+main thread to complete the selection. No per-request goroutine is parked. See
 `.agents/skills/transit-body-driven-cluster-routing/SKILL.md` for the full
 phase-ordering rationale.
 
-Per-stream cleanup is owned by `classify`'s `OnStreamComplete` hook: it
-removes the token from the registry and resolves the pending with
-`orange.stream_terminated` (a CAS, so a real body-resolved result wins).
-That guarantees the registry and the `OnResolve` callback drain even when
-the body handler never runs (downstream disconnect, idle timeout, foreign
-local reply).
+Per-stream cleanup is owned by `match`'s `OnStreamComplete` hook: it resolves
+the promise with `orange.stream_terminated` (a CAS, so a real body-resolved
+result always wins), guaranteeing the promise and the `OnResolve` callback
+drain even when the body handler never runs (downstream disconnect, idle
+timeout, foreign local reply).
 
 ## Per-provider TLS without a cluster explosion
 
-Both providers live in **one** dynamic cluster (`orange_default`). Each host
-is registered with `HostSpec.Metadata{"sni": <provider hostname>}`; the
-cluster's `transport_socket_matches` selects the matching `UpstreamTlsContext`
-per connection. No `auto_sni` (which gets sampled before `ChooseHost` runs
-and so can't see body-driven decisions) — see SKILL.md *"Auto-SNI sampling
-time"* for why.
+Both providers live in **one** dynamic cluster (`orange_default`). `match`
+rewrites the `:authority` pseudo-header to the provider hostname (e.g.
+`api.openai.com` or `api.anthropic.com`) before the upstream connection is
+established. The cluster's `auto_host_sni: true` and `auto_sni_san_validation:
+true` then derive SNI and peer-cert validation from that `:authority` value
+automatically — no `transport_socket_matches` required.
 
 ## Config
 
-`orange.yaml` is the single source of truth. Each module reads its section
-lazily via the `ORANGE_CONFIG` env var (set by `make run`/`make demo`).
+`orange.yaml` is the single source of truth for providers and model routing.
+Loaded lazily at first request via the `ORANGE_CONFIG` env var (set by `make
+run`/`make demo`).
 
 ```yaml
 providers:
-  openai_direct:
+  openai:
     kind: openai
     endpoint: https://api.openai.com
-    path_prefix: "/v1"
-    auth: { type: bearer, secret: env://OPENAI_API_KEY }
-  anthropic_direct:
+    auth:
+      type: bearer
+      secret_ref: env://OPENAI_API_KEY
+
+  anthropic:
     kind: anthropic
     endpoint: https://api.anthropic.com
-    path_prefix: "/v1"
-    anthropic_version: "2023-06-01"
-    auth: { type: x-api-key, secret: env://ANTHROPIC_API_KEY }
+    extra:
+      anthropic_version: "2023-06-01"
+    auth:
+      type: anthropic
+      secret_ref: env://ANTHROPIC_API_KEY
 
 models:
-  - { match: "gpt-4o*",  provider: openai_direct }
-  - { match: "gpt-4.1*", provider: openai_direct }
-  - { match: "claude-*", provider: anthropic_direct }
+  gpt-4o-mini:
+    provider: openai
+  claude-3-5-haiku-latest:
+    provider: anthropic
 ```
 
-Missing env vars / unreadable files fail Envoy boot loudly — secrets aren't
-silently empty.
+`secret_ref: env://VAR` is resolved at config load; missing env vars fail boot
+loudly — secrets are never silently empty.
+
+Supported `auth.type` values: `bearer`, `x-api-key`, `anthropic`, `aws`, `gcp`.
+Supported `backend_schema` values (override `kind` for the wire translator):
+`azureopenai`, `awsbedrock`, `awsanthropic`, `gcpvertexai`, `gcpanthropic`.
 
 ## Quickstart
 
@@ -119,7 +127,7 @@ curl -N -s :8080/v1/chat/completions -H 'content-type: application/json' \
        "messages":[{"role":"user","content":"count 1 to 5"}]}'
 ```
 
-Error paths (handled by `classify`, no upstream contacted):
+Error paths (handled by `match`, no upstream contacted):
 
 ```bash
 # Missing model field → 400 orange.model_required
@@ -137,31 +145,39 @@ curl -i :8080/v1/chat/completions -H 'content-type: application/json' \
 # curl; cx_connect_fail should stay 0.
 curl -s :9901/clusters | grep orange_default:: | grep -E 'cx_(total|connect_fail)'
 
-# Routing decisions are logged by classify / hostpick / translate at info.
-# Watch the `make demo` foreground; look for:
-#   orange-classify body: resolved model=… upstream=… host=… kind=…
-#   orange-hostpick: token=… completing with host upstream=…
-#   orange-translate: upstream=… authority=… kind=…
+# Token usage counters emitted by orange-meter.
+curl -s :9901/stats | grep orange_
+
+# Routing decisions are logged by match / pick / adapt at info level.
+# Watch the `make demo` foreground; look for slog lines from each module.
 ```
 
 ## Tests
 
 ```bash
-make test     # unit tests (config + classify + translate + hostpick + pending)
+make test     # unit tests (config, match, adapt, pick, meter, translator)
 make build    # cgo c-shared build of liborange.so
+make e2e      # end-to-end tests against live providers (requires API keys)
 ```
 
 ## Layout
 
 ```
-classify/    downstream filter: body parse + pending resolve
-translate/  upstream filter: strip + inject per provider
-hostpick/    cluster extension: async ChooseHost via ClusterLBCompletion
-pending/     process-wide token → Pending registry
-config/      orange.yaml loader (env:// secret resolution)
-cmd/         c-shared entrypoint (registers all three modules)
+internal/
+  config/        orange.yaml loader (secret_ref resolution, polling)
+  pipeline/
+    match/       downstream filter: body parse + StreamPromise resolve
+    pick/        cluster extension: async ChooseHost + STRICT_DNS host refresh
+    adapt/       upstream filter: translator pipeline + auth injection
+    meter/       upstream filter: token counting → Envoy counters + metadata
+  translator/    wire-format translators (openai↔openai/azure/bedrock/vertex/groq/deepinfra)
+  apischema/     API schema types (openai, anthropic, gcp, awsbedrock)
+  send/          JSON error-response helpers
+  debug/         embedded admin HTTP server
+codemod/         source-to-source migration tool (OpenAI SDK → orange endpoints)
+cmd/             c-shared entrypoint (blank-imports all pipeline packages)
 envoy.tmpl.yaml  Envoy config, ${ORANGE_TRUSTED_CA} substituted by make
-orange.yaml      runtime config (providers, models, classify, translate)
+orange.yaml      runtime config (providers, models)
 ```
 
 ## Status
@@ -169,11 +185,13 @@ orange.yaml      runtime config (providers, models, classify, translate)
 | Stage | Status |
 |-------|--------|
 | M0 — skeleton + plumbing | done |
-| M1 — classify (body → upstream) | done |
-| M2 — hostpick (cluster extension) | done |
-| M3a — translate OpenAI Bearer | done |
-| M3b — translate Anthropic x-api-key + version | done |
+| M1 — match (body → upstream routing) | done |
+| M2 — pick (cluster extension) | done |
+| M3a — adapt: OpenAI Bearer | done |
+| M3b — adapt: Anthropic x-api-key + version | done |
 | M3c — body-driven routing via `ClusterLBCompletion` | done |
-| M3d — per-provider TLS via `transport_socket_matches` | done |
+| M3d — per-provider TLS via `auto_host_sni` + `:authority` rewrite | done |
 | M4 — streaming (SSE) passthrough | done |
-| M5 — `make demo` + this README | done |
+| M5 — multi-backend translators (Azure, Bedrock, Vertex, Groq, DeepInfra) | done |
+| M6 — meter: token counting via Envoy counters | done |
+| M7 — `make demo` + this README | done |

@@ -10,18 +10,42 @@ static_resources:
                 "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
                 stat_prefix: orange
                 http_filters:
-                  - name: orange-classify
+                  - name: orange-match
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
                       dynamic_module_config:
                         name: orange
-                      filter_name: orange-classify
+                      filter_name: orange-match
                       filter_config:
                         "@type": type.googleapis.com/google.protobuf.StringValue
                         value: '{}'
                   - name: envoy.filters.http.router
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                access_log:
+                  - name: envoy.access_loggers.file
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.access_loggers.file.v3.FileAccessLog
+                      path: /dev/stdout
+                      log_format:
+                        json_format:
+                          start_time:    "%START_TIME%"
+                          method:        "%REQ(:METHOD)%"
+                          path:          "%REQ(:PATH)%"
+                          response_code: "%RESPONSE_CODE%"
+                          duration_ms:   "%DURATION%"
+                          request_id:    "%REQ(x-request-id)%"
+                          response_flags:                "%RESPONSE_FLAGS%"
+                          upstream_failure:              "%UPSTREAM_TRANSPORT_FAILURE_REASON%"
+                          model:         "%DYNAMIC_METADATA(orange:model)%"
+                          upstream:      "%DYNAMIC_METADATA(orange:upstream)%"
+                          provider:      "%DYNAMIC_METADATA(orange:provider)%"
+                          input_tokens:                  "%DYNAMIC_METADATA(orange_meter:input_tokens)%"
+                          output_tokens:                 "%DYNAMIC_METADATA(orange_meter:output_tokens)%"
+                          cached_input_tokens:           "%DYNAMIC_METADATA(orange_meter:cached_input_tokens)%"
+                          reasoning_output_tokens:       "%DYNAMIC_METADATA(orange_meter:reasoning_output_tokens)%"
+                          cache_creation_input_tokens:   "%DYNAMIC_METADATA(orange_meter:cache_creation_input_tokens)%"
+                          cache_read_input_tokens:       "%DYNAMIC_METADATA(orange_meter:cache_read_input_tokens)%"
                 route_config:
                   name: orange
                   virtual_hosts:
@@ -35,33 +59,36 @@ static_resources:
     - name: orange_default
       connect_timeout: 10s
       lb_policy: CLUSTER_PROVIDED
-      transport_socket_matches:
-        - name: github-models
-          match:
-            sni: models.inference.ai.azure.com
-          transport_socket:
-            name: envoy.transport_sockets.tls
-            typed_config:
-              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
-              sni: models.inference.ai.azure.com
-              common_tls_context:
-                validation_context:
-                  trusted_ca: { filename: {{.SystemCAFile}} }
-                  match_typed_subject_alt_names:
-                    - san_type: DNS
-                      matcher: { exact: models.inference.ai.azure.com }
+      transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+          auto_host_sni: true
+          auto_sni_san_validation: true
+          common_tls_context:
+            validation_context:
+              trusted_ca: { filename: {{.SystemCAFile}} }
       typed_extension_protocol_options:
         envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
           "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
           explicit_http_config:
             http_protocol_options: {}
           http_filters:
-            - name: orange-translate
+            - name: orange-adapt
               typed_config:
                 "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
                 dynamic_module_config:
                   name: orange
-                filter_name: orange-translate
+                filter_name: orange-adapt
+                filter_config:
+                  "@type": type.googleapis.com/google.protobuf.StringValue
+                  value: '{}'
+            - name: orange-meter
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                dynamic_module_config:
+                  name: orange
+                filter_name: orange-meter
                 filter_config:
                   "@type": type.googleapis.com/google.protobuf.StringValue
                   value: '{}'
@@ -74,7 +101,7 @@ static_resources:
           "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_modules.v3.ClusterConfig
           dynamic_module_config:
             name: orange
-          cluster_name: orange-hostpick
+          cluster_name: orange-pick
           cluster_config:
             "@type": type.googleapis.com/google.protobuf.StringValue
             value: '{}'
