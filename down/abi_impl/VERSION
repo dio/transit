@@ -25,6 +25,6 @@ SDK_MODULE=github.com/envoyproxy/envoy/source/extensions/dynamic_modules
 SDK_VERSION=v0.0.0-20260521055639-0d6e3c60aa55
 SDK_COMMIT=0d6e3c60aa55
 
-ENVOY_TAG=envoy-0d6e3c60-auto-host-sni
-ENVOY_ASSET_SUFFIX=-auto-host-sni
+ENVOY_TAG=envoy-0d6e3c60-auto-host-sni-bounded-sni-session-cache
+ENVOY_ASSET_SUFFIX=-auto-host-sni-bounded-sni-session-cache
 ABI_SOURCE=release

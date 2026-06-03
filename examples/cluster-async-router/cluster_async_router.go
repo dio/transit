@@ -179,8 +179,8 @@ type clusterConfig struct {
 type hostEntry struct {
 	Name    string `json:"name"`
 	Address string `json:"address"`
-	SNI     string `json:"sni,omitempty"`    // if set, host metadata "sni" is populated so transport_socket_matches can select the right UpstreamTlsContext
-	Bucket  string `json:"bucket,omitempty"` // if set, host metadata "bucket" is populated for transport_socket_matches selection
+	SNI     string `json:"sni,omitempty"`    // if set, host metadata "sni" is populated and Hostname is used for auto_host_sni
+	Bucket  string `json:"bucket,omitempty"` // if set, host metadata "bucket" is populated for metadata-driven examples
 }
 
 type factory struct{}

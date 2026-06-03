@@ -1,6 +1,6 @@
 static_resources:
   listeners:
-    - name: cluster-async-router-static-tls
+    - name: cluster-async-router-static-tls-llm
       address:
         socket_address: { address: 127.0.0.1, port_value: {{.ProxyPort}} }
       filter_chains:
@@ -8,7 +8,7 @@ static_resources:
             - name: envoy.filters.network.http_connection_manager
               typed_config:
                 "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
-                stat_prefix: cluster-async-router-static-tls
+                stat_prefix: cluster-async-router-static-tls-llm
                 http_filters:
                   - name: body-router-writer
                     typed_config:
@@ -23,7 +23,7 @@ static_resources:
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
                 route_config:
-                  name: cluster-async-router-static-tls
+                  name: cluster-async-router-static-tls-llm
                   virtual_hosts:
                     - name: local
                       domains: ["*"]
@@ -35,9 +35,11 @@ static_resources:
     - name: upstream
       connect_timeout: 5s
       lb_policy: CLUSTER_PROVIDED
-      # Single static transport_socket. No transport_socket_matches anywhere.
-      # auto_host_sni reads the selected host's hostname() and uses it as SNI.
-      # auto_sni_san_validation copies that SNI into the SAN matcher.
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http2_protocol_options: {}
       transport_socket:
         name: envoy.transport_sockets.tls
         typed_config:
@@ -56,7 +58,7 @@ static_resources:
           cluster_name: body-router-cluster
           cluster_config:
             "@type": type.googleapis.com/google.protobuf.StringValue
-            value: '{"hosts":[{"name":"httpbin","address":"httpbin.org:443","sni":"httpbin.org"},{"name":"example","address":"example.com:443","sni":"example.com"},{"name":"cloudflare","address":"www.cloudflare.com:443","sni":"www.cloudflare.com"}]}'
+            value: '{"hosts":[{"name":"anthropic","address":"api.anthropic.com:443","sni":"api.anthropic.com"},{"name":"openai","address":"api.openai.com:443","sni":"api.openai.com"}]}'
 
 admin:
   address:

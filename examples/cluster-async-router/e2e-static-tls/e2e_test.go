@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,18 +95,28 @@ func post(t *testing.T, body string) *http.Response {
 // handshake to the public endpoint. 503 with NR/upstream_connection_failure is
 // what we expect if auto_host_sni cannot read a hostname off the dynamic-module
 // host and ends up sending an empty SNI (which will fail SAN validation).
-func TestStaticTLS_Httpbin(t *testing.T) {
-	resp := post(t, `{"target":"httpbin"}`)
-	defer resp.Body.Close()
-	t.Logf("status=%d", resp.StatusCode)
-	require.Less(t, resp.StatusCode, 500, "TLS handshake to httpbin.org failed; auto_host_sni produced no SNI (dynamic-module host hostname is empty)")
-}
+// rounds is how many full passes through the upstream set the interleaved
+// test performs. Interleaving across targets stresses connection-pool reuse
+// and surfaces SNI caching bugs that a single-target loop would miss.
+const rounds = 3
 
-func TestStaticTLS_Example(t *testing.T) {
-	resp := post(t, `{"target":"example"}`)
-	defer resp.Body.Close()
-	t.Logf("status=%d", resp.StatusCode)
-	require.Less(t, resp.StatusCode, 500, "TLS handshake to example.com failed; auto_host_sni produced no SNI (dynamic-module host hostname is empty)")
+// TestStaticTLS_Interleaved hits httpbin → example → cloudflare repeatedly,
+// rotating the target each iteration. If auto_host_sni leaks one host's
+// hostname as SNI to other hosts in the cluster, at least one target will
+// fail with a SAN matcher mismatch on at least one attempt.
+func TestStaticTLS_Interleaved(t *testing.T) {
+	targets := []string{"httpbin", "example", "cloudflare"}
+	if hosts := os.Getenv("TEST_HOSTS"); hosts != "" {
+		targets = strings.Split(hosts, ",")
+	}
+	for r := 0; r < rounds; r++ {
+		for _, target := range targets {
+			resp := post(t, `{"target":"`+target+`"}`)
+			t.Logf("round=%d target=%s status=%d", r+1, target, resp.StatusCode)
+			resp.Body.Close()
+			require.Less(t, resp.StatusCode, 500, "round=%d target=%s TLS handshake failed", r+1, target)
+		}
+	}
 }
 
 func findSystemCA() string {
