@@ -5,21 +5,10 @@ providers:
     path_prefix: ""
     auth:
       type: bearer
-      secret: env://GITHUB_TOKEN
+      secret_ref: env://GITHUB_TOKEN
 
 models:
-  - match: "gpt-4o-mini"
+  gpt-4o-mini:
     provider: github_models
-
-classify:
-  model_field: model
-  on_miss:
-    status: 404
-    code: orange.model_not_found
-
-translate:
-  strip_request_headers:
-    - authorization
-
-hostpick:
-  upstream_key: orange.upstream
+    metadata:
+      tier: fast

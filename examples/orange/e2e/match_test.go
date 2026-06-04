@@ -73,6 +73,39 @@ func TestMatch_notFoundPath(t *testing.T) {
 	require.Equal(t, "orange.not_found", got.Error.Code)
 }
 
+func TestMatch_getV1Models(t *testing.T) {
+	resp := proxyRequest(t, http.MethodGet, "/v1/models", "")
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("content-type"), "application/json")
+
+	var got struct {
+		Object string `json:"object"`
+		Data   []struct {
+			ID       string         `json:"id"`
+			Object   string         `json:"object"`
+			OwnedBy  string         `json:"owned_by"`
+			Metadata map[string]any `json:"metadata,omitempty"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	require.Equal(t, "list", got.Object)
+	require.Len(t, got.Data, 1)
+	require.Equal(t, "gpt-4o-mini", got.Data[0].ID)
+	require.Equal(t, "model", got.Data[0].Object)
+	require.Equal(t, "github_models", got.Data[0].OwnedBy)
+	require.Equal(t, map[string]any{"tier": "fast"}, got.Data[0].Metadata)
+}
+
+func TestMatch_postV1ModelsNotFound(t *testing.T) {
+	resp := proxyRequest(t, http.MethodPost, "/v1/models", `{}`)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+
+	got := decodeErrorResponse(t, resp.Body)
+	require.Equal(t, "orange.not_found", got.Error.Code)
+}
+
 // TestMatch_wrongMethod verifies that a GET on a known path returns 404
 // (the router only registers POST).
 func TestMatch_wrongMethod(t *testing.T) {

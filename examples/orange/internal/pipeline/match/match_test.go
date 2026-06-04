@@ -2,6 +2,7 @@ package match
 
 import (
 	"encoding/json"
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -253,6 +254,17 @@ func newPostStreamTo(t *testing.T, path string) (*up.Writer, *testutil.FakeFilte
 	return w, h, r, &ctx
 }
 
+func newHeaderStream(t *testing.T, method, path string) (*up.Writer, *testutil.FakeFilterHandle, *up.Request, *any) {
+	t.Helper()
+	hdr := map[string]string{":method": method, ":path": path, ":authority": "orange.local"}
+	h := testutil.NewFilterHandle(testutil.WithHeaders(hdr))
+	w := up.NewWriter(h)
+	r := up.NewRequest(h.RequestHeaders(), FilterName)
+	var ctx any
+	r.Context = &ctx
+	return w, h, r, &ctx
+}
+
 func TestHeaders_messagesPath(t *testing.T) {
 	loadTestConfig(t)
 	w, h, r, ctx := newPostStreamTo(t, pathV1Messages)
@@ -278,6 +290,39 @@ func TestHeaders_getOnKnownPath_404(t *testing.T) {
 	require.Nil(t, ctx, "GET on /v1/chat/completions must not create a promise")
 	require.Len(t, h.LocalResponses, 1)
 	require.EqualValues(t, 404, h.LocalResponses[0].Status)
+}
+
+func TestHeaders_getV1Models_returnsLocalModelList(t *testing.T) {
+	loadTestConfig(t)
+	w, h, r, ctx := newHeaderStream(t, http.MethodGet, pathV1Models)
+
+	router.Dispatch(w, r)
+
+	require.Nil(t, *ctx, "GET /v1/models must not create a stream promise")
+	require.Empty(t, streamObjectNonce(h), "GET /v1/models must not create a stream-object bag")
+	_, ok := h.Metadata(MetadataNamespace, MetadataKeyModel)
+	require.False(t, ok, "GET /v1/models must not write routing metadata")
+
+	_, ok = h.FilterStateString(StateModel)
+	require.False(t, ok, "GET /v1/models must not write routing filter state")
+	authority := h.RequestHeaders().GetOne(":authority").ToString()
+	require.Equal(t, "orange.local", authority, "GET /v1/models must not rewrite :authority")
+
+	require.Len(t, h.LocalResponses, 1)
+	resp := h.LocalResponses[0]
+	require.EqualValues(t, http.StatusOK, resp.Status)
+	require.Equal(t, [2]string{"content-type", "application/json"}, resp.Headers[0])
+
+	var got config.V1ModelList
+	require.NoError(t, json.Unmarshal(resp.Body, &got))
+	require.Equal(t, "list", got.Object)
+	require.Len(t, got.Data, 4)
+	require.Equal(t, "claude-3-5-sonnet-20241022", got.Data[0].ID)
+	require.Equal(t, "claude-sonnet", got.Data[1].ID)
+	require.Equal(t, "gpt-4o-mini", got.Data[2].ID)
+	require.Equal(t, "groq/llama-3.1-8b-instant", got.Data[3].ID)
+	require.Equal(t, "openai_direct", got.Data[2].OwnedBy)
+	require.Equal(t, map[string]any{"tier": "fast"}, got.Data[2].Metadata)
 }
 
 func TestHeaders_postUnknownPath_404(t *testing.T) {
@@ -373,6 +418,132 @@ func TestBody_filterStatePopulated(t *testing.T) {
 	provider, ok := h.FilterStateString(StateProvider)
 	require.True(t, ok)
 	require.Equal(t, "openai", provider)
+
+	down.DropStreamObjectBag(streamObjectNonce(h))
+}
+
+// --- POST /v1/responses tests ---
+
+// runResponsesFlow runs the match pipeline for POST /v1/responses.
+func runResponsesFlow(t *testing.T, body []byte) (*testutil.FakeFilterHandle, *up.StreamPromise[Decision]) {
+	t.Helper()
+	hdr := map[string]string{
+		":method":      "POST",
+		":path":        pathV1Responses,
+		"content-type": "application/json",
+	}
+	h := testutil.NewFilterHandle(testutil.WithHeaders(hdr))
+	w := up.NewWriter(h)
+	r := up.NewRequest(h.RequestHeaders(), FilterName)
+	var ctx any
+	r.Context = &ctx
+	router.Dispatch(w, r)
+	if body == nil {
+		p, _ := ctx.(*up.StreamPromise[Decision])
+		return h, p
+	}
+	chunk := &up.BodyChunk{Data: body, EndStream: true, Context: &ctx}
+	bodyHandler(w, chunk)
+	p, _ := ctx.(*up.StreamPromise[Decision])
+	return h, p
+}
+
+func TestResponses_knownModel_resolvesUpstreamWithEndpoint(t *testing.T) {
+	loadTestConfig(t)
+	body := []byte(`{"model":"gpt-4o-mini","input":"hello"}`)
+	h, p := runResponsesFlow(t, body)
+
+	require.Empty(t, h.LocalResponses, "unexpected local response")
+
+	res, ok := p.Result()
+	require.True(t, ok, "promise not resolved")
+	require.Empty(t, res.Err)
+	require.Equal(t, "openai_direct", res.Provider)
+	require.Equal(t, "openai", res.Kind)
+	require.Equal(t, "gpt-4o-mini", res.Model)
+	require.Equal(t, EndpointResponses, res.Endpoint, "endpoint must be 'responses'")
+
+	ep, ok := h.Metadata(MetadataNamespace, MetadataKeyEndpoint)
+	require.True(t, ok, "endpoint metadata must be written by Apply")
+	require.Equal(t, EndpointResponses, ep)
+
+	epState, ok := h.FilterStateString(StateEndpoint)
+	require.True(t, ok, "endpoint filter state must be written by Apply")
+	require.Equal(t, EndpointResponses, epState)
+
+	down.DropStreamObjectBag(streamObjectNonce(h))
+}
+
+func TestResponses_missingModel_400(t *testing.T) {
+	loadTestConfig(t)
+	body := []byte(`{"input":"hello"}`)
+	h, p := runResponsesFlow(t, body)
+
+	require.Len(t, h.LocalResponses, 1)
+	require.EqualValues(t, 400, h.LocalResponses[0].Status)
+
+	var got struct {
+		Error struct{ Code string `json:"code"` } `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(h.LocalResponses[0].Body, &got))
+	require.Equal(t, ErrModelRequired, got.Error.Code)
+
+	res, _ := p.Result()
+	require.Equal(t, ErrModelRequired, res.Err)
+	down.DropStreamObjectBag(streamObjectNonce(h))
+}
+
+func TestResponses_unknownModel_404(t *testing.T) {
+	loadTestConfig(t)
+	body := []byte(`{"model":"gpt-99-turbo","input":"hello"}`)
+	h, p := runResponsesFlow(t, body)
+
+	require.Len(t, h.LocalResponses, 1)
+	require.EqualValues(t, 404, h.LocalResponses[0].Status)
+
+	var got struct {
+		Error struct{ Code string `json:"code"` } `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(h.LocalResponses[0].Body, &got))
+	require.Equal(t, ErrUnknownModel, got.Error.Code)
+
+	res, _ := p.Result()
+	require.Equal(t, ErrUnknownModel, res.Err)
+	down.DropStreamObjectBag(streamObjectNonce(h))
+}
+
+// TestGetV1Responses_WebSocketPassthrough verifies that GET /v1/responses is
+// handled by the passthrough handler (no promise, no local response).
+func TestGetV1Responses_WebSocketPassthrough(t *testing.T) {
+	loadTestConfig(t)
+	hdr := map[string]string{":method": "GET", ":path": pathV1Responses, ":authority": "orange.local"}
+	h := testutil.NewFilterHandle(testutil.WithHeaders(hdr))
+	w := up.NewWriter(h)
+	r := up.NewRequest(h.RequestHeaders(), FilterName)
+	var ctx any
+	r.Context = &ctx
+
+	router.Dispatch(w, r)
+
+	require.Nil(t, ctx, "GET /v1/responses must not create a promise")
+	require.Empty(t, h.LocalResponses, "GET /v1/responses must not send a local response (WS passthrough)")
+}
+
+// TestChatCompletions_endpointMetadata verifies that the existing chat
+// completions flow writes EndpointChatCompletions (regression guard).
+func TestChatCompletions_endpointMetadata(t *testing.T) {
+	loadTestConfig(t)
+	body := []byte(`{"model":"gpt-4o-mini","messages":[]}`)
+	h, p := runFlow(t, body)
+
+	require.Empty(t, h.LocalResponses)
+	res, ok := p.Result()
+	require.True(t, ok)
+	require.Equal(t, EndpointChatCompletions, res.Endpoint)
+
+	ep, ok := h.Metadata(MetadataNamespace, MetadataKeyEndpoint)
+	require.True(t, ok)
+	require.Equal(t, EndpointChatCompletions, ep)
 
 	down.DropStreamObjectBag(streamObjectNonce(h))
 }

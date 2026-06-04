@@ -1,6 +1,6 @@
 // Package match is the downstream HTTP filter for orange.
 //
-// On a POST to /v1/chat/completions or /v1/messages it:
+// On a POST to /v1/chat/completions, /v1/messages, or /v1/responses it:
 //   - stores a new [*up.StreamPromise[Decision]] in the per-stream object bag
 //     via [DecisionKey].Set at headers phase. pick reads it in ChooseHost
 //     via [DecisionKey].GetFromCtx and waits until match resolves it.
@@ -37,6 +37,7 @@ type Decision struct {
 	Kind         string // provider kind, e.g. "openai"
 	Model        string // client-facing model ID, kept for telemetry
 	BackendModel string // resolved backend model name (from models[].name, or == Model if unset)
+	Endpoint     string // endpoint discriminator, e.g. EndpointChatCompletions
 	Err          string
 }
 
@@ -45,16 +46,22 @@ func (d Decision) Apply(w *up.Writer) {
 	w.SetFilterState(StateModel, d.Model)
 	w.SetFilterState(StateUpstream, d.Provider)
 	w.SetFilterState(StateProvider, d.Kind)
+	w.SetFilterState(StateEndpoint, d.Endpoint)
 	w.SetMetadata(MetadataNamespace, MetadataKeyModel, d.Model)
 	w.SetMetadata(MetadataNamespace, MetadataKeyUpstream, d.Provider)
 	w.SetMetadata(MetadataNamespace, MetadataKeyProvider, d.Kind)
 	w.SetMetadata(MetadataNamespace, MetadataKeyBackendModel, d.BackendModel)
+	w.SetMetadata(MetadataNamespace, MetadataKeyEndpoint, d.Endpoint)
 }
 
 // DecisionKey is the typed stream-object key match uses to store the
 // per-request promise. pick calls DecisionKey.GetFromCtx to retrieve it
 // without a string literal or a type assertion.
 var DecisionKey = up.NewStreamKey[*up.StreamPromise[Decision]]("orange.decision")
+
+// EndpointKey stores the endpoint discriminator so bodyHandler can read it
+// without the original request path being available.
+var EndpointKey = up.NewStreamKey[string]("orange.endpoint")
 
 const (
 	FilterName = "orange-match"
@@ -63,6 +70,7 @@ const (
 	StateUpstream = "orange.upstream"
 	StateProvider = "orange.provider"
 	StateModel    = "orange.model"
+	StateEndpoint = "orange.endpoint"
 
 	// Dynamic metadata — readable by upstream HTTP filters (adapt).
 	MetadataNamespace       = "orange"
@@ -70,9 +78,17 @@ const (
 	MetadataKeyProvider     = "provider"
 	MetadataKeyModel        = "model"
 	MetadataKeyBackendModel = "backend_model"
+	MetadataKeyEndpoint     = "endpoint"
+
+	// Endpoint discriminator values carried on Decision.Endpoint.
+	EndpointChatCompletions = "chat_completions"
+	EndpointMessages        = "messages"
+	EndpointResponses       = "responses"
 
 	pathV1ChatCompletions = "/v1/chat/completions"
 	pathV1Messages        = "/v1/messages"
+	pathV1Models          = "/v1/models"
+	pathV1Responses       = "/v1/responses"
 
 	// ErrModelRequired and ErrUnknownModel are the orange.* codes published on
 	// Decision.Err. They mirror the error response codes.
@@ -91,8 +107,11 @@ const (
 var router = up.NewRouter(func(w *up.Writer, r *up.Request) {
 	send.Errorf(w, http.StatusNotFound, send.NotFoundError, ErrNotFound, "no handler for %s %s", r.Method, r.Path)
 }).
-	POST(pathV1ChatCompletions, tagRequest).
-	POST(pathV1Messages, tagRequest)
+	GET(pathV1Models, listModels).
+	POST(pathV1ChatCompletions, tagRequestForEndpoint(EndpointChatCompletions)).
+	POST(pathV1Messages, tagRequestForEndpoint(EndpointMessages)).
+	POST(pathV1Responses, tagRequestForEndpoint(EndpointResponses)).
+	GET(pathV1Responses, func(*up.Writer, *up.Request) {}) // passthrough for WS upgrades → orange-ws sidecar
 
 func init() {
 	up.Register(FilterName, router.Dispatch,
@@ -101,16 +120,29 @@ func init() {
 		up.WithOnStreamComplete(onStreamComplete))
 }
 
-func tagRequest(w *up.Writer, r *up.Request) {
-	if r.Context == nil {
-		panic("BUG: r.Context is nil; SDK must provide a per-stream context slot")
+// tagRequestForEndpoint returns a headers-phase handler that stores the
+// per-stream promise and endpoint discriminator in the stream-object bag.
+func tagRequestForEndpoint(endpoint string) func(*up.Writer, *up.Request) {
+	return func(w *up.Writer, r *up.Request) {
+		if r.Context == nil {
+			panic("BUG: r.Context is nil; SDK must provide a per-stream context slot")
+		}
+		p := up.NewStreamPromise[Decision]()
+		*r.Context = p
+		// Store the promise and endpoint in the per-stream object bag.
+		// pick reads DecisionKey.GetFromCtx to retrieve the promise.
+		// bodyHandler reads EndpointKey.Get to populate Decision.Endpoint.
+		DecisionKey.Set(w, p)
+		EndpointKey.Set(w, endpoint)
+		w.Slog().Info("Received headers", "authority_in", r.Host, "endpoint", endpoint)
 	}
-	p := up.NewStreamPromise[Decision]()
-	*r.Context = p
-	// Store the promise in the per-stream object bag.
-	// pick reads it in ChooseHost via DecisionKey.GetFromCtx.
-	DecisionKey.Set(w, p)
-	w.Slog().Info("Received headers", "authority_in", r.Host)
+}
+
+func listModels(w *up.Writer, _ *up.Request) {
+	if err := send.JSON(w, http.StatusOK, config.Get().OpenAIV1Models()); err != nil {
+		w.Slog().Error("Failed to marshal model list", "err", err)
+		send.Error(w, http.StatusInternalServerError, send.InternalServerError, "orange.internal_error", "failed to encode model list")
+	}
 }
 
 func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
@@ -128,10 +160,12 @@ func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 	// idle timeout, foreign local reply. The SDK's Primitive A owns bag
 	// lifetime; no manual Delete is needed here.
 
+	endpoint, _ := EndpointKey.Get(w)
+
 	model := gjson.GetBytes(chunk.Data, "model").String()
 	if model == "" {
 		w.Slog().Warn("Received body missing model", "endStream", chunk.EndStream)
-		p.Resolve(Decision{Err: ErrModelRequired})
+		p.Resolve(Decision{Endpoint: endpoint, Err: ErrModelRequired})
 		send.Error(w, http.StatusBadRequest, send.InvalidRequestError, ErrModelRequired, "request body is missing the `model` field")
 		return
 	}
@@ -140,7 +174,7 @@ func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 	upstream, backendModel := cfg.LookupModel(model)
 	if upstream == "" {
 		w.Slog().Warn("Received body unknown model", "model", model)
-		p.Resolve(Decision{Err: ErrUnknownModel})
+		p.Resolve(Decision{Endpoint: endpoint, Err: ErrUnknownModel})
 		send.Errorf(w, http.StatusNotFound, send.InvalidRequestError, ErrUnknownModel, "no upstream configured for model %s", model)
 		return
 	}
@@ -149,10 +183,10 @@ func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 	// Host header. SNI is driven by the selected host's configured hostname.
 	w.SetRequestHeader(up.HeaderAuthority, provider.Host())
 
-	d := Decision{Provider: upstream, Kind: provider.Kind, Model: model, BackendModel: backendModel}
+	d := Decision{Provider: upstream, Kind: provider.Kind, Model: model, BackendModel: backendModel, Endpoint: endpoint}
 	d.Apply(w)
 
-	w.Slog().Info("Received body resolved", "model", model, "backend_model", backendModel, "provider", upstream, "host", provider.Host(), "kind", provider.Kind)
+	w.Slog().Info("Received body resolved", "model", model, "backend_model", backendModel, "provider", upstream, "host", provider.Host(), "kind", provider.Kind, "endpoint", endpoint)
 	p.Resolve(d)
 }
 

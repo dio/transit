@@ -24,6 +24,8 @@ providers:
 models:
   gpt-4o-mini:
     provider: openai_direct
+    metadata:
+      tier: fast
   claude-3-5-sonnet-20241022:
     provider: anthropic_direct
   claude-sonnet:
