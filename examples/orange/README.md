@@ -6,19 +6,20 @@ backend's native schema, injects the right provider credential, and performs
 TLS per provider off a single dynamic cluster.
 
 ```
-client ──► :8080/v1/chat/completions ──► match (body: model=…)
-                                          │  rewrites :authority → provider host
-                                          ▼
-                                       pick.ChooseHost
-                                          │  (waits on match promise)
-                                          ▼
-                                       orange_default cluster
-                                          │  (auto_host_sni derives SNI
-                                          │   from :authority rewritten by match)
-                              ┌───────────┴────────────┐
-                              ▼                        ▼
-                       api.openai.com            api.anthropic.com
-                       (Bearer ...)              (x-api-key + anthropic-version)
+client ──► localhost:8080/v1/chat/completions  ┐
+           localhost:8080/v1/responses         ├─► match (body: model=…)
+           localhost:8080/v1/messages          ┘    │  rewrites :authority → provider host
+                                                    ▼
+                                               pick.ChooseHost
+                                                    │  (waits on match promise)
+                                                    ▼
+                                               orange_default cluster
+                                                    │  (auto_host_sni derives SNI
+                                                    │   from :authority rewritten by match)
+                                         ┌──────────┴────────────┐
+                                         ▼                        ▼
+                                  api.openai.com            api.anthropic.com
+                                  (Bearer ...)              (x-api-key + anthropic-version)
 ```
 
 Four dynamic modules ship in one `.so`:
@@ -88,7 +89,7 @@ providers:
 models:
   gpt-4o-mini:
     provider: openai
-  claude-3-5-haiku-latest:
+  claude-haiku-4-5:
     provider: anthropic
 ```
 
@@ -112,29 +113,89 @@ make demo     # builds the .so, renders envoy.yaml, prints curl examples,
 Then from another shell:
 
 ```bash
-# OpenAI
-curl -s :8080/v1/chat/completions -H 'content-type: application/json' \
+# OpenAI Chat Completions
+curl -s localhost:8080/v1/chat/completions -H 'content-type: application/json' \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}'
 
-# Anthropic
-curl -s :8080/v1/messages -H 'content-type: application/json' \
-  -d '{"model":"claude-3-5-haiku-latest","max_tokens":32,
-       "messages":[{"role":"user","content":"hi"}]}'
+# OpenAI Responses API — non-streaming
+curl -s localhost:8080/v1/responses -H 'content-type: application/json' \
+  -d '{"model":"gpt-4o-mini","input":"hi"}'
 
-# Streaming (SSE) — add -N to curl, "stream": true to the body.
-curl -N -s :8080/v1/chat/completions -H 'content-type: application/json' \
+# OpenAI Chat Completions — streaming (SSE)
+curl -N -s localhost:8080/v1/chat/completions -H 'content-type: application/json' \
   -d '{"model":"gpt-4o-mini","stream":true,
        "messages":[{"role":"user","content":"count 1 to 5"}]}'
+
+# OpenAI Responses API — streaming (SSE)
+curl -N -s localhost:8080/v1/responses -H 'content-type: application/json' \
+  -d '{"model":"gpt-4o-mini","stream":true,"input":"count 1 to 5"}'
+
+# Anthropic Messages
+curl -s localhost:8080/v1/messages -H 'content-type: application/json' \
+  -d '{"model":"claude-haiku-4-5","max_tokens":32,
+       "messages":[{"role":"user","content":"hi"}]}'
+
+# Anthropic Messages — streaming (SSE)
+curl -N -s localhost:8080/v1/messages -H 'content-type: application/json' \
+  -d '{"model":"claude-haiku-4-5","max_tokens":64,"stream":true,
+       "messages":[{"role":"user","content":"count 1 to 5"}]}'
 ```
+
+## Codex CLI support
+
+Orange handles all three endpoints Codex targets:
+
+- `POST /v1/responses` — HTTP non-streaming and SSE (Responses API passthrough)
+- `GET /v1/responses` — WebSocket upgrades through `orange-ws`
+- `POST /v1/chat/completions` — Chat Completions fallback
+
+Run Codex against orange without a Codex-side provider key — orange injects the
+real upstream credentials from `orange.yaml`.
+
+**Terminal 1** — start the proxy:
+
+```bash
+make demo
+```
+
+**Terminal 2** — run Codex through orange:
+
+```bash
+codex \
+  -c model_provider=orange \
+  -c 'model_providers.orange.name="Orange"' \
+  -c 'model_providers.orange.base_url="http://localhost:8080/v1"' \
+  -c 'model_providers.orange.wire_api="responses"' \
+  --model gpt-4o-mini
+```
+
+For one-shot non-interactive mode, append the prompt:
+
+```bash
+codex \
+  -c model_provider=orange \
+  -c 'model_providers.orange.name="Orange"' \
+  -c 'model_providers.orange.base_url="http://localhost:8080/v1"' \
+  -c 'model_providers.orange.wire_api="responses"' \
+  --model gpt-4o-mini \
+  "write a hello-world HTTP server in Go"
+```
+
+After the first prompt, `curl -s localhost:9901/stats | grep orange_` should
+show non-zero `orange_input_tokens` and `orange_output_tokens`, confirming
+orange-meter saw the response.
 
 Error paths (handled by `match`, no upstream contacted):
 
 ```bash
 # Missing model field → 400 orange.model_required
-curl -i :8080/v1/chat/completions -H 'content-type: application/json' -d '{}'
+curl -i localhost:8080/v1/chat/completions -H 'content-type: application/json' -d '{}'
+curl -i localhost:8080/v1/responses        -H 'content-type: application/json' -d '{}'
 
 # Unknown model → 404 orange.model_not_found
-curl -i :8080/v1/chat/completions -H 'content-type: application/json' \
+curl -i localhost:8080/v1/chat/completions -H 'content-type: application/json' \
+  -d '{"model":"gemini-1.5"}'
+curl -i localhost:8080/v1/responses -H 'content-type: application/json' \
   -d '{"model":"gemini-1.5"}'
 ```
 
@@ -143,10 +204,10 @@ curl -i :8080/v1/chat/completions -H 'content-type: application/json' \
 ```bash
 # Per-host TLS handshakes — both providers should tick after their first
 # curl; cx_connect_fail should stay 0.
-curl -s :9901/clusters | grep orange_default:: | grep -E 'cx_(total|connect_fail)'
+curl -s localhost:9901/clusters | grep orange_default:: | grep -E 'cx_(total|connect_fail)'
 
 # Token usage counters emitted by orange-meter.
-curl -s :9901/stats | grep orange_
+curl -s localhost:9901/stats | grep orange_
 
 # Routing decisions are logged by match / pick / adapt at info level.
 # Watch the `make demo` foreground; look for slog lines from each module.
@@ -195,3 +256,4 @@ orange.yaml      runtime config (providers, models)
 | M5 — multi-backend translators (Azure, Bedrock, Vertex, Groq, DeepInfra) | done |
 | M6 — meter: token counting via Envoy counters | done |
 | M7 — `make demo` + this README | done |
+| M8 — `POST /v1/responses` HTTP path for Codex CLI chat/non-interactive mode | done |

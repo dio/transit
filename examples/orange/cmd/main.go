@@ -10,6 +10,7 @@ import (
 	_ "github.com/dio/transit/examples/orange/internal/pipeline/match"
 	_ "github.com/dio/transit/examples/orange/internal/pipeline/meter"
 	_ "github.com/dio/transit/examples/orange/internal/pipeline/pick"
+	_ "github.com/dio/transit/examples/orange/internal/pipeline/ws"
 	_ "github.com/dio/transit/examples/orange/internal/translator"
 )
 

@@ -23,33 +23,30 @@ endif
 .PHONY: build build-linux-amd64 build-linux-arm64 test e2e run demo clean download-envoy
 
 build: $(ZIG_BIN)
-	@mkdir -p $(ROOT)/.bin
-	cd $(ROOT)/.bin && $(ZIG_BUILD_ENV) \
-	  go build -trimpath -buildmode=c-shared \
-	    -o $(CURDIR)/$(OUTPUT) $(ROOT)/examples/$(EXAMPLE)/cmd
+	cd $(ROOT)/examples && $(ZIG_BUILD_ENV) \
+	  GOWORK=off go build -trimpath -buildmode=c-shared \
+	    -o $(CURDIR)/$(OUTPUT) ./$(EXAMPLE)/cmd
 	@echo "built: $(OUTPUT)"
 
 build-linux-amd64: $(ZIG_BIN)
-	@mkdir -p $(ROOT)/.bin
-	cd $(ROOT)/.bin && $(ZIG_BUILD_ENV_LINUX_AMD64) \
-	  go build -trimpath -buildmode=c-shared \
-	    -o $(CURDIR)/$(OUTPUT:.so=.linux-amd64.so) $(ROOT)/examples/$(EXAMPLE)/cmd
+	cd $(ROOT)/examples && $(ZIG_BUILD_ENV_LINUX_AMD64) \
+	  GOWORK=off go build -trimpath -buildmode=c-shared \
+	    -o $(CURDIR)/$(OUTPUT:.so=.linux-amd64.so) ./$(EXAMPLE)/cmd
 	@echo "built: $(OUTPUT:.so=.linux-amd64.so)"
 
 build-linux-arm64: $(ZIG_BIN)
-	@mkdir -p $(ROOT)/.bin
-	cd $(ROOT)/.bin && $(ZIG_BUILD_ENV_LINUX_ARM64) \
-	  go build -trimpath -buildmode=c-shared \
-	    -o $(CURDIR)/$(OUTPUT:.so=.linux-arm64.so) $(ROOT)/examples/$(EXAMPLE)/cmd
+	cd $(ROOT)/examples && $(ZIG_BUILD_ENV_LINUX_ARM64) \
+	  GOWORK=off go build -trimpath -buildmode=c-shared \
+	    -o $(CURDIR)/$(OUTPUT:.so=.linux-arm64.so) ./$(EXAMPLE)/cmd
 	@echo "built: $(OUTPUT:.so=.linux-arm64.so)"
 
 test:
-	cd $(ROOT)/examples && go test ./$(EXAMPLE)/...
+	cd $(ROOT)/examples && GOWORK=off go test ./$(EXAMPLE)/...
 
 e2e: build
 	cd $(ROOT)/examples && \
 	  GITHUB_TOKEN=$${GITHUB_TOKEN:-$$(gh auth token 2>/dev/null)} \
-	  ENVOY_BIN=$(ENVOY_BIN) go test ./$(EXAMPLE)/e2e/... -v -timeout=90s -count=1
+	  ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./$(EXAMPLE)/e2e/... -v -timeout=90s -count=1
 
 run: build $(ENVOY_BIN) $(CURDIR)/envoy.yaml
 	@if [ -z "$$OPENAI_API_KEY" ]; then echo "OPENAI_API_KEY is unset (env://OPENAI_API_KEY in orange.yaml will fail Envoy boot)"; exit 1; fi
@@ -66,23 +63,47 @@ demo:
 	@echo "============================================================"
 	@echo " orange — multi-provider LLM proxy demo"
 	@echo "============================================================"
-	@echo " Listener  : http://127.0.0.1:8080"
-	@echo " Admin     : http://127.0.0.1:9901"
+	@echo " Listener  : http://localhost:8080"
+	@echo " Admin     : http://localhost:9901"
 	@echo ""
 	@echo " Try (from another shell):"
 	@echo ""
-	@echo "   # OpenAI (gpt-4o-mini → routed to api.openai.com)"
-	@echo "   curl -s :8080/v1/chat/completions -H 'content-type: application/json' \\"
+	@echo "   # OpenAI Chat Completions (gpt-4o-mini → api.openai.com)"
+	@echo "   curl -s localhost:8080/v1/chat/completions -H 'content-type: application/json' \\"
 	@echo "     -d '{\"model\":\"gpt-4o-mini\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'"
 	@echo ""
-	@echo "   # Anthropic (claude-haiku-4-5 → routed to api.anthropic.com)"
-	@echo "   curl -s :8080/v1/messages -H 'content-type: application/json' \\"
+	@echo "   # OpenAI Responses API — non-streaming"
+	@echo "   curl -s localhost:8080/v1/responses -H 'content-type: application/json' \\"
+	@echo "     -d '{\"model\":\"gpt-4o-mini\",\"input\":\"hi\"}'"
+	@echo ""
+	@echo "   # OpenAI Chat Completions — streaming (SSE)"
+	@echo "   curl -N -s localhost:8080/v1/chat/completions -H 'content-type: application/json' \\"
+	@echo "     -d '{\"model\":\"gpt-4o-mini\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"count 1 to 5\"}]}'"
+	@echo ""
+	@echo "   # OpenAI Responses API — streaming (SSE)"
+	@echo "   curl -N -s localhost:8080/v1/responses -H 'content-type: application/json' \\"
+	@echo "     -d '{\"model\":\"gpt-4o-mini\",\"stream\":true,\"input\":\"count 1 to 5\"}'"
+	@echo ""
+	@echo "   # Anthropic Messages (claude-haiku-4-5 → api.anthropic.com)"
+	@echo "   curl -s localhost:8080/v1/messages -H 'content-type: application/json' \\"
 	@echo "     -d '{\"model\":\"claude-haiku-4-5\",\"max_tokens\":32,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'"
 	@echo ""
-	@echo "   # Streaming (SSE): add -N to curl and \"stream\": true to the body."
+	@echo "   # Anthropic Messages — streaming (SSE)"
+	@echo "   curl -N -s localhost:8080/v1/messages -H 'content-type: application/json' \\"
+	@echo "     -d '{\"model\":\"claude-haiku-4-5\",\"max_tokens\":64,\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"count 1 to 5\"}]}'"
 	@echo ""
-	@echo "   # Per-host TLS counters (both should tick after the curls above):"
-	@echo "   curl -s :9901/clusters | grep orange_default:: | grep cx_total"
+	@echo "   # Codex CLI through orange (uses Responses API path):"
+	@echo "   codex -c model_provider=orange \\"
+	@echo "     -c 'model_providers.orange.name=\"Orange\"' \\"
+	@echo "     -c 'model_providers.orange.base_url=\"http://localhost:8080/v1\"' \\"
+	@echo "     -c 'model_providers.orange.wire_api=\"responses\"' \\"
+	@echo "     --model gpt-4o-mini"
+	@echo ""
+	@echo "   # Token usage counters (should tick after each request):"
+	@echo "   curl -s localhost:9901/stats | grep orange_"
+	@echo ""
+	@echo "   # Per-host TLS counters:"
+	@echo "   curl -s localhost:9901/clusters | grep orange_default:: | grep cx_total"
 	@echo "============================================================"
 	@$(MAKE) run
 

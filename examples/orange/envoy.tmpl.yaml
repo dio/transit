@@ -22,6 +22,9 @@ static_resources:
               typed_config:
                 "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
                 stat_prefix: orange
+                # Required for WebSocket upgrade support on the inbound path.
+                upgrade_configs:
+                  - upgrade_type: websocket
                 http_filters:
                   - name: orange-match
                     typed_config:
@@ -29,6 +32,16 @@ static_resources:
                       dynamic_module_config:
                         name: orange
                       filter_name: orange-match
+                      filter_config:
+                        "@type": type.googleapis.com/google.protobuf.StringValue
+                        value: '{}'
+                  # orange-ws: no-op for HTTP; its WithGroup starts the WS sidecar.
+                  - name: orange-ws
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: orange
+                      filter_name: orange-ws
                       filter_config:
                         "@type": type.googleapis.com/google.protobuf.StringValue
                         value: '{}'
@@ -69,6 +82,63 @@ static_resources:
                     - name: local
                       domains: ["*"]
                       routes:
+                        # WebSocket upgrades to /v1/responses → orange-ws sidecar loopback.
+                        # timeout: 0s disables the route-level timeout for long-lived WS tunnels.
+                        # Both upgrade_configs here and on the HCM are required.
+                        - match:
+                            prefix: /v1/responses
+                            headers:
+                              - name: upgrade
+                                string_match: { exact: websocket }
+                                treat_missing_header_as_empty: false
+                          route:
+                            cluster: orange-ws-loopback
+                            timeout: 0s
+                            upgrade_configs:
+                              - upgrade_type: websocket
+                        - match: { prefix: "/" }
+                          route: { cluster: orange_default }
+
+    # orange-ws egress listener: receives WebSocket dials from the orange-ws sidecar.
+    # orange-ws-egress-match validates/strips internal headers and writes Orange
+    # decision state before routing through orange_default (pick + adapt + meter).
+    - name: orange-ws-egress
+      address:
+        socket_address: { address: 127.0.0.1, port_value: 10003 }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: orange_ws_egress
+                upgrade_configs:
+                  - upgrade_type: websocket
+                http_filters:
+                  - name: orange-ws-egress-match
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: orange
+                      filter_name: orange-ws-egress-match
+                      filter_config:
+                        "@type": type.googleapis.com/google.protobuf.StringValue
+                        value: '{}'
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: orange_ws_egress
+                  virtual_hosts:
+                    - name: egress
+                      domains: ["*"]
+                      routes:
+                        - match:
+                            prefix: /v1/responses
+                          route:
+                            cluster: orange_default
+                            timeout: 0s
+                            upgrade_configs:
+                              - upgrade_type: websocket
                         - match: { prefix: "/" }
                           route: { cluster: orange_default }
 
@@ -125,6 +195,19 @@ static_resources:
           cluster_config:
             "@type": type.googleapis.com/google.protobuf.StringValue
             value: '{}'
+
+    # orange-ws-loopback: static cluster pointing at the orange-ws sidecar.
+    # Port must match ORANGE_WS_LISTEN_ADDR (default 127.0.0.1:10002).
+    - name: orange-ws-loopback
+      type: STATIC
+      connect_timeout: 5s
+      load_assignment:
+        cluster_name: orange-ws-loopback
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: 127.0.0.1, port_value: 10002 }
 
 admin:
   address:
