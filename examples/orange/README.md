@@ -140,6 +140,49 @@ place — keeping existing `HostPtr`s when the IP set is unchanged (so the
 round-robin counter doesn't reset), only churning when an IP actually
 appears or disappears. A transient DNS failure never evicts a healthy host.
 
+### The Envoy patch this depends on
+
+Stock Envoy *almost* makes this work, but two gaps prevent it from being
+correct in production. Both are closed by a private patch maintained
+alongside Orange:
+
+[**`auto-host-sni-bounded-sni-session-cache.patch`**](https://gist.github.com/dio/965d1e555909c02013ca882a2b3caa78)
+
+It does two things:
+
+1. **Dynamic-module hostnames for `auto_host_sni`.** The legacy
+   add-hosts ABI accepted only an address, so hosts created at runtime
+   ended up with a synthesized hostname like `<cluster>+<addr>` — which
+   `auto_host_sni` then dutifully used as the (wrong) SNI. The patch
+   adds `envoy_dynamic_module_callback_cluster_add_hosts_with_hostnames`
+   so `pick.AddHosts` can supply the *logical* hostname (e.g.
+   `api.openai.com`) that `Upstream::HostDescription::hostname()`
+   returns, and that `auto_host_sni` / `auto_sni_san_validation` read at
+   handshake time. No `transport_socket_matches`, no xDS per host.
+2. **Bounded, SNI-scoped upstream TLS session cache.** Envoy's default
+   upstream session cache is keyed at `ClientContextImpl` scope. With a
+   shared `UpstreamTlsContext` that talks to many SNI names, that means
+   a session issued for `api.openai.com` could be offered when
+   connecting to `api.anthropic.com` — incorrect, and in practice a
+   handshake/verify failure waiting to happen. The patch replaces the
+   single deque with an LRU keyed by *effective SNI* (bounded to 128
+   distinct names, one most-recent session per name), so resumption
+   never crosses an SNI boundary.
+
+The patch also includes the router-side fix needed for async host
+selection: `TransportSocketOptions` is rebuilt after `ChooseHost`
+resolves, so filter-state-driven socket options written during body
+processing still reach the upstream handshake. Without that fix the
+`ClusterLBCompletion` pattern `pick` uses can lose its TSO between
+header phase and connection-pool open.
+
+It applies cleanly to Envoy `0d6e3c60aa55e434f28e581df1d25fcb83404b68`
+and ships with unit coverage (`ClientSessionCacheIsScopedBySni`,
+`ClientSessionCacheEvictsLeastRecentlyUsedSniAfterHardcodedBound`, plus
+ABI tests for the new hostname entrypoint). The intended upstream shape
+is to surface the cache bounds in the TLS `.proto` — this patch
+hardcodes 128 to keep the diff small while validating the design.
+
 ## MCP support
 
 Orange speaks the [MCP streamable-HTTP](https://modelcontextprotocol.io)
