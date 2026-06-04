@@ -234,7 +234,7 @@ Once that wiring is enabled, run:
 export ORANGE_MCP_SESSION_ID='<session printed by initialize>'
 
 ./mcp-demo profile=default list
-./mcp-demo profile=default call kiwi__search-flight '{"origin":"SFO","destination":"JFK"}'
+./mcp-demo profile=default call kiwi__search-flight '{"flyFrom":"SFO","flyTo":"JFK","departureDate":"10/06/2026"}'
 ./mcp-demo profile=default stream
 ./mcp-demo profile=default delete
 ```
