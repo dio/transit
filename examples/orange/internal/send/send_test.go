@@ -81,3 +81,50 @@ func TestErrorf_formatsMessage(t *testing.T) {
 	require.Equal(t, "orange.model_not_found", body.Error.Code)
 	require.Equal(t, [2]string{"content-type", "application/json"}, resp.Headers[0])
 }
+
+func TestJSON_statusBodyAndContentType(t *testing.T) {
+	w, h := newWriter()
+
+	err := send.JSON(w, http.StatusOK, map[string]any{
+		"object": "list",
+		"data":   []string{"gpt-4o-mini"},
+	})
+	require.NoError(t, err)
+
+	require.Len(t, h.LocalResponses, 1)
+	resp := h.LocalResponses[0]
+	require.Equal(t, uint32(http.StatusOK), resp.Status)
+	require.Equal(t, [2]string{"content-type", "application/json"}, resp.Headers[0])
+
+	var got struct {
+		Object string   `json:"object"`
+		Data   []string `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(resp.Body, &got))
+	require.Equal(t, "list", got.Object)
+	require.Equal(t, []string{"gpt-4o-mini"}, got.Data)
+}
+
+func TestJSON_extraHeadersAppendedAfterContentType(t *testing.T) {
+	w, h := newWriter()
+
+	err := send.JSON(w, http.StatusOK, map[string]string{"ok": "true"},
+		[2]string{"cache-control", "no-store"},
+		[2]string{"x-request-id", "abc123"},
+	)
+	require.NoError(t, err)
+
+	resp := h.LocalResponses[0]
+	require.Len(t, resp.Headers, 3)
+	require.Equal(t, [2]string{"content-type", "application/json"}, resp.Headers[0])
+	require.Equal(t, [2]string{"cache-control", "no-store"}, resp.Headers[1])
+	require.Equal(t, [2]string{"x-request-id", "abc123"}, resp.Headers[2])
+}
+
+func TestJSON_marshalErrorDoesNotSendPartialResponse(t *testing.T) {
+	w, h := newWriter()
+
+	err := send.JSON(w, http.StatusOK, map[string]any{"bad": func() {}})
+	require.Error(t, err)
+	require.Empty(t, h.LocalResponses)
+}

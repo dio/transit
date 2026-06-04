@@ -32,6 +32,23 @@ const (
 
 var contentTypeJSON = [2]string{"content-type", "application/json"}
 
+// JSON sends payload as a JSON local response.
+//
+// content-type: application/json is always prepended; callers may append extra
+// headers via the variadic argument. Marshal errors are returned without
+// sending a partial response so callers can choose the correct error envelope.
+func JSON(w *up.Writer, status int, payload any, headers ...[2]string) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	all := make([][2]string, 0, 1+len(headers))
+	all = append(all, contentTypeJSON)
+	all = append(all, headers...)
+	w.SendLocalResponse(status, body, all...)
+	return nil
+}
+
 // Error sends a JSON local response shaped after the OpenAI error envelope:
 //
 //	{"error":{"message":"…","type":"…","param":null,"code":"…"}}

@@ -84,10 +84,15 @@ func handler(w *up.Writer, r *up.Request) {
 		backendModel = bm.String()
 	}
 
-	key := prov.EffectiveBackendSchema()
-	t, err := translator.New(key, translatorCfg(prov, backendModel))
+	endpoint := ""
+	if ep, ok := w.GetMetadataString(up.MetadataSourceDynamic, match.MetadataNamespace, match.MetadataKeyEndpoint); ok {
+		endpoint = ep.String()
+	}
+
+	schema := prov.EffectiveBackendSchema()
+	t, err := translator.NewForRoute(schema, endpoint, translatorCfg(prov, backendModel))
 	if err != nil {
-		w.Slog().Info("No translator for schema, skipping", "schema", key)
+		w.Slog().Info("No translator for schema/endpoint, skipping", "schema", schema, "endpoint", endpoint)
 		return
 	}
 
