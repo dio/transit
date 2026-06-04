@@ -518,22 +518,3 @@ orange.yaml      runtime config (providers, models, MCP servers/profiles)
 codex-demo       Codex CLI wrapper that targets Orange
 mcp-demo         curl wrapper for the /mcp endpoint
 ```
-
-## Status
-
-| Stage | Status |
-|-------|--------|
-| M0 — skeleton + plumbing | done |
-| M1 — match (body → upstream routing) | done |
-| M2 — pick (cluster extension) | done |
-| M3a — adapt: OpenAI Bearer | done |
-| M3b — adapt: Anthropic x-api-key + version | done |
-| M3c — body-driven routing via `ClusterLBCompletion` | done |
-| M3d — single cluster, per-host SNI via `auto_host_sni` + `:authority` rewrite | done |
-| M4 — streaming (SSE) passthrough | done |
-| M5 — multi-backend translators (Azure, Bedrock, Vertex, Groq, DeepInfra) | done |
-| M6 — meter: token counting via Envoy counters | done |
-| M7 — `make demo` + this README | done |
-| M8 — `POST /v1/responses` HTTP path for Codex CLI chat/non-interactive mode | done |
-| M9 — `GET /v1/responses` Codex WebSocket path via `orange-responsesws` | done |
-| M10 — MCP streamable-HTTP sidecar: profiles, fan-out, sealed sessions, SSE mux | done |
