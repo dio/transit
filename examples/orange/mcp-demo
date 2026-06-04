@@ -5,29 +5,43 @@ BASE_URL="${ORANGE_MCP_BASE_URL:-http://localhost:8080/mcp}"
 ROUTE="${ORANGE_MCP_ROUTE:-default}"
 SUBJECT="${ORANGE_MCP_SUBJECT:-orange-mcp-demo}"
 SESSION_ID="${ORANGE_MCP_SESSION_ID:-}"
+PROFILE=""
+SERVER=""
+HAS_TARGET=0
+SHOW_HEADERS="${ORANGE_MCP_SHOW_HEADERS:-0}"
 
 usage() {
   cat <<'EOF'
 Usage:
-  ./mcp-demo initialize
-  ./mcp-demo list
-  ./mcp-demo call <backend__tool> <json-args>
-  ./mcp-demo stream
-  ./mcp-demo delete
-  ./mcp-demo all
+  ./mcp-demo [--headers] profile=<name>
+  ./mcp-demo [--headers] server=<name>
+  ./mcp-demo [--headers] profile=<name> initialize
+  ./mcp-demo [--headers] server=<name> initialize
+  ./mcp-demo profile=<name> list
+  ./mcp-demo server=<name> list
+  ./mcp-demo profile=<name> call <backend__tool> <json-args>
+  ./mcp-demo server=<name> call <server__tool> <json-args>
+  ./mcp-demo profile=<name> stream
+  ./mcp-demo server=<name> stream
+  ./mcp-demo profile=<name> delete
 
 Environment:
-  ORANGE_MCP_BASE_URL    MCP endpoint. Default: http://localhost:8080/mcp
-  ORANGE_MCP_ROUTE       Orange MCP route header. Default: default
-  ORANGE_MCP_SUBJECT     Subject bound into the public session. Default: orange-mcp-demo
-  ORANGE_MCP_SESSION_ID  Existing public mcp-session-id for list/call/stream/delete
+  ORANGE_MCP_BASE_URL      MCP base endpoint. Default: http://localhost:8080/mcp
+  ORANGE_MCP_ROUTE         Default MCP profile. Default: default
+  ORANGE_MCP_SUBJECT       Subject bound into the public session. Default: orange-mcp-demo
+  ORANGE_MCP_SESSION_ID    Existing public mcp-session-id for list/call/stream/delete
+  ORANGE_MCP_SHOW_HEADERS  Set to 1 to print request and response headers (or use --headers)
 
 Examples:
-  ./mcp-demo initialize
-  ORANGE_MCP_SESSION_ID=<printed-session> ./mcp-demo list
-  ORANGE_MCP_SESSION_ID=<printed-session> ./mcp-demo call kiwi__search-flight '{"origin":"SFO","destination":"JFK"}'
-  ORANGE_MCP_SESSION_ID=<printed-session> ./mcp-demo stream
-  ORANGE_MCP_SESSION_ID=<printed-session> ./mcp-demo delete
+  ./mcp-demo profile=default
+  ./mcp-demo server=github
+  ./mcp-demo profile=default initialize
+  ./mcp-demo server=github initialize
+  ORANGE_MCP_SESSION_ID=<printed-session> ./mcp-demo profile=default list
+  ORANGE_MCP_SESSION_ID=<printed-session> ./mcp-demo server=github list
+  ORANGE_MCP_SESSION_ID=<printed-session> ./mcp-demo profile=default call kiwi__search-flight '{"origin":"SFO","destination":"JFK"}'
+  ORANGE_MCP_SESSION_ID=<printed-session> ./mcp-demo profile=default stream
+  ORANGE_MCP_SESSION_ID=<printed-session> ./mcp-demo profile=default delete
 
 Notes:
   This targets the Envoy-facing MCP route. It expects the Orange MCP Envoy
@@ -40,6 +54,61 @@ require_cmd() {
     echo "missing required command: $1" >&2
     exit 127
   fi
+}
+
+parse_profile_arg() {
+  PARSED_ARGS=()
+  local kept=()
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --headers)
+        SHOW_HEADERS=1
+        ;;
+      profile=*)
+        if [[ -n "$SERVER" ]]; then
+          echo "profile= and server= are mutually exclusive" >&2
+          exit 2
+        fi
+        PROFILE="${arg#profile=}"
+        HAS_TARGET=1
+        ;;
+      server=*)
+        if [[ -n "$PROFILE" ]]; then
+          echo "profile= and server= are mutually exclusive" >&2
+          exit 2
+        fi
+        SERVER="${arg#server=}"
+        HAS_TARGET=1
+        ;;
+      *)
+        kept+=("$arg")
+        ;;
+    esac
+  done
+  PARSED_ARGS=("${kept[@]}")
+}
+
+target_path() {
+  if [[ -n "$SERVER" ]]; then
+    echo "s/$SERVER"
+    return
+  fi
+  if [[ -n "$PROFILE" ]]; then
+    echo "$PROFILE"
+    return
+  fi
+  echo "$ROUTE"
+}
+
+request_url() {
+  local path
+  path="$(target_path)"
+  if [[ -z "$path" ]]; then
+    echo "$BASE_URL"
+    return
+  fi
+  echo "${BASE_URL%/}/$path"
 }
 
 rpc_initialize='{
@@ -62,14 +131,38 @@ cleanup() {
 trap cleanup EXIT
 
 extract_session_id() {
-  awk 'BEGIN{IGNORECASE=1} /^mcp-session-id:/ {sub(/\r$/, "", $2); print $2; exit}' "$1"
+  awk 'tolower($1) == "mcp-session-id:" {sub(/\r$/, "", $2); print $2; exit}' "$1"
+}
+
+print_request_headers() {
+  [[ "$SHOW_HEADERS" == "1" ]] || return 0
+  local method="${1:-POST}"
+  local url
+  url="$(request_url)"
+  echo "--- request headers ---" >&2
+  echo "> $method $url" >&2
+  [[ "$method" == "POST" ]] && echo "> content-type: application/json" >&2
+  [[ "$method" == "POST" ]] && echo "> x-orange-mcp-route: $ROUTE" >&2
+  echo "> x-orange-subject: $SUBJECT" >&2
+  [[ -n "$SESSION_ID" ]] && echo "> mcp-session-id: $SESSION_ID" >&2
+  echo "-----------------------" >&2
+}
+
+print_response_headers() {
+  [[ "$SHOW_HEADERS" == "1" ]] || return 0
+  local file="$1"
+  echo "--- response headers --" >&2
+  while IFS= read -r line; do
+    printf '< %s\n' "$line" >&2
+  done < "$file"
+  echo "-----------------------" >&2
 }
 
 print_response_or_hint() {
   local code="$1"
   local body="$2"
   if [[ "$code" == 404 || "$code" == 503 ]]; then
-    echo "HTTP $code from $BASE_URL" >&2
+    echo "HTTP $code from $(request_url)" >&2
     echo "Orange MCP Envoy route/listener may not be wired yet." >&2
   fi
   cat "$body"
@@ -84,7 +177,7 @@ post_rpc() {
     -D "$headers"
     -o "$body"
     -w '%{http_code}'
-    -X POST "$BASE_URL"
+    -X POST "$(request_url)"
     -H 'content-type: application/json'
     -H "x-orange-mcp-route: $ROUTE"
     -H "x-orange-subject: $SUBJECT"
@@ -93,16 +186,18 @@ post_rpc() {
   if [[ -n "$SESSION_ID" ]]; then
     args+=(-H "mcp-session-id: $SESSION_ID")
   fi
+  print_request_headers POST
   local code
   code="$(curl "${args[@]}")"
+  print_response_headers "$headers"
   print_response_or_hint "$code" "$body"
   echo
   if [[ "$code" =~ ^2 ]]; then
     local new_session
     new_session="$(extract_session_id "$headers")"
     if [[ -n "$new_session" ]]; then
-      echo
-      echo "export ORANGE_MCP_SESSION_ID='$new_session'"
+      echo >&2
+      echo "export ORANGE_MCP_SESSION_ID='$new_session'" >&2
     fi
   else
     return 1
@@ -146,9 +241,14 @@ stream_events() {
     echo "ORANGE_MCP_SESSION_ID is required; run ./mcp-demo initialize first" >&2
     exit 2
   fi
-  curl -N -sS "$BASE_URL" \
+  local resp_headers="$tmpdir/stream-headers"
+  local dump_args=()
+  [[ "$SHOW_HEADERS" == "1" ]] && dump_args=(-D "$resp_headers")
+  print_request_headers GET
+  curl -N -sS "${dump_args[@]}" "$(request_url)" \
     -H "x-orange-subject: $SUBJECT" \
     -H "mcp-session-id: $SESSION_ID"
+  [[ "$SHOW_HEADERS" == "1" ]] && print_response_headers "$resp_headers"
 }
 
 delete_session() {
@@ -156,14 +256,25 @@ delete_session() {
     echo "ORANGE_MCP_SESSION_ID is required; run ./mcp-demo initialize first" >&2
     exit 2
   fi
-  curl -sS -X DELETE "$BASE_URL" \
+  local resp_headers="$tmpdir/delete-headers"
+  local dump_args=()
+  [[ "$SHOW_HEADERS" == "1" ]] && dump_args=(-D "$resp_headers")
+  print_request_headers DELETE
+  curl -sS -X DELETE "${dump_args[@]}" "$(request_url)" \
     -H "x-orange-subject: $SUBJECT" \
     -H "mcp-session-id: $SESSION_ID"
   echo
+  [[ "$SHOW_HEADERS" == "1" ]] && print_response_headers "$resp_headers"
 }
 
-cmd="${1:-all}"
-shift || true
+parse_profile_arg "$@"
+set -- "${PARSED_ARGS[@]}"
+if [[ $# -eq 0 && "$HAS_TARGET" -eq 1 ]]; then
+  cmd="initialize"
+else
+  cmd="${1:-all}"
+  shift || true
+fi
 
 require_cmd curl
 
