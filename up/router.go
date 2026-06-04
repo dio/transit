@@ -28,6 +28,11 @@ func (r *Router) Handle(method, path string, handler func(*Writer, *Request)) *R
 	return r
 }
 
+// GET registers handler for GET requests to the exact path.
+func (r *Router) GET(path string, handler func(*Writer, *Request)) *Router {
+	return r.Handle(http.MethodGet, path, handler)
+}
+
 // POST registers handler for POST requests to the exact path.
 func (r *Router) POST(path string, handler func(*Writer, *Request)) *Router {
 	return r.Handle(http.MethodPost, path, handler)
