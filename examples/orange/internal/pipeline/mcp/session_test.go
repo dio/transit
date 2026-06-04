@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 
@@ -50,10 +51,10 @@ func TestSecureSessionEnvelopeTamperRejected(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	tampered := token[:len(token)-1] + "A"
-	if tampered == token {
-		tampered = token[:len(token)-1] + "B"
-	}
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	require.NoError(t, err)
+	raw[len(raw)-1] ^= 0xff
+	tampered := base64.RawURLEncoding.EncodeToString(raw)
 	_, err = decodeSecureSessionID(c, tampered, "")
 	require.Error(t, err)
 }

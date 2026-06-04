@@ -89,6 +89,7 @@ const (
 	pathV1Messages        = "/v1/messages"
 	pathV1Models          = "/v1/models"
 	pathV1Responses       = "/v1/responses"
+	pathMCP               = "/mcp"
 
 	// ErrModelRequired and ErrUnknownModel are the orange.* codes published on
 	// Decision.Err. They mirror the error response codes.
@@ -111,7 +112,10 @@ var router = up.NewRouter(func(w *up.Writer, r *up.Request) {
 	POST(pathV1ChatCompletions, tagRequestForEndpoint(EndpointChatCompletions)).
 	POST(pathV1Messages, tagRequestForEndpoint(EndpointMessages)).
 	POST(pathV1Responses, tagRequestForEndpoint(EndpointResponses)).
-	GET(pathV1Responses, func(*up.Writer, *up.Request) {}) // passthrough for WS upgrades → orange-responsesws sidecar
+	GET(pathV1Responses, func(*up.Writer, *up.Request) {}). // passthrough for WS upgrades → orange-responsesws sidecar
+	GET(pathMCP, func(*up.Writer, *up.Request) {}).         // passthrough to orange-mcp sidecar
+	POST(pathMCP, func(*up.Writer, *up.Request) {}).        // passthrough to orange-mcp sidecar
+	DELETE(pathMCP, func(*up.Writer, *up.Request) {})       // passthrough to orange-mcp sidecar
 
 func init() {
 	up.Register(FilterName, router.Dispatch,

@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BASE_URL="${ORANGE_MCP_BASE_URL:-http://localhost:8080/mcp}"
+ROUTE="${ORANGE_MCP_ROUTE:-default}"
+SUBJECT="${ORANGE_MCP_SUBJECT:-orange-mcp-demo}"
+SESSION_ID="${ORANGE_MCP_SESSION_ID:-}"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  ./mcp-demo initialize
+  ./mcp-demo list
+  ./mcp-demo call <backend__tool> <json-args>
+  ./mcp-demo stream
+  ./mcp-demo delete
+  ./mcp-demo all
+
+Environment:
+  ORANGE_MCP_BASE_URL    MCP endpoint. Default: http://localhost:8080/mcp
+  ORANGE_MCP_ROUTE       Orange MCP route header. Default: default
+  ORANGE_MCP_SUBJECT     Subject bound into the public session. Default: orange-mcp-demo
+  ORANGE_MCP_SESSION_ID  Existing public mcp-session-id for list/call/stream/delete
+
+Examples:
+  ./mcp-demo initialize
+  ORANGE_MCP_SESSION_ID=<printed-session> ./mcp-demo list
+  ORANGE_MCP_SESSION_ID=<printed-session> ./mcp-demo call kiwi__search-flight '{"origin":"SFO","destination":"JFK"}'
+  ORANGE_MCP_SESSION_ID=<printed-session> ./mcp-demo stream
+  ORANGE_MCP_SESSION_ID=<printed-session> ./mcp-demo delete
+
+Notes:
+  This targets the Envoy-facing MCP route. It expects the Orange MCP Envoy
+  wiring to exist: inbound /mcp -> orange-mcp sidecar -> Envoy MCP egress.
+EOF
+}
+
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "missing required command: $1" >&2
+    exit 127
+  fi
+}
+
+rpc_initialize='{
+  "jsonrpc": "2.0",
+  "id": "orange-mcp-demo-init",
+  "method": "initialize",
+  "params": {
+    "protocolVersion": "2025-06-18",
+    "capabilities": {},
+    "clientInfo": {"name": "orange-mcp-demo", "version": "0.1.0"}
+  }
+}'
+
+rpc_list='{"jsonrpc":"2.0","id":"orange-mcp-demo-list","method":"tools/list","params":{}}'
+
+tmpdir="$(mktemp -d)"
+cleanup() {
+  rm -rf "$tmpdir"
+}
+trap cleanup EXIT
+
+extract_session_id() {
+  awk 'BEGIN{IGNORECASE=1} /^mcp-session-id:/ {sub(/\r$/, "", $2); print $2; exit}' "$1"
+}
+
+print_response_or_hint() {
+  local code="$1"
+  local body="$2"
+  if [[ "$code" == 404 || "$code" == 503 ]]; then
+    echo "HTTP $code from $BASE_URL" >&2
+    echo "Orange MCP Envoy route/listener may not be wired yet." >&2
+  fi
+  cat "$body"
+}
+
+post_rpc() {
+  local payload="$1"
+  local headers="$tmpdir/headers"
+  local body="$tmpdir/body"
+  local args=(
+    -sS
+    -D "$headers"
+    -o "$body"
+    -w '%{http_code}'
+    -X POST "$BASE_URL"
+    -H 'content-type: application/json'
+    -H "x-orange-mcp-route: $ROUTE"
+    -H "x-orange-subject: $SUBJECT"
+    --data-binary "$payload"
+  )
+  if [[ -n "$SESSION_ID" ]]; then
+    args+=(-H "mcp-session-id: $SESSION_ID")
+  fi
+  local code
+  code="$(curl "${args[@]}")"
+  print_response_or_hint "$code" "$body"
+  echo
+  if [[ "$code" =~ ^2 ]]; then
+    local new_session
+    new_session="$(extract_session_id "$headers")"
+    if [[ -n "$new_session" ]]; then
+      echo
+      echo "export ORANGE_MCP_SESSION_ID='$new_session'"
+    fi
+  else
+    return 1
+  fi
+}
+
+initialize() {
+  SESSION_ID=""
+  post_rpc "$rpc_initialize"
+}
+
+list_tools() {
+  if [[ -z "$SESSION_ID" ]]; then
+    echo "ORANGE_MCP_SESSION_ID is required; run ./mcp-demo initialize first" >&2
+    exit 2
+  fi
+  post_rpc "$rpc_list"
+}
+
+call_tool() {
+  require_cmd jq
+  if [[ -z "$SESSION_ID" ]]; then
+    echo "ORANGE_MCP_SESSION_ID is required; run ./mcp-demo initialize first" >&2
+    exit 2
+  fi
+  local tool="${1:-}"
+  local arguments="${2:-{}}"
+  if [[ -z "$tool" ]]; then
+    echo "call requires <backend__tool>" >&2
+    usage >&2
+    exit 2
+  fi
+  local payload
+  payload="$(jq -nc --arg tool "$tool" --argjson arguments "$arguments" \
+    '{jsonrpc:"2.0", id:"orange-mcp-demo-call", method:"tools/call", params:{name:$tool, arguments:$arguments}}')"
+  post_rpc "$payload"
+}
+
+stream_events() {
+  if [[ -z "$SESSION_ID" ]]; then
+    echo "ORANGE_MCP_SESSION_ID is required; run ./mcp-demo initialize first" >&2
+    exit 2
+  fi
+  curl -N -sS "$BASE_URL" \
+    -H "x-orange-subject: $SUBJECT" \
+    -H "mcp-session-id: $SESSION_ID"
+}
+
+delete_session() {
+  if [[ -z "$SESSION_ID" ]]; then
+    echo "ORANGE_MCP_SESSION_ID is required; run ./mcp-demo initialize first" >&2
+    exit 2
+  fi
+  curl -sS -X DELETE "$BASE_URL" \
+    -H "x-orange-subject: $SUBJECT" \
+    -H "mcp-session-id: $SESSION_ID"
+  echo
+}
+
+cmd="${1:-all}"
+shift || true
+
+require_cmd curl
+
+case "$cmd" in
+  initialize) initialize ;;
+  list) list_tools ;;
+  call) call_tool "$@" ;;
+  stream) stream_events ;;
+  delete) delete_session ;;
+  all)
+    initialize
+    echo
+    echo "Run the printed export command, then:"
+    echo "  ./mcp-demo list"
+    echo "  ./mcp-demo call kiwi__search-flight '{\"origin\":\"SFO\",\"destination\":\"JFK\"}'"
+    ;;
+  -h|--help|help) usage ;;
+  *)
+    echo "unknown command: $cmd" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

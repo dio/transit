@@ -3,10 +3,13 @@ package mcp
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/dio/transit/examples/orange/internal/config"
 	"github.com/dio/transit/up"
 )
 
@@ -28,14 +31,22 @@ const (
 	headerTool        = "x-orange-mcp-tool"
 	headerSession     = "x-orange-mcp-session"
 	headerLastEventID = "x-orange-mcp-last-event-id"
+
+	sessionIDHeader   = "mcp-session-id"
+	lastEventIDHeader = "Last-Event-Id"
+	headerSubject     = "x-orange-subject"
 )
 
 func init() {
-	handler := &handler{egressURL: resolveEgressURL()}
+	handler := newHandler(handlerOptions{
+		egressURL: resolveEgressURL(),
+		config:    config.Get,
+		crypto:    resolveSessionCrypto(),
+	})
 	sc := newSidecar(handler, sidecarOptions{
 		listenAddr:      resolveListenAddr(),
 		shutdownTimeout: 5 * time.Second,
-		egressURL:       handler.egressURL,
+		egressURL:       handler.egressURL(),
 	})
 
 	g := up.NewGroup()
@@ -62,27 +73,26 @@ func resolveEgressURL() string {
 	return defaultEgressURL
 }
 
-type handler struct {
-	egressURL string
-}
-
-func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/ready" {
-		w.WriteHeader(http.StatusNoContent)
-		return
+func resolveSessionCrypto() sessionCrypto {
+	keys := strings.Split(os.Getenv(envSessionKeys), ",")
+	var primary string
+	var fallbacks []string
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if primary == "" {
+			primary = key
+			continue
+		}
+		fallbacks = append(fallbacks, key)
 	}
-	writeJSON(w, http.StatusNotImplemented, map[string]any{
-		"error": map[string]any{
-			"type":    "not_implemented",
-			"code":    "orange.mcp_not_implemented",
-			"message": "orange-mcp sidecar registration skeleton is enabled; MCP protocol handlers land in the next slice",
-		},
-	})
-}
-
-func egressHandler(w *up.Writer, r *up.Request) {
-	// PR 1 only registers the egress filter name. Header validation/stripping
-	// and routing metadata are implemented in the egress slice.
+	if primary == "" {
+		primary = "orange-mcp-dev-session-key"
+		fmt.Fprintln(os.Stderr, "orange-mcp: WARNING: ORANGE_MCP_SESSION_KEYS unset; using development session key")
+	}
+	return newSessionCrypto(primary, fallbacks...)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

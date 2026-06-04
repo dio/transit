@@ -38,6 +38,11 @@ func (r *Router) POST(path string, handler func(*Writer, *Request)) *Router {
 	return r.Handle(http.MethodPost, path, handler)
 }
 
+// DELETE registers handler for DELETE requests to the exact path.
+func (r *Router) DELETE(path string, handler func(*Writer, *Request)) *Router {
+	return r.Handle(http.MethodDelete, path, handler)
+}
+
 // Dispatch is the request handler func for [Register].
 func (r *Router) Dispatch(w *Writer, req *Request) {
 	for _, rt := range r.routes {

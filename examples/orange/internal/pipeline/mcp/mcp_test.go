@@ -58,7 +58,7 @@ func TestSidecarReadyAndStop(t *testing.T) {
 }
 
 func TestHandlerReady(t *testing.T) {
-	sc := newSidecar(&handler{egressURL: defaultEgressURL}, sidecarOptions{
+	sc := newSidecar(newHandler(handlerOptions{egressURL: defaultEgressURL}), sidecarOptions{
 		listenAddr:      "127.0.0.1:0",
 		shutdownTimeout: time.Second,
 		egressURL:       defaultEgressURL,
@@ -83,15 +83,15 @@ func TestHandlerReady(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, resp.StatusCode)
 }
 
-func TestHandlerProtocolPlaceholder(t *testing.T) {
+func TestHandlerRejectsInvalidJSONRPC(t *testing.T) {
 	w := &captureResponseWriter{header: http.Header{}}
-	(&handler{egressURL: defaultEgressURL}).ServeHTTP(w, mustRequest(t, http.MethodPost, "/mcp"))
+	newHandler(handlerOptions{egressURL: defaultEgressURL}).ServeHTTP(w, mustRequest(t, http.MethodPost, "/mcp"))
 
-	assert.Equal(t, http.StatusNotImplemented, w.status)
+	assert.Equal(t, http.StatusBadRequest, w.status)
 	assert.Equal(t, "application/json", w.header.Get("content-type"))
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(w.body, &body))
-	assert.Contains(t, body["error"].(map[string]any)["code"], "orange.mcp_not_implemented")
+	assert.Contains(t, body["error"].(map[string]any)["code"], "orange.mcp_invalid_jsonrpc")
 }
 
 type captureResponseWriter struct {

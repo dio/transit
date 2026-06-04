@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 )
 
@@ -51,6 +52,24 @@ type sessionEnvelope struct {
 type eventEnvelope struct {
 	Backend string `json:"backend"`
 	EventID string `json:"event_id,omitempty"`
+}
+
+func (e sessionEnvelope) backend(name string) (backendSession, bool) {
+	for _, backend := range e.Backends {
+		if backend.Backend == name {
+			return backend, true
+		}
+	}
+	return backendSession{}, false
+}
+
+func (e sessionEnvelope) backendNames() []string {
+	names := make([]string, 0, len(e.Backends))
+	for _, backend := range e.Backends {
+		names = append(names, backend.Backend)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func encodeSecureSessionID(c sessionCrypto, e sessionEnvelope) (string, error) {

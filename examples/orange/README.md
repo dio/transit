@@ -212,6 +212,39 @@ After the first prompt, `curl -s localhost:9901/stats | grep orange_` should
 show non-zero `orange_input_tokens` and `orange_output_tokens`, confirming
 orange-meter saw the response.
 
+## MCP demo driver
+
+`mcp-demo` is the curl-based equivalent of `codex-demo` for the Orange-managed
+MCP path. It targets `http://localhost:8080/mcp`, captures the public
+`mcp-session-id` from `initialize`, and can then run `tools/list`,
+`tools/call`, SSE stream, and `DELETE`.
+
+The script expects the MCP Envoy wiring to exist:
+
+```text
+inbound /mcp -> orange-mcp sidecar -> orange-mcp egress listener -> MCP backend
+```
+
+Once that wiring is enabled, run:
+
+```bash
+./mcp-demo initialize
+export ORANGE_MCP_SESSION_ID='<session printed by initialize>'
+
+./mcp-demo list
+./mcp-demo call kiwi__search-flight '{"origin":"SFO","destination":"JFK"}'
+./mcp-demo stream
+./mcp-demo delete
+```
+
+Useful overrides:
+
+```bash
+ORANGE_MCP_BASE_URL=http://localhost:8080/mcp
+ORANGE_MCP_ROUTE=default
+ORANGE_MCP_SUBJECT=demo-user
+```
+
 ### Codex demo troubleshooting
 
 Validate that Codex is reading the Orange demo model catalogue without starting

@@ -63,6 +63,16 @@ static_resources:
                       filter_config:
                         "@type": type.googleapis.com/google.protobuf.StringValue
                         value: '{}'
+                  # orange-mcp: no-op for HTTP; its WithGroup starts the MCP sidecar.
+                  - name: orange-mcp
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: orange
+                      filter_name: orange-mcp
+                      filter_config:
+                        "@type": type.googleapis.com/google.protobuf.StringValue
+                        value: '{}'
                   - name: envoy.filters.http.router
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
@@ -114,6 +124,13 @@ static_resources:
                             timeout: 0s
                             upgrade_configs:
                               - upgrade_type: websocket
+                        # Streamable HTTP/SSE MCP path → orange-mcp sidecar loopback.
+                        # timeout: 0s keeps GET /mcp SSE streams open.
+                        - match:
+                            prefix: /mcp
+                          route:
+                            cluster: orange-mcp-loopback
+                            timeout: 0s
                         - match: { prefix: "/" }
                           route: { cluster: orange_default }
 
@@ -159,6 +176,56 @@ static_resources:
                               - upgrade_type: websocket
                         - match: { prefix: "/" }
                           route: { cluster: orange_default }
+
+    # orange-mcp egress listener: receives HTTP/SSE calls from the orange-mcp sidecar.
+    # The egress-match filter validates/strips x-orange-mcp-* headers, injects
+    # backend auth, and then Envoy routes by the sidecar's internal URL path.
+    - name: orange-mcp-egress
+      address:
+        socket_address: { address: 127.0.0.1, port_value: 10005 }
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: orange-mcp-egress
+                http_filters:
+                  - name: orange-mcp-egress-match
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: orange
+                      filter_name: orange-mcp-egress-match
+                      filter_config:
+                        "@type": type.googleapis.com/google.protobuf.StringValue
+                        value: '{}'
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                route_config:
+                  name: orange-mcp-egress
+                  virtual_hosts:
+                    - name: egress
+                      domains: ["*"]
+                      routes:
+                        - match:
+                            prefix: /_orange_mcp_egress/kiwi
+                          route:
+                            cluster: orange-mcp-kiwi
+                            prefix_rewrite: /
+                            timeout: 0s
+                        - match:
+                            prefix: /_orange_mcp_egress/aws-knowledge
+                          route:
+                            cluster: orange-mcp-aws-knowledge
+                            prefix_rewrite: /
+                            timeout: 0s
+                        - match:
+                            prefix: /_orange_mcp_egress/github
+                          route:
+                            cluster: orange-mcp-github
+                            prefix_rewrite: /mcp/
+                            timeout: 0s
 
   clusters:
     - name: orange_default
@@ -227,6 +294,19 @@ static_resources:
                   address:
                     socket_address: { address: 127.0.0.1, port_value: 10002 }
 
+    # orange-mcp-loopback: static cluster pointing at the orange-mcp sidecar.
+    # Port must match ORANGE_MCP_LISTEN_ADDR (default 127.0.0.1:10004).
+    - name: orange-mcp-loopback
+      type: STATIC
+      connect_timeout: 5s
+      load_assignment:
+        cluster_name: orange-mcp-loopback
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: 127.0.0.1, port_value: 10004 }
+
     # orange-responsesws-default: Responses WS egress uses the same dynamic host picker and TLS
     # setup as orange_default, but intentionally omits upstream HTTP filters.
     # orange-adapt and orange-meter use body callbacks for normal HTTP requests;
@@ -254,6 +334,87 @@ static_resources:
           cluster_config:
             "@type": type.googleapis.com/google.protobuf.StringValue
             value: '{}'
+
+    - name: orange-mcp-kiwi
+      type: LOGICAL_DNS
+      connect_timeout: 5s
+      dns_lookup_family: V4_ONLY
+      load_assignment:
+        cluster_name: orange-mcp-kiwi
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: mcp.kiwi.com
+                      port_value: 443
+      transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+          sni: mcp.kiwi.com
+          common_tls_context:
+            validation_context:
+              match_typed_subject_alt_names:
+                - san_type: DNS
+                  matcher:
+                    exact: mcp.kiwi.com
+              trusted_ca:
+                filename: ${ORANGE_TRUSTED_CA}
+
+    - name: orange-mcp-aws-knowledge
+      type: LOGICAL_DNS
+      connect_timeout: 5s
+      dns_lookup_family: V4_ONLY
+      load_assignment:
+        cluster_name: orange-mcp-aws-knowledge
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: knowledge-mcp.global.api.aws
+                      port_value: 443
+      transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+          sni: knowledge-mcp.global.api.aws
+          common_tls_context:
+            validation_context:
+              match_typed_subject_alt_names:
+                - san_type: DNS
+                  matcher:
+                    exact: knowledge-mcp.global.api.aws
+              trusted_ca:
+                filename: ${ORANGE_TRUSTED_CA}
+
+    - name: orange-mcp-github
+      type: LOGICAL_DNS
+      connect_timeout: 5s
+      dns_lookup_family: V4_ONLY
+      load_assignment:
+        cluster_name: orange-mcp-github
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: api.githubcopilot.com
+                      port_value: 443
+      transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+          sni: api.githubcopilot.com
+          common_tls_context:
+            validation_context:
+              match_typed_subject_alt_names:
+                - san_type: DNS
+                  matcher:
+                    exact: api.githubcopilot.com
+              trusted_ca:
+                filename: ${ORANGE_TRUSTED_CA}
 
 admin:
   address:

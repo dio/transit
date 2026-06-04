@@ -37,6 +37,21 @@ func TestRouterPOSTDispatchesExactMethodAndPath(t *testing.T) {
 	require.False(t, notFound)
 }
 
+func TestRouterDELETEDispatchesExactMethodAndPath(t *testing.T) {
+	var called bool
+	var notFound bool
+	router := NewRouter(func(*Writer, *Request) {
+		notFound = true
+	}).DELETE("/mcp", func(*Writer, *Request) {
+		called = true
+	})
+
+	router.Dispatch(nil, &Request{Method: http.MethodDelete, Path: "/mcp"})
+
+	require.True(t, called)
+	require.False(t, notFound)
+}
+
 func TestRouterWrongMethodUsesNotFound(t *testing.T) {
 	var called bool
 	var notFound bool
