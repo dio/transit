@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/dio/transit/examples/orange/internal/config"
+	"github.com/dio/transit/up"
 )
 
 var (
@@ -44,6 +45,21 @@ func getOrCreateAuthHandler(upstreamName string, prov config.Provider, secret st
 	handlerCache[upstreamName] = h
 	handlerCacheMu.Unlock()
 	return h, nil
+}
+
+// InjectHeaderAuth injects provider credentials that can be computed during
+// request headers. It is used by Responses WebSocket egress, where there is no terminal
+// request body event for body-aware signers.
+func InjectHeaderAuth(w *up.Writer, upstreamName string, prov config.Provider, secret string) error {
+	handler, err := getOrCreateAuthHandler(upstreamName, prov, secret)
+	if err != nil {
+		return err
+	}
+	if _, ok := handler.(BodyAwareAuthHandler); ok {
+		return fmt.Errorf("orange: provider %q uses body-aware auth, which is not supported for Responses WebSocket egress", upstreamName)
+	}
+	handler.InjectAuth(w)
+	return nil
 }
 
 // buildAuthHandler constructs the right handler for prov using this priority:

@@ -111,7 +111,7 @@ var router = up.NewRouter(func(w *up.Writer, r *up.Request) {
 	POST(pathV1ChatCompletions, tagRequestForEndpoint(EndpointChatCompletions)).
 	POST(pathV1Messages, tagRequestForEndpoint(EndpointMessages)).
 	POST(pathV1Responses, tagRequestForEndpoint(EndpointResponses)).
-	GET(pathV1Responses, func(*up.Writer, *up.Request) {}) // passthrough for WS upgrades → orange-ws sidecar
+	GET(pathV1Responses, func(*up.Writer, *up.Request) {}) // passthrough for WS upgrades → orange-responsesws sidecar
 
 func init() {
 	up.Register(FilterName, router.Dispatch,

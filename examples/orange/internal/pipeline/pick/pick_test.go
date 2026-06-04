@@ -17,6 +17,7 @@ import (
 	orangecfg "github.com/dio/transit/examples/orange/internal/config"
 	"github.com/dio/transit/examples/orange/internal/pipeline/match"
 	"github.com/dio/transit/up"
+	"github.com/dio/transit/up/testutil"
 )
 
 func TestSplitEndpoint(t *testing.T) {
@@ -274,6 +275,34 @@ func TestLookupHost_roundRobins(t *testing.T) {
 	require.Equal(t, ptr2, c.lookupHost(match.Decision{Provider: "openai"}).Host)
 	require.Equal(t, ptr1, c.lookupHost(match.Decision{Provider: "openai"}).Host)
 	require.Equal(t, ptr2, c.lookupHost(match.Decision{Provider: "openai"}).Host)
+}
+
+func TestLBChooseHost_filterStateProvider(t *testing.T) {
+	ptr := makeTestHostPtr()
+	c := &cluster{}
+	m := map[string]*resolvedUpstream{
+		"openai": {addrs: []string{"1.2.3.4:443"}, ptrs: []up.HostPtr{ptr}},
+	}
+	c.hosts.Store(&m)
+
+	l := &lb{
+		sel:    nil,
+		lookup: c.lookupHost,
+		log:    slog.Default(),
+	}
+	handle := testutil.NewFilterHandle()
+	w := up.NewWriter(handle)
+	match.Decision{
+		Provider:     "openai",
+		Kind:         "openai",
+		Model:        "gpt-4o-mini",
+		BackendModel: "gpt-4o-mini",
+	}.Apply(w)
+	ctx := testutil.NewFakeClusterLBContext(handle)
+
+	got, completion := l.ChooseHost(nil, ctx)
+	require.Equal(t, ptr, got)
+	require.Nil(t, completion)
 }
 
 // --- resolveAddrs / applyResolved reconciliation ---

@@ -176,9 +176,7 @@ func (h *FakeFilterHandle) GetMetadataNumber(_ shared.MetadataSourceType, ns, ke
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if v, ok := h.metadata[ns][key]; ok {
-		if f, ok := v.(float64); ok {
-			return f, true
-		}
+		return metadataNumber(v)
 	}
 	return 0, false
 }
@@ -212,11 +210,40 @@ func (h *FakeFilterHandle) MetadataNumber(ns, key string) (float64, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if v, ok := h.metadata[ns][key]; ok {
-		if f, ok := v.(float64); ok {
-			return f, true
-		}
+		return metadataNumber(v)
 	}
 	return 0, false
+}
+
+func metadataNumber(v any) (float64, bool) {
+	switch n := v.(type) {
+	case int:
+		return float64(n), true
+	case int8:
+		return float64(n), true
+	case int16:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case uint:
+		return float64(n), true
+	case uint8:
+		return float64(n), true
+	case uint16:
+		return float64(n), true
+	case uint32:
+		return float64(n), true
+	case uint64:
+		return float64(n), true
+	case float32:
+		return float64(n), true
+	case float64:
+		return n, true
+	default:
+		return 0, false
+	}
 }
 
 // MetadataBool returns the raw stored value for (ns, key) as bool and whether it exists.

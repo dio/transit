@@ -89,6 +89,11 @@ providers:
 models:
   gpt-4o-mini:
     provider: openai
+    metadata:
+      description: "GPT-4o mini via OpenAI."
+      context_length: 128000
+      max_tokens: 16384
+      tags: ["chat", "responses", "fast", "vision"]
   claude-haiku-4-5:
     provider: anthropic
 ```
@@ -146,7 +151,7 @@ curl -N -s localhost:8080/v1/messages -H 'content-type: application/json' \
 Orange handles all three endpoints Codex targets:
 
 - `POST /v1/responses` — HTTP non-streaming and SSE (Responses API passthrough)
-- `GET /v1/responses` — WebSocket upgrades through `orange-ws`
+- `GET /v1/responses` — WebSocket upgrades through `orange-responsesws`
 - `POST /v1/chat/completions` — Chat Completions fallback
 
 Run Codex against orange without a Codex-side provider key — orange injects the
@@ -161,29 +166,106 @@ make demo
 **Terminal 2** — run Codex through orange:
 
 ```bash
-codex \
-  -c model_provider=orange \
-  -c 'model_providers.orange.name="Orange"' \
-  -c 'model_providers.orange.base_url="http://localhost:8080/v1"' \
-  -c 'model_providers.orange.wire_api="responses"' \
-  --model gpt-4o-mini
+./codex-demo
 ```
 
-For one-shot non-interactive mode, append the prompt:
+To run Codex through Orange using the Responses API WebSocket transport:
 
 ```bash
-codex \
-  -c model_provider=orange \
-  -c 'model_providers.orange.name="Orange"' \
-  -c 'model_providers.orange.base_url="http://localhost:8080/v1"' \
-  -c 'model_providers.orange.wire_api="responses"' \
-  --model gpt-4o-mini \
+./codex-demo --ws
+```
+
+For one-shot non-interactive mode, use Codex `exec`:
+
+```bash
+./codex-demo exec \
   "write a hello-world HTTP server in Go"
 ```
+
+For one-shot non-interactive mode over WebSocket:
+
+```bash
+./codex-demo --ws exec \
+  "write a hello-world HTTP server in Go"
+```
+
+`codex-demo` runs Codex with a clean `CODEX_HOME` under `$TMPDIR`, points Codex
+at `codex-model-catalog.json`, and disables Codex-side OpenAI auth for the
+Orange provider. That avoids inheriting local skills/plugins that can trigger
+startup budget warnings and avoids the fallback model metadata warning. It also
+disables Codex shell snapshots so local shell startup files cannot fail the
+transport demo before a model request is sent. Passing `--ws` also enables
+Codex's `responses_websockets` feature and sets
+`model_providers.orange.supports_websockets=true`, which is the documented
+custom-provider capability flag. In interactive mode, Codex may prewarm the
+WebSocket before it has a turn to send; the Orange log will show
+`waiting for first client frame` until the first prompt is submitted. Codex may
+also send a `generate:false` `response.create` warmup before the real user turn;
+Orange completes that warmup locally and keeps the WebSocket open for the next
+turn instead of forwarding it upstream. Orange waits up to 10 minutes for
+Codex's first non-warmup `response.create` frame; override that with
+`ORANGE_RESPONSESWS_FIRST_FRAME_TIMEOUT` if needed. Orange still emits model metadata
+from `orange.yaml` through `GET /v1/models` for clients that read the
+OpenAI-compatible catalogue.
 
 After the first prompt, `curl -s localhost:9901/stats | grep orange_` should
 show non-zero `orange_input_tokens` and `orange_output_tokens`, confirming
 orange-meter saw the response.
+
+### Codex demo troubleshooting
+
+Validate that Codex is reading the Orange demo model catalogue without starting
+an interactive session:
+
+```bash
+ORANGE_CODEX_HOME="$(mktemp -d)" ./codex-demo debug models \
+  | jq '.models[] | select(.slug == "gpt-4o-mini") |
+        {slug, context_window, max_context_window, supports_parallel_tool_calls}'
+```
+
+That command should print the `gpt-4o-mini` entry from
+`codex-model-catalog.json` and should not print the fallback metadata warning.
+If you still see skill/plugin budget warnings, make sure you are using
+`./codex-demo`; running `codex ...` directly loads your normal `$CODEX_HOME`.
+
+Validate the Codex WebSocket path with Codex-side WS tracing enabled:
+
+```bash
+ORANGE_CODEX_HOME="$(mktemp -d)" ORANGE_CODEX_TRACE=1 \
+  ./codex-demo --ws exec --json "reply with exactly: orange responsesws ok"
+```
+
+The Orange server log should show these checkpoints for the same
+`orange-responsesws` session:
+
+```text
+orange-responsesws: client accepted
+orange-responsesws: reading first client frame
+orange-responsesws: first client frame received
+orange-responsesws: model provider resolved
+orange-responsesws: egress websocket connected
+orange-responsesws: first client frame forwarded
+orange-responsesws: pump egress->client read frame
+```
+
+Check the OpenAI-compatible model list served by Orange:
+
+```bash
+curl -s localhost:8080/v1/models \
+  | jq '.data[] | select(.id == "gpt-4o-mini")'
+```
+
+Check that Orange saw response token usage after a Codex request:
+
+```bash
+curl -s localhost:9901/stats | grep orange_
+```
+
+Check that Envoy opened upstream connections through the dynamic cluster:
+
+```bash
+curl -s localhost:9901/clusters | grep orange_default:: | grep cx_total
+```
 
 Error paths (handled by `match`, no upstream contacted):
 

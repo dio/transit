@@ -35,6 +35,7 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v5"
 	"gopkg.in/yaml.v3"
 
+	"github.com/dio/transit/examples/orange/internal/observability"
 	"github.com/dio/transit/up"
 )
 
@@ -428,10 +429,19 @@ func SetLogger(l *slog.Logger) {
 // InitLogger initializes the global logger with Envoy-style formatting.
 // Call this once at startup; it configures both the config and general loggers.
 func InitLogger() {
-	handler := NewEnvoyHandler(os.Stderr)
-	logger := slog.New(handler)
 	globalMu.Lock()
-	globalLogger = logger.With("component", "orange/config")
+	globalLogger = observability.Logger("orange/config")
+	globalMu.Unlock()
+}
+
+// EnsureLogger initializes the config refresh logger if it has not already been
+// set. Components that only need to guarantee config diagnostics should call
+// this instead of overwriting a test- or application-supplied logger.
+func EnsureLogger() {
+	globalMu.Lock()
+	if globalLogger == nil {
+		globalLogger = observability.Logger("orange/config")
+	}
 	globalMu.Unlock()
 }
 

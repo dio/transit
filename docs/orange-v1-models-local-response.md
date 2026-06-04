@@ -30,7 +30,13 @@ The response body is the OpenAI-compatible list produced by
     {
       "id": "gpt-4o-mini",
       "object": "model",
-      "owned_by": "openai"
+      "owned_by": "openai",
+      "metadata": {
+        "description": "GPT-4o mini via OpenAI.",
+        "context_length": 128000,
+        "max_tokens": 16384,
+        "tags": ["chat", "responses", "fast", "vision"]
+      }
     }
   ]
 }

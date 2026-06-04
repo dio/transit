@@ -1,25 +1,25 @@
-// Package ws implements the orange-ws sidecar and orange-ws-egress-match filter
+// Package responsesws implements the orange-responsesws sidecar and orange-responsesws-egress-match filter
 // for OpenAI-compatible Responses WebSocket traffic.
 //
 // # Architecture
 //
 //	client
 //	  -> Envoy inbound listener
-//	  -> route /v1/responses WebSocket upgrades to orange-ws loopback
-//	  -> orange-ws sidecar (this package, ws.go)
+//	  -> route /v1/responses WebSocket upgrades to orange-responsesws loopback
+//	  -> orange-responsesws sidecar (this package, responsesws.go)
 //	       reads first response.create, extracts model
 //	       resolves provider/backend through orange.yaml
-//	       overwrites x-orange-ws-* headers on the egress upgrade
+//	       overwrites x-orange-responsesws-* headers on the egress upgrade
 //	       dials Envoy egress listener
 //	  -> Envoy egress listener
-//	  -> orange-ws-egress-match filter (this package, egress.go)
-//	       validates and consumes x-orange-ws-* headers
+//	  -> orange-responsesws-egress-match filter (this package, egress.go)
+//	       validates and consumes x-orange-responsesws-* headers
 //	       writes Orange decision metadata/filter-state (same as HTTP match path)
 //	       strips internal headers
 //	  -> existing orange_default route/cluster
 //	  -> existing orange-pick and orange-adapt path
 //	  -> provider
-package ws
+package responsesws
 
 import (
 	"bytes"
@@ -358,8 +358,8 @@ func (t *FrameTap) emit(rec TurnRecord) {
 // response.completed frames. Field names differ from Chat Completions
 // (input_tokens_details vs prompt_tokens_details).
 type responsesAPIUsage struct {
-	InputTokens  uint32 `json:"input_tokens"`
-	OutputTokens uint32 `json:"output_tokens"`
+	InputTokens        uint32 `json:"input_tokens"`
+	OutputTokens       uint32 `json:"output_tokens"`
 	InputTokensDetails struct {
 		CachedTokens             uint32 `json:"cached_tokens"`
 		CacheCreationInputTokens uint32 `json:"cache_creation_input_tokens"`

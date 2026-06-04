@@ -1,4 +1,4 @@
-package ws
+package responsesws
 
 import (
 	"os"
@@ -24,7 +24,7 @@ providers:
     endpoint: https://api.openai.com
     auth:
       type: bearer
-      secret_ref: env://ORANGE_WS_TEST_OPENAI_KEY
+      secret_ref: env://ORANGE_RESPONSESWS_TEST_OPENAI_KEY
 
 models:
   gpt-4o-mini:
@@ -36,9 +36,9 @@ models:
 func setupTestConfig(t *testing.T) {
 	t.Helper()
 	// Provide a dummy API key so resolveSecrets does not fail.
-	t.Setenv("ORANGE_WS_TEST_OPENAI_KEY", "sk-test-unit-only")
+	t.Setenv("ORANGE_RESPONSESWS_TEST_OPENAI_KEY", "sk-test-unit-only")
 
-	f, err := os.CreateTemp(t.TempDir(), "orange-ws-test-*.yaml")
+	f, err := os.CreateTemp(t.TempDir(), "orange-responsesws-test-*.yaml")
 	require.NoError(t, err)
 	_, err = f.WriteString(testOrangeYAML)
 	require.NoError(t, err)
@@ -112,6 +112,26 @@ func TestEgressHandler_validHeaders_writesMetadata(t *testing.T) {
 	bm, ok := handle.Metadata(match.MetadataNamespace, match.MetadataKeyBackendModel)
 	require.True(t, ok)
 	assert.Equal(t, "gpt-4o-mini", bm)
+
+	endpoint, ok := handle.Metadata(match.MetadataNamespace, match.MetadataKeyEndpoint)
+	require.True(t, ok)
+	assert.Equal(t, match.EndpointResponses, endpoint)
+}
+
+func TestEgressHandler_validHeaders_injectsHeaderAuthAndAuthority(t *testing.T) {
+	setupTestConfig(t)
+
+	w, r, _ := newEgressWriter(map[string]string{
+		headerProvider:     "openai",
+		headerKind:         "openai",
+		headerModel:        "gpt-4o-mini",
+		headerBackendModel: "gpt-4o-mini",
+	})
+
+	egressHandler(w, r)
+
+	assert.Equal(t, "api.openai.com", r.Header(up.HeaderAuthority))
+	assert.Equal(t, "Bearer sk-test-unit-only", r.Header("authorization"))
 }
 
 // ---- egressHandler: header stripping ------------------------------------------
@@ -252,5 +272,5 @@ func TestEgressHandler_unknownModel_returns400(t *testing.T) {
 // ---- EgressFilterName constant -------------------------------------------------
 
 func TestEgressFilterName_constant(t *testing.T) {
-	assert.Equal(t, "orange-ws-egress-match", EgressFilterName)
+	assert.Equal(t, "orange-responsesws-egress-match", EgressFilterName)
 }

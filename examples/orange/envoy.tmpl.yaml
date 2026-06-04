@@ -23,8 +23,24 @@ static_resources:
                 "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
                 stat_prefix: orange
                 # Required for WebSocket upgrade support on the inbound path.
+                # The override filter chain intentionally bypasses orange-match:
+                # it uses WithMutableBody for HTTP JSON requests, and WebSocket
+                # tunnel frames do not have an end_stream body event.
                 upgrade_configs:
                   - upgrade_type: websocket
+                    filters:
+                      - name: orange-responsesws-meter
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                          dynamic_module_config:
+                            name: orange
+                          filter_name: orange-responsesws-meter
+                          filter_config:
+                            "@type": type.googleapis.com/google.protobuf.StringValue
+                            value: '{}'
+                      - name: envoy.filters.http.router
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
                 http_filters:
                   - name: orange-match
                     typed_config:
@@ -35,13 +51,15 @@ static_resources:
                       filter_config:
                         "@type": type.googleapis.com/google.protobuf.StringValue
                         value: '{}'
-                  # orange-ws: no-op for HTTP; its WithGroup starts the WS sidecar.
-                  - name: orange-ws
+                  # orange-responsesws: no-op for HTTP; its WithGroup starts the Responses WS sidecar.
+                  # Keep it out of upgrade_configs to avoid starting the same
+                  # sidecar Group twice.
+                  - name: orange-responsesws
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
                       dynamic_module_config:
                         name: orange
-                      filter_name: orange-ws
+                      filter_name: orange-responsesws
                       filter_config:
                         "@type": type.googleapis.com/google.protobuf.StringValue
                         value: '{}'
@@ -82,7 +100,7 @@ static_resources:
                     - name: local
                       domains: ["*"]
                       routes:
-                        # WebSocket upgrades to /v1/responses → orange-ws sidecar loopback.
+                        # WebSocket upgrades to /v1/responses → orange-responsesws sidecar loopback.
                         # timeout: 0s disables the route-level timeout for long-lived WS tunnels.
                         # Both upgrade_configs here and on the HCM are required.
                         - match:
@@ -92,17 +110,17 @@ static_resources:
                                 string_match: { exact: websocket }
                                 treat_missing_header_as_empty: false
                           route:
-                            cluster: orange-ws-loopback
+                            cluster: orange-responsesws-loopback
                             timeout: 0s
                             upgrade_configs:
                               - upgrade_type: websocket
                         - match: { prefix: "/" }
                           route: { cluster: orange_default }
 
-    # orange-ws egress listener: receives WebSocket dials from the orange-ws sidecar.
-    # orange-ws-egress-match validates/strips internal headers and writes Orange
+    # orange-responsesws egress listener: receives WebSocket dials from the orange-responsesws sidecar.
+    # orange-responsesws-egress-match validates/strips internal headers and writes Orange
     # decision state before routing through orange_default (pick + adapt + meter).
-    - name: orange-ws-egress
+    - name: orange-responsesws-egress
       address:
         socket_address: { address: 127.0.0.1, port_value: 10003 }
       filter_chains:
@@ -110,16 +128,16 @@ static_resources:
             - name: envoy.filters.network.http_connection_manager
               typed_config:
                 "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
-                stat_prefix: orange_ws_egress
+                stat_prefix: orange-responsesws-egress
                 upgrade_configs:
                   - upgrade_type: websocket
                 http_filters:
-                  - name: orange-ws-egress-match
+                  - name: orange-responsesws-egress-match
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
                       dynamic_module_config:
                         name: orange
-                      filter_name: orange-ws-egress-match
+                      filter_name: orange-responsesws-egress-match
                       filter_config:
                         "@type": type.googleapis.com/google.protobuf.StringValue
                         value: '{}'
@@ -127,7 +145,7 @@ static_resources:
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
                 route_config:
-                  name: orange_ws_egress
+                  name: orange-responsesws-egress
                   virtual_hosts:
                     - name: egress
                       domains: ["*"]
@@ -135,7 +153,7 @@ static_resources:
                         - match:
                             prefix: /v1/responses
                           route:
-                            cluster: orange_default
+                            cluster: orange-responsesws-default
                             timeout: 0s
                             upgrade_configs:
                               - upgrade_type: websocket
@@ -196,18 +214,46 @@ static_resources:
             "@type": type.googleapis.com/google.protobuf.StringValue
             value: '{}'
 
-    # orange-ws-loopback: static cluster pointing at the orange-ws sidecar.
-    # Port must match ORANGE_WS_LISTEN_ADDR (default 127.0.0.1:10002).
-    - name: orange-ws-loopback
+    # orange-responsesws-loopback: static cluster pointing at the orange-responsesws sidecar.
+    # Port must match ORANGE_RESPONSESWS_LISTEN_ADDR (default 127.0.0.1:10002).
+    - name: orange-responsesws-loopback
       type: STATIC
       connect_timeout: 5s
       load_assignment:
-        cluster_name: orange-ws-loopback
+        cluster_name: orange-responsesws-loopback
         endpoints:
           - lb_endpoints:
               - endpoint:
                   address:
                     socket_address: { address: 127.0.0.1, port_value: 10002 }
+
+    # orange-responsesws-default: Responses WS egress uses the same dynamic host picker and TLS
+    # setup as orange_default, but intentionally omits upstream HTTP filters.
+    # orange-adapt and orange-meter use body callbacks for normal HTTP requests;
+    # after a WebSocket 101, tunnel frames do not have terminal body events.
+    - name: orange-responsesws-default
+      connect_timeout: 5s
+      lb_policy: CLUSTER_PROVIDED
+      transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+          auto_host_sni: true
+          auto_sni_san_validation: true
+          common_tls_context:
+            validation_context:
+              trusted_ca:
+                filename: ${ORANGE_TRUSTED_CA}
+      cluster_type:
+        name: envoy.clusters.dynamic_modules
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_modules.v3.ClusterConfig
+          dynamic_module_config:
+            name: orange
+          cluster_name: orange-pick
+          cluster_config:
+            "@type": type.googleapis.com/google.protobuf.StringValue
+            value: '{}'
 
 admin:
   address:

@@ -1,8 +1,9 @@
 package config
 
 import (
-	"log/slog"
 	"os"
+
+	"github.com/dio/transit/examples/orange/internal/observability"
 )
 
 // MustReload discards the cached pipeline so the next Get call rebuilds it
@@ -12,7 +13,7 @@ func MustReload() {
 	globalMu.Lock()
 	globalPipeline = nil
 	if globalLogger == nil {
-		globalLogger = slog.Default()
+		globalLogger = observability.Logger("orange/config")
 	}
 	globalMu.Unlock()
 }

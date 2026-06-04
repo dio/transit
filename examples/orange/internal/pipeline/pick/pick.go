@@ -12,10 +12,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"net"
 	"net/url"
 	"os"
-	"math/rand"
 	"sort"
 	"sync/atomic"
 	"time"
@@ -23,6 +23,7 @@ import (
 	"github.com/miekg/dns"
 
 	"github.com/dio/transit/examples/orange/internal/config"
+	"github.com/dio/transit/examples/orange/internal/observability"
 	"github.com/dio/transit/examples/orange/internal/pipeline/match"
 	"github.com/dio/transit/up"
 )
@@ -45,11 +46,11 @@ const (
 )
 
 func init() {
-	Register(nil) // TODO(dio): pass a configured logger
+	Register(observability.Logger("orange/pick"))
 }
 
 // Register registers the pick cluster factory. Pass a non-nil logger to
-// override the default (slog.Default with component="orange/pick").
+// override the default (Orange component logger with component="orange/pick").
 // Call before Envoy initializes clusters; init() registers with nil as default.
 func Register(logger *slog.Logger) {
 	up.RegisterCluster(ClusterName, &factory{logger: logger})
@@ -104,9 +105,9 @@ type cluster struct {
 func (c *cluster) Init(h up.ClusterHandle) {
 	c.handle = h
 	if c.logger == nil {
-		c.logger = slog.Default().With("component", "orange/pick")
+		c.logger = observability.Logger("orange/pick")
 	}
-	config.InitLogger()
+	config.EnsureLogger()
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultResolveTimeout)
 	defer cancel()
@@ -337,7 +338,11 @@ func (c *cluster) NewClusterLB() up.ClusterLB {
 			OnMissingPromise: func() { log.Warn("no match promise in stream bag") },
 		},
 	)
-	return &lb{sel: sel}
+	return &lb{
+		sel:    sel,
+		lookup: c.lookupHost,
+		log:    log,
+	}
 }
 
 func (c *cluster) DrainStarted(_ up.ClusterHandle) {} // no in-flight requests to drain
@@ -357,10 +362,32 @@ func (c *cluster) Close() {} // required by up.Cluster; Shutdown handles teardow
 
 type lb struct {
 	up.EmptyClusterLB
-	sel *up.AsyncHostSelector[match.Decision]
+	sel    *up.AsyncHostSelector[match.Decision]
+	lookup func(match.Decision) up.HostResult
+	log    *slog.Logger
 }
 
 func (l *lb) ChooseHost(h up.ClusterLBHandle, ctx up.ClusterLBContext) (up.HostPtr, *up.ClusterLBCompletion) {
+	if ctx != nil {
+		if provider, ok := ctx.GetFilterState(match.StateUpstream); ok && provider != "" {
+			res := l.lookup(match.Decision{Provider: provider})
+			if res.ErrDetail != "" {
+				if l.log != nil {
+					l.log.Warn("host selection failed", "err", res.ErrDetail, "provider", provider)
+				}
+				completion := ctx.NewCompletion()
+				if completion != nil {
+					completion.Complete(nil, res.ErrDetail)
+					return nil, completion
+				}
+				return nil, nil
+			}
+			if l.log != nil {
+				l.log.Debug("host selected", "host", res.Host, "provider", provider)
+			}
+			return res.Host, nil
+		}
+	}
 	return l.sel.ChooseHost(h, ctx)
 }
 

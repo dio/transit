@@ -165,6 +165,13 @@ func meterResponse(w *up.Writer, chunk *up.ResponseChunk) {
 		u = ExtractOpenAIChatCompletionsJSON(s.buf)
 	}
 
+	EmitUsage(w, u)
+}
+
+// EmitUsage writes token usage to Envoy counters and dynamic metadata. The HTTP
+// meter calls this after parsing response bodies; orange-responsesws calls it from its
+// inbound stream bridge after the sidecar has inspected WebSocket frames.
+func EmitUsage(w *up.Writer, u TokenUsage) {
 	for _, inc := range []struct {
 		id  up.MetricID
 		val uint32

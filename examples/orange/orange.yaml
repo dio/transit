@@ -20,3 +20,8 @@ models:
     provider: anthropic
   gpt-4o-mini:
     provider: openai
+    metadata:
+      description: "GPT-4o mini via OpenAI."
+      context_length: 128000
+      max_tokens: 16384
+      tags: ["chat", "responses", "fast", "vision"]

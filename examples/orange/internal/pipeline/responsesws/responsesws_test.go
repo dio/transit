@@ -1,4 +1,4 @@
-package ws
+package responsesws
 
 import (
 	"context"
@@ -8,13 +8,17 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/dio/transit/examples/orange/internal/pipeline/match"
 	"github.com/dio/transit/examples/orange/internal/pipeline/meter"
+	"github.com/dio/transit/up"
+	"github.com/dio/transit/up/testutil"
 )
 
 // ---- parseResponseCreate -------------------------------------------------------
@@ -24,6 +28,30 @@ func TestParseResponseCreate_validFrame(t *testing.T) {
 	model, err := parseResponseCreate([]byte(data))
 	require.NoError(t, err)
 	assert.Equal(t, "gpt-4o-mini", model)
+}
+
+func TestParseResponseCreate_nestedResponseModel(t *testing.T) {
+	data := `{"type":"response.create","response":{"model":"gpt-4o-mini"},"input":[]}`
+	model, err := parseResponseCreate([]byte(data))
+	require.NoError(t, err)
+	assert.Equal(t, "gpt-4o-mini", model)
+}
+
+func TestParseResponseCreateFrame_warmup(t *testing.T) {
+	data := `{"type":"response.create","model":"gpt-4o-mini","input":[],"generate":false}`
+	frame, err := parseResponseCreateFrame([]byte(data))
+	require.NoError(t, err)
+
+	assert.Equal(t, "gpt-4o-mini", frame.Model)
+	assert.True(t, frame.IsWarmup())
+}
+
+func TestParseResponseCreateFrame_generateTrueIsNotWarmup(t *testing.T) {
+	data := `{"type":"response.create","model":"gpt-4o-mini","input":[],"generate":true}`
+	frame, err := parseResponseCreateFrame([]byte(data))
+	require.NoError(t, err)
+
+	assert.False(t, frame.IsWarmup())
 }
 
 func TestParseResponseCreate_nonJSON(t *testing.T) {
@@ -48,6 +76,69 @@ func TestParseResponseCreate_missingResponseCreateKey(t *testing.T) {
 	data := `{"type":"something.else","model":"gpt-4o"}`
 	_, err := parseResponseCreate([]byte(data))
 	require.Error(t, err)
+}
+
+func TestSummarizeFirstFrame(t *testing.T) {
+	summary := summarizeFirstFrame([]byte(`{"type":"response.create","response":{"model":"gpt-4o-mini"},"input":[{"role":"user","content":"secret"}]}`))
+
+	assert.Equal(t, len(`{"type":"response.create","response":{"model":"gpt-4o-mini"},"input":[{"role":"user","content":"secret"}]}`), summary["bytes"])
+	assert.Equal(t, "response.create", summary["type"])
+	assert.Equal(t, "gpt-4o-mini", summary["model"])
+	assert.Equal(t, []string{"input", "response", "type"}, summary["keys"])
+	assert.NotContains(t, summary, "input")
+}
+
+func TestSummarizeFirstFrameInvalidJSON(t *testing.T) {
+	summary := summarizeFirstFrame([]byte("not-json"))
+
+	assert.Equal(t, "invalid", summary["json"])
+	assert.Equal(t, len("not-json"), summary["bytes"])
+}
+
+func TestWarmupCompletedFrame(t *testing.T) {
+	data, err := warmupCompletedFrame("sid")
+	require.NoError(t, err)
+
+	var frame struct {
+		Type     string `json:"type"`
+		Response struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+			Usage  struct {
+				InputTokens  int `json:"input_tokens"`
+				OutputTokens int `json:"output_tokens"`
+				TotalTokens  int `json:"total_tokens"`
+			} `json:"usage"`
+		} `json:"response"`
+	}
+	require.NoError(t, json.Unmarshal(data, &frame))
+	assert.Equal(t, "response.completed", frame.Type)
+	assert.Equal(t, "resp_orange_responsesws_warmup_sid", frame.Response.ID)
+	assert.Equal(t, "completed", frame.Response.Status)
+	assert.Zero(t, frame.Response.Usage.InputTokens)
+	assert.Zero(t, frame.Response.Usage.OutputTokens)
+	assert.Zero(t, frame.Response.Usage.TotalTokens)
+}
+
+func TestStripLocalWarmupPreviousResponseID(t *testing.T) {
+	data := []byte(`{"type":"response.create","model":"gpt-4o-mini","previous_response_id":"resp_orange_responsesws_warmup_sid","input":"hi"}`)
+
+	got, stripped := stripLocalWarmupPreviousResponseID(data)
+	require.True(t, stripped)
+
+	var frame map[string]any
+	require.NoError(t, json.Unmarshal(got, &frame))
+	assert.NotContains(t, frame, "previous_response_id")
+	assert.Equal(t, "response.create", frame["type"])
+	assert.Equal(t, "gpt-4o-mini", frame["model"])
+}
+
+func TestStripLocalWarmupPreviousResponseID_preservesProviderID(t *testing.T) {
+	data := []byte(`{"type":"response.create","model":"gpt-4o-mini","previous_response_id":"resp_provider_123","input":"hi"}`)
+
+	got, stripped := stripLocalWarmupPreviousResponseID(data)
+	require.False(t, stripped)
+	assert.Equal(t, data, got)
 }
 
 // ---- listenForSidecar ----------------------------------------------------------
@@ -81,7 +172,7 @@ func TestDialOptionsForEgress_TCP(t *testing.T) {
 }
 
 func TestDialOptionsForEgress_Unix(t *testing.T) {
-	wsURL, opts := dialOptionsForEgress("ws+unix:///var/run/orange-ws.sock")
+	wsURL, opts := dialOptionsForEgress("ws+unix:///var/run/orange-responsesws.sock")
 	assert.Equal(t, "ws://localhost", wsURL)
 	require.NotNil(t, opts.HTTPClient)
 	// Verify the transport dials the Unix socket by checking its type.
@@ -90,11 +181,28 @@ func TestDialOptionsForEgress_Unix(t *testing.T) {
 	assert.NotNil(t, transport.DialContext)
 }
 
-// ---- wsSidecar lifecycle -------------------------------------------------------
+// ---- resolveFirstFrameTimeout --------------------------------------------------
 
-func TestWSSidecar_ReadyAfterListen(t *testing.T) {
-	sc, err := newWSSidecar(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}),
-		wsSidecarOptions{listenAddr: "127.0.0.1:0", shutdownTimeout: time.Second})
+func TestResolveFirstFrameTimeout_default(t *testing.T) {
+	t.Setenv("ORANGE_RESPONSESWS_FIRST_FRAME_TIMEOUT", "")
+	assert.Equal(t, defaultFirstFrameTimeout, resolveFirstFrameTimeout())
+}
+
+func TestResolveFirstFrameTimeout_envOverride(t *testing.T) {
+	t.Setenv("ORANGE_RESPONSESWS_FIRST_FRAME_TIMEOUT", "2m")
+	assert.Equal(t, 2*time.Minute, resolveFirstFrameTimeout())
+}
+
+func TestResolveFirstFrameTimeout_invalidFallsBack(t *testing.T) {
+	t.Setenv("ORANGE_RESPONSESWS_FIRST_FRAME_TIMEOUT", "not-a-duration")
+	assert.Equal(t, defaultFirstFrameTimeout, resolveFirstFrameTimeout())
+}
+
+// ---- responsesWSSidecar lifecycle -------------------------------------------------------
+
+func TestResponsesWSSidecar_ReadyAfterListen(t *testing.T) {
+	sc, err := newResponsesWSSidecar(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}),
+		responsesWSSidecarOptions{listenAddr: "127.0.0.1:0", shutdownTimeout: time.Second})
 	require.NoError(t, err)
 
 	go func() {
@@ -114,9 +222,9 @@ func TestWSSidecar_ReadyAfterListen(t *testing.T) {
 	sc.stop()
 }
 
-func TestWSSidecar_StopGraceful(t *testing.T) {
-	sc, err := newWSSidecar(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}),
-		wsSidecarOptions{listenAddr: "127.0.0.1:0", shutdownTimeout: time.Second})
+func TestResponsesWSSidecar_StopGraceful(t *testing.T) {
+	sc, err := newResponsesWSSidecar(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}),
+		responsesWSSidecarOptions{listenAddr: "127.0.0.1:0", shutdownTimeout: time.Second})
 	require.NoError(t, err)
 
 	done := make(chan error, 1)
@@ -132,9 +240,9 @@ func TestWSSidecar_StopGraceful(t *testing.T) {
 	}
 }
 
-func TestWSSidecar_ListenAddrEmptyBeforeReady(t *testing.T) {
-	sc, err := newWSSidecar(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}),
-		wsSidecarOptions{listenAddr: "127.0.0.1:0"})
+func TestResponsesWSSidecar_ListenAddrEmptyBeforeReady(t *testing.T) {
+	sc, err := newResponsesWSSidecar(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}),
+		responsesWSSidecarOptions{listenAddr: "127.0.0.1:0"})
 	require.NoError(t, err)
 	assert.Empty(t, sc.ListenAddr(), "ListenAddr must be empty before Ready")
 }
@@ -385,7 +493,7 @@ func TestEgressHeaders_overwritesClientSuppliedValues(t *testing.T) {
 	fakeInbound.Header.Set(headerBackendModel, "evil-backend")
 	fakeInbound.Header.Set(headerTraceParent, "00-trace-span-01")
 
-	// Build egress headers exactly as orangeWSHandler.ServeHTTP does.
+	// Build egress headers exactly as responseswsHandler.ServeHTTP does.
 	egressHeader := http.Header{}
 	egressHeader.Set(headerProvider, "openai")
 	egressHeader.Set(headerKind, "openai")
@@ -433,6 +541,54 @@ func TestTraceHeaders_absentWhenNotPresent(t *testing.T) {
 		}
 	}
 	assert.Empty(t, egressHeader.Get(headerTraceParent))
+}
+
+// ---- WebSocket meter bridge ----------------------------------------------------
+
+func TestWSMeterBridge_ResponseHandlerEmitsAccessLogMetadata(t *testing.T) {
+	meterStates = sync.Map{}
+	t.Cleanup(func() { meterStates = sync.Map{} })
+
+	const requestID = "req-meter"
+	ensureMeterState(requestID)
+	publishTurn(TurnRecord{
+		SessionID:    "sid",
+		RequestID:    requestID,
+		Model:        "gpt-4o-mini",
+		Provider:     "openai",
+		ProviderKind: "openai",
+		BackendModel: "gpt-4o-mini",
+		Outcome:      TurnOutcomeCompleted,
+		UsageStatus:  UsageStatusReported,
+		Usage: meter.TokenUsage{
+			Input:           11,
+			Output:          5,
+			CachedInput:     3,
+			ReasoningOutput: 2,
+		},
+	})
+
+	handle := testutil.NewFilterHandle()
+	w := up.NewWriter(handle)
+	ctx := any(&streamContext{requestID: requestID})
+
+	responseHandler(w, &up.ResponseChunk{EndStream: true, Context: &ctx})
+
+	model, ok := handle.Metadata(match.MetadataNamespace, match.MetadataKeyModel)
+	require.True(t, ok)
+	assert.Equal(t, "gpt-4o-mini", model)
+
+	provider, ok := handle.Metadata(match.MetadataNamespace, match.MetadataKeyProvider)
+	require.True(t, ok)
+	assert.Equal(t, "openai", provider)
+
+	input, ok := handle.MetadataNumber("orange_meter", "input_tokens")
+	require.True(t, ok)
+	assert.Equal(t, float64(11), input)
+
+	output, ok := handle.MetadataNumber("orange_meter", "output_tokens")
+	require.True(t, ok)
+	assert.Equal(t, float64(5), output)
 }
 
 // ---- classifyCloseReason -------------------------------------------------------
@@ -491,5 +647,6 @@ func TestNewSessionID_unique(t *testing.T) {
 // ---- up package — check FilterName constant ------------------------------------
 
 func TestInit_registersFilterName(t *testing.T) {
-	assert.Equal(t, "orange-ws", FilterName)
+	assert.Equal(t, "orange-responsesws", FilterName)
+	assert.Equal(t, "orange-responsesws-meter", MeterFilterName)
 }

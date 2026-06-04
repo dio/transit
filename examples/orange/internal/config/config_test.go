@@ -100,6 +100,23 @@ func TestLoadFile_full(t *testing.T) {
 	assert.Contains(t, cfg.Models, "vertex/claude-3-5-sonnet")
 }
 
+func TestLoadFile_exampleOrangeYAMLIncludesGPT4oMiniMetadata(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "sk-test-openai")
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test-anthropic")
+
+	cfg, err := LoadFile("../../orange.yaml")
+	require.NoError(t, err)
+
+	entry := cfg.Models["gpt-4o-mini"]
+	assert.Equal(t, "openai", entry.Provider)
+	assert.Equal(t, map[string]any{
+		"description":    "GPT-4o mini via OpenAI.",
+		"context_length": 128000,
+		"max_tokens":     16384,
+		"tags":           []any{"chat", "responses", "fast", "vision"},
+	}, entry.Metadata)
+}
+
 func TestLoadFile_hostHelper(t *testing.T) {
 	setMinimalEnv(t)
 	cfg, err := LoadFile("testdata/valid_minimal.yaml")
