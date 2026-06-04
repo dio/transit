@@ -114,14 +114,22 @@ func decodeConfig(data []byte) (Config, error) {
 	return cfg, nil
 }
 
-// LoadPipelineConfig returns a PipelineConfig backed by the file path in
-// MCP_PROFILE_GATEWAY_CONFIG. Call RefreshOnce before reading Snapshot().
+// LoadPipelineConfig returns a PipelineConfig backed by MCP_PROFILE_GATEWAY_CONFIG.
+// If the value starts with '{' it is parsed as inline JSON; otherwise it is
+// treated as a file path and read via a cached file source.
 func LoadPipelineConfig() (*up.PipelineConfig[Config], error) {
-	path := strings.TrimSpace(os.Getenv(ConfigEnv))
-	if path == "" {
+	raw := strings.TrimSpace(os.Getenv(ConfigEnv))
+	if raw == "" {
 		return nil, fmt.Errorf("%s is required", ConfigEnv)
 	}
-	pc := up.NewFileConfig[Config](path, decodeConfig, up.PollOptions{})
+	if strings.HasPrefix(raw, "{") {
+		cfg, err := decodeConfig([]byte(raw))
+		if err != nil {
+			return nil, err
+		}
+		return up.NewStaticConfig(cfg), nil
+	}
+	pc := up.NewFileConfig[Config](raw, decodeConfig, up.PollOptions{})
 	if err := pc.RefreshOnce(context.Background()); err != nil {
 		return nil, err
 	}
