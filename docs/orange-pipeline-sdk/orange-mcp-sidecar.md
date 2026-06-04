@@ -1,17 +1,29 @@
-# Orange MCP Streaming Sidecar
+# Orange LLM + MCP Proxy Sidecar
 
 Status: design handoff for WS-G MCP integration.
 
-This document fixes the Orange v1 architecture for MCP streamable-HTTP and
-SSE-style sessions. It is a sibling of
-[`orange-websocket-sidecar.md`](orange-websocket-sidecar.md), not a replacement
-for the existing single-request MCP examples.
+This document fixes the Orange v1 architecture for making
+[`examples/orange`](../../examples/orange) an LLM + MCP proxy. The strategy is
+the same shape as [`orange-websocket-sidecar.md`](orange-websocket-sidecar.md):
+the normal Orange HTTP pipeline handles ordinary `POST /v1/responses`, while a
+sidecar handles MCP transport/session work that does not fit cleanly inside
+Envoy filter callbacks.
+
+The existing `examples/mcp-*` stack remains a protocol reference for session
+envelopes, fan-out, and L2 server selection. It is not the first thing to ship.
+The first deliverable is an Orange feature under `examples/orange`.
 
 References:
 
 - SDK plan: [`plan.md`](plan.md)
 - MCP fit audit: [`mcp-fit-notes.md`](mcp-fit-notes.md)
 - SDK background: [`background.md`](background.md)
+- OpenAI remote MCP guide:
+  `https://platform.openai.com/docs/guides/tools-remote-mcp`
+- OpenAI Responses remote MCP API reference:
+  `https://platform.openai.com/docs/api-reference/responses/remote-mcp`
+- Existing Orange Responses WebSocket sidecar:
+  [`examples/orange/internal/pipeline/responsesws`](../../examples/orange/internal/pipeline/responsesws)
 - Existing Transit MCP examples:
   [`examples/mcp-profile-gateway`](../../examples/mcp-profile-gateway),
   [`examples/mcp-catalog-router`](../../examples/mcp-catalog-router),
@@ -25,10 +37,26 @@ References:
 
 ## Motivation
 
-Orange already has MCP examples for the single-request HTTP shape: profile
+Orange already supports the OpenAI-compatible Responses HTTP path and has a
+Responses WebSocket sidecar for frame-level work. The next feature is MCP in
+the same `examples/orange` proxy: clients can use the Responses MCP tool shape
+(`tools[].type: "mcp"`, `server_label`, `server_url` or `connector_id`,
+optional `authorization`, approval policy, and allowed-tool filters), while
+Orange keeps MCP server egress, routing, policy, and records on the Envoy
+path.
+
+Plain provider passthrough is not enough for Orange. If a provider directly
+dials a client-supplied MCP `server_url`, MCP egress, TLS, auth, access logs,
+and policy leave Envoy. That conflicts with the Orange rule that data-path
+egress goes through Envoy. Orange therefore needs an Orange-managed MCP path
+for servers it owns or is configured to broker.
+
+The existing MCP examples cover the single-request gateway shape: profile
 lookup, fan-out, `tools/list` merge, `tools/call` routing, and L2 server
-selection. That is not enough for the MCP streaming transports. Streamable
-HTTP and SSE introduce a long-lived client-visible session, reconnect state,
+selection. They are useful implementation references, but the feature belongs
+in `examples/orange` and the Responses API surface.
+
+MCP streamable HTTP and SSE introduce a long-lived session, reconnect state,
 server-to-client requests, notification streams, and backend session IDs that
 must be hidden from the client.
 
@@ -40,7 +68,33 @@ into Envoy-visible HTTP requests with bounded internal headers.
 The MCP sidecar exists for the same reason as the Responses WebSocket sidecar:
 when protocol framing is not visible or ergonomic in Envoy filters, the
 sidecar shapes the protocol and then loops back through Envoy. It must not
-become a direct provider/server egress path.
+become a direct provider or MCP-server egress path.
+
+## Scope Decision
+
+Primary target:
+
+- Add Orange MCP support under `examples/orange/internal/pipeline/mcp`, wired
+  by `examples/orange/envoy.tmpl.yaml` the same way
+  `orange-responsesws` is wired today.
+- Use Orange config for MCP server catalogs and credential references. Do not
+  trust arbitrary client-supplied `server_url` as a direct egress target.
+- Preserve Envoy-owned egress by sending sidecar-originated MCP requests to a
+  local Envoy egress listener.
+- Reuse `examples/mcp-*` behavior and AI Gateway MCP proxy patterns as
+  implementation references, not as the primary runtime.
+
+Explicit non-target for the first Orange slice:
+
+- Do not build a standalone `examples/mcp-streaming-sidecar` before the Orange
+  integration exists.
+- Do not make provider-direct remote MCP passthrough the default. If a provider
+  must be allowed to dial a remote MCP server directly, that is a labeled
+  break-glass mode with written rationale.
+- Do not add an Orange-managed agentic tool loop in this pass. The sidecar
+  brokers MCP transport and records; provider/tool-loop semantics remain
+  Responses API semantics unless a later design explicitly adds a local tool
+  executor.
 
 ## Protocol Facts
 
@@ -106,6 +160,23 @@ Patterns to reuse:
 - **Forward-header extraction.** Route-level and per-backend forwarded headers
   are extracted from the original client request and applied to backend
   requests.
+- **Config-change signaling.** The proxy compares the tool-visible parts of
+  config and signals active streams when configured tools change. Orange should
+  do the same from the shared pipeline snapshot so SSE clients can receive
+  `notifications/tools/list_changed` without polling.
+- **Deny-wins tool selectors.** Include/exclude exact names and regexps are
+  compiled once at config load; excludes win over includes. This is the right
+  v1 policy shape for Orange-managed MCP tools.
+- **Envoy-local backend listener.** AI Gateway always sends backend MCP
+  traffic to a configured local listener. Orange should keep that invariant:
+  the sidecar talks to the Orange MCP egress listener, and Envoy owns the
+  actual MCP-server cluster/TLS/auth path.
+- **Application-error classification.** MCP `tools/call` can return HTTP/JSON
+  success with `isError=true`. Orange records should classify that as an MCP
+  application failure, not as transport failure.
+- **Encoding tolerance.** Backend responses may be `application/json` JSON-RPC
+  messages, SSE streams, or mislabeled JSON/SSE; the parser strips UTF-8 BOM,
+  normalizes CR/LF variants, and handles gzip/Brotli when explicitly accepted.
 
 Patterns to adapt, not copy as-is:
 
@@ -118,12 +189,17 @@ Patterns to adapt, not copy as-is:
   configured local backend listener. Orange should still do that, but the
   listener and internal headers must be named as Orange MCP internals and
   validated by an egress filter.
-- **Authorization.** AI Gateway has a rich authorization layer tied to its
-  filter API. Orange v1 should keep auth in existing Envoy/Orange policy
-  surfaces and treat per-tool authorization as a later policy plugin unless it
-  is needed for the first MCP streaming proof.
 - **Response logging.** AI Gateway debug logs can include raw JSON-RPC params
   and results. Orange records must be bounded and secret-redacted by default.
+- **Authorization.** AI Gateway compiles route authorization with JWT claim,
+  scope, target-tool, and CEL support. Orange v1 should not import that policy
+  engine directly or bind MCP auth to AI Gateway filter APIs. Start with
+  Orange config include/exclude selectors and Envoy-authenticated subject
+  binding; add CEL only if an Orange policy surface explicitly needs it.
+- **Config receiver.** AI Gateway implements a config receiver that updates a
+  mutable proxy config. Orange should adapt the same route/backend/tool-selector
+  shape onto `PipelineConfig[T]` snapshots and avoid request-path config
+  mutation.
 
 Direct import or codemod decision:
 
@@ -140,16 +216,37 @@ Direct import or codemod decision:
   Apache-2.0 copyright header and keep it in an example-local package until a
   second Transit consumer needs it.
 
+Concrete Orange extraction list:
+
+1. Port the session-envelope tests first: encrypted session ID, fallback key
+   decrypt, wrong-subject rejection, and per-backend last-event ID encoding.
+2. Port the SSE parser tests next: CR, LF, CRLF, UTF-8 BOM, JSON-RPC in
+   `data:` lines, JSON responses mislabeled as streams, and stream flushing.
+3. Recreate initialize fan-out with partial success and all-failed behavior
+   using Orange route/backend config.
+4. Recreate tool selector tests with deny-wins exact and regexp rules.
+5. Recreate server-to-client request ID rewriting for `roots/list`,
+   `sampling/createMessage`, and `elicitation/create`.
+6. Recreate `tools/call` `isError=true` classification so records distinguish
+   MCP application failure from transport failure.
+7. Keep AI Gateway metric/tracer/config/header packages out of Orange. Replace
+   them with Orange sidecar records, Envoy-carried trace headers, and
+   `orange-mcp-*` internal headers.
+
 ## Orange Architecture
 
 Orange v1 uses an MCP sidecar plus an Envoy egress listener. The sidecar
-terminates the client-visible MCP session, then emits stateless HTTP requests
-back through Envoy.
+terminates Orange-managed MCP sessions, then emits stateless HTTP requests
+back through Envoy. This matches the Responses WebSocket sidecar deployment:
+inbound traffic reaches a loopback sidecar, and sidecar egress returns to
+Envoy before leaving the local boundary.
 
 ```text
 client
   -> Envoy inbound listener
-  -> route MCP streamable-HTTP/SSE traffic to orange-mcp loopback
+  -> POST /v1/responses or MCP streamable-HTTP/SSE route
+  -> orange-match/orange-adapt detect Orange-managed MCP tool config
+  -> route Orange-managed MCP traffic to orange-mcp loopback
   -> orange-mcp sidecar
        handles initialize/session envelope
        owns backend session IDs and last-event IDs
@@ -162,13 +259,13 @@ client
        validates and consumes sidecar headers
        writes Orange MCP decision metadata/filter-state
        strips internal headers
-  -> existing MCP L2 route/cluster path
-  -> mcp catalog/router/cluster extension
+  -> Orange MCP route/cluster path
+  -> configured MCP catalog/router/cluster extension
   -> MCP server
 ```
 
 The sidecar is responsible for MCP session state. Envoy remains responsible
-for provider/server egress.
+for provider and MCP-server egress.
 
 ### Production Internal Transport
 
@@ -187,9 +284,12 @@ TLS/auth/routing/access logging must still happen through Envoy.
 
 ### Inbound
 
-The client speaks the MCP streamable-HTTP surface through the Orange ingress
-listener. Envoy authenticates the client, applies normal ingress policy, and
-routes only the MCP streaming path to `orange-mcp`.
+The client reaches Orange through the same ingress listener used for LLM
+traffic. For OpenAI-compatible Responses requests, the Orange request pipeline
+detects MCP tool configuration and decides whether the request can use
+Orange-managed MCP. For direct MCP streamable-HTTP/SSE clients, Envoy
+authenticates the client, applies normal ingress policy, and routes only the
+MCP streaming path to `orange-mcp`.
 
 The inbound filter must not select an L2 backend directly. Backend selection
 depends on MCP method semantics:
@@ -208,8 +308,8 @@ depends on MCP method semantics:
 The proposed sidecar filter name is `orange-mcp`.
 
 `orange-mcp` starts an embedded server using the WS-G sidecar lifecycle
-helper: bind, readiness, graceful shutdown, session deadline, trace
-propagation, and session record hook.
+helper, exactly like `orange-responsesws`: bind, readiness, graceful shutdown,
+session deadline, trace propagation, and session record hook.
 
 For each logical client session, the sidecar must:
 
@@ -390,19 +490,23 @@ unredacted internal sidecar headers.
 
 ## Implementation Handoff
 
-Build the MCP sidecar as a WS-G consumer.
+Build the MCP sidecar as an Orange WS-G consumer, analogous to
+`examples/orange/internal/pipeline/responsesws`.
 
 Proposed components:
 
-- `orange-mcp`: sidecar lifecycle plus MCP streamable-HTTP/SSE protocol
-  handler.
+- `examples/orange/internal/pipeline/mcp`: sidecar lifecycle plus MCP
+  streamable-HTTP/SSE protocol handler.
 - `orange-mcp-egress-match`: egress-side dynamic module filter that validates
   internal headers, writes Orange MCP decision state, and strips internal
   headers.
-- `examples/mcp-streaming-sidecar`: local example proving initialize,
-  tools/list, tools/call, GET/SSE, and DELETE.
-- `integrations/mcp-streaming-sidecar-eg`: Envoy Gateway integration proving
-  sidecar egress via Envoy.
+- `examples/orange/envoy.tmpl.yaml`: inbound sidecar route and MCP egress
+  listener, following the existing `orange-responsesws` pattern.
+- `examples/orange/e2e`: local Orange e2e proving initialize, tools/list,
+  tools/call, GET/SSE, DELETE, and Responses behavior with Orange-managed MCP
+  configured.
+- Later EG proof, if needed: `integrations/orange-mcp-sidecar-eg`, not a
+  standalone MCP-first integration.
 
 Implementation sequence:
 
@@ -416,7 +520,8 @@ Implementation sequence:
 7. Add GET/SSE notification merge, heartbeat, and event-ID envelope.
 8. Add DELETE close.
 9. Add `orange-mcp-egress-match`.
-10. Add example e2e, then EG e2e.
+10. Wire `examples/orange/envoy.tmpl.yaml` and local Orange e2e.
+11. Add EG e2e only after the Orange local path is green.
 
 ## Test Checklist
 

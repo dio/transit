@@ -202,10 +202,10 @@ record accumulation. WS-F's response translators follow Principle 6
 | Workstream | Output | Exit Criterion |
 | --- | --- | --- |
 | [WS-E](#workstream-e) *(Observe — exchange side)* | `ExchangeHooks[T]` + `WithExchangeObserver[T]`; request/response/finalized accumulator for the 1:1 case. | request-ui migrated; MCP `tools/call` (1:1) uses the helper; success, local-reply, upstream-failure e2e green; observability flows through Envoy access-log/stats (per `examples/observability`). Fan-out merge does **not** fold into base `ExchangeHooks` — see WS-E.fan below. |
-| WS-E.fan (deferrable to Phase 3.5) *(Observe — fan-out side)* | Fan-out merge layer on top of `ExchangeHooks[T]`: per-leg accumulators, aggregate finalize, user-supplied merge func, partial-failure policy. | `mcp-profile-gateway` `initialize` and `tools/list` use the helper; partial-failure policy observable; `HTTPCalloutAllSettled` integration green. Can ship after Phase 3 if it would slow it. See [mcp-fit-notes WS-E](mcp-fit-notes.md#ws-e--exchange-observer-weak-for-fan-out-good-for-11). |
+| WS-E.fan (deferrable to Phase 3.5) *(Observe — fan-out side)* | Fan-out merge layer on top of `ExchangeHooks[T]`: per-leg accumulators, aggregate finalize, user-supplied merge func, partial-failure policy. | Orange MCP `initialize` and `tools/list` use the helper; partial-failure policy observable; all-settled fan-out integration green. Can ship after Phase 3 if it would slow it. See [mcp-fit-notes WS-E](mcp-fit-notes.md#ws-e--exchange-observer-weak-for-fan-out-good-for-11). |
 | [WS-F](#workstream-f) *(Observe — response translate side)* | Explicit streaming observer vs buffered mutator APIs; bounded head/tail helpers; response translators as pure functions paired with their request-side counterparts in WS-I `Route` values. | sse-tap green on streaming observer; MCP `tools/list` merge green on buffered mutator (via WS-E.fan); one buffered JSON mutation example green; token-usage extraction lands as a pure function reused across providers. |
 | [WS-G](#workstream-g) | Sidecar lifecycle helper (bind/readiness/shutdown/session record); **egress-via-Envoy is the default dial path**, not an option. Trace context propagation through sidecars per `examples/trace-propagation`. Also delivers the SDK shape for MCP streaming transport (SSE / streamable-HTTP) — see WS-G MCP exit below. | ws-proxy migrated; `integrations/tiered-ws-proxy-eg` e2e proves egress-via-Envoy; any direct-dial mode ships with break-glass rationale. |
-| WS-G MCP streaming sidecar | MCP SSE / streamable-HTTP sidecar built on the WS-G helper. Sidecar terminates the stateful stream and exposes a **stateless header-keyed HTTP surface** to Envoy (Envoy AI Gateway-style session-via-headers; no server-side session store). Egress back through Envoy. | New example sidecar + new EG integration `integrations/mcp-streaming-sidecar-eg` e2e green; client SSE → sidecar → stateless HTTP → Envoy → upstream proven; trace headers propagated; session encoded into header envelope. This is how the stack gains MCP streaming support at all. See [mcp-fit-notes WS-G](mcp-fit-notes.md#ws-g--protocol-sidecars-critical-not-yet-built). |
+| WS-G Orange MCP sidecar | MCP SSE / streamable-HTTP sidecar built inside `examples/orange` on the WS-G helper. Sidecar terminates Orange-managed MCP sessions and exposes a **stateless header-keyed HTTP surface** to Envoy (Envoy AI Gateway-style session-via-headers; no server-side session store). Egress back through Envoy. | `examples/orange/internal/pipeline/mcp` + `examples/orange` e2e green; Orange acts as an LLM + MCP proxy; client SSE/streamable HTTP → sidecar → stateless HTTP → Envoy → MCP server proven; trace headers propagated; session encoded into header envelope. Later EG proof is Orange-focused (`integrations/orange-mcp-sidecar-eg`) if needed. See [mcp-fit-notes WS-G](mcp-fit-notes.md#ws-g--protocol-sidecars-critical-not-yet-built). |
 
 ### Phase 4 — Transport (gated on WS-B verdict)
 
@@ -804,6 +804,10 @@ lossy compatibility subset:
 <a id="workstream-e"></a><a id="workstream-e-exchange-observer"></a>
 ## Workstream E: Exchange Observer
 
+This is the 1:1 exchange primitive: one downstream request, one upstream
+request, one finalized record. MCP fan-out builds on this shape but does not
+fold into it; see [WS-E.fan](#workstream-e-fan-fan-out-exchange-observer).
+
 ### Research
 
 - Should the SDK allocate state via `sync.Pool` or let users provide state?
@@ -835,6 +839,65 @@ lossy compatibility subset:
 
 - Complete exchange records no longer require hand-wired callback plumbing.
 - Request-ui behavior remains equivalent.
+
+<a id="workstream-e-fan"></a><a id="workstream-e-fan-fan-out-exchange-observer"></a>
+## Workstream E.fan: Fan-Out Exchange Observer
+
+This is a layered Observe primitive for request shapes such as MCP
+`initialize` and `tools/list`: one downstream request creates N upstream legs,
+then merges successful leg responses into one downstream response. It reuses
+`ExchangeHooks[T]` for per-leg records but owns aggregate finalization,
+partial-failure policy, and merge ordering.
+
+### Research
+
+- What partial-failure policies are required for v1: fail-fast,
+  require-one-success, require-all-success, or custom predicate?
+- Does merge ordering follow configured backend order, response arrival order,
+  or method-specific sort order?
+- How should aggregate finalization represent both per-leg transport failures
+  and application-level MCP errors?
+- Should the merge function receive decoded typed bodies, raw bodies, or both?
+- How do buffered response mutation limits interact with large fan-out results?
+
+### Development
+
+1. Add `FanOutExchangeHooks[T]` or an equivalent helper layered on
+   `ExchangeHooks[T]`.
+2. Add a `LegResult[T]` type carrying backend id, request metadata, response
+   headers/body, error class, duration, and per-leg record state.
+3. Add explicit partial-failure policy values with default
+   `require-one-success` for MCP list/initialize shapes.
+4. Add a user-supplied merge function:
+   `func([]LegResult[T]) (*MergedResponse, error)`.
+5. Wire `HTTPCalloutAllSettled` results into leg records without hiding
+   individual upstream failures.
+6. Mirror `mcp-profile-gateway` `initialize` and `tools/list` aggregation in
+   the Orange MCP sidecar first, then back-port the helper to
+   `mcp-profile-gateway` if it remains a live consumer.
+
+### Verification
+
+- Unit: all-success fan-out produces per-leg records and one aggregate record.
+- Unit: one failed leg follows `require-one-success` and records partial
+  failure without dropping successful legs.
+- Unit: all legs failed returns a stable local error and finalized aggregate
+  record.
+- Unit: merge function receives legs in documented order.
+- Unit: per-leg local reply and upstream failure are distinguishable from
+  aggregate merge failure.
+- E2E: MCP `initialize` creates a public session when at least one backend
+  succeeds and records failed initialization legs.
+- E2E: MCP `tools/list` returns prefixed tools from multiple backends and
+  surfaces the configured partial-failure policy.
+
+### Acceptance Criteria
+
+- Base `ExchangeHooks[T]` remains simple and 1:1.
+- Fan-out users get per-leg and aggregate records without custom callback
+  plumbing.
+- Partial success is explicit in config, logs, and tests.
+- The Orange MCP sidecar uses the helper for `initialize` and `tools/list`.
 
 <a id="workstream-f"></a><a id="workstream-f-response-modes"></a>
 ## Workstream F: Response Modes
@@ -902,8 +965,14 @@ Orange-specific handoffs:
    exists only as a labeled escape hatch with required rationale field.
 6. Trace context propagation: sidecar accepts and forwards Envoy-carried
    trace headers per `examples/trace-propagation`.
-7. Migrate ws-proxy (LLM) and mcp-profile-gateway session/aggregator (MCP).
-8. Validate egress-via-Envoy through `integrations/tiered-ws-proxy-eg`.
+7. Migrate ws-proxy (LLM) to the lifecycle helper.
+8. Build the Orange MCP streamable-HTTP/SSE sidecar from
+   [`orange-mcp-sidecar.md`](orange-mcp-sidecar.md), reusing
+   `mcp-profile-gateway` session-envelope and fan-out semantics where they
+   still apply.
+9. Validate egress-via-Envoy through `integrations/tiered-ws-proxy-eg` and
+   the Orange MCP local e2e; add `integrations/orange-mcp-sidecar-eg` later if
+   the EG path needs a dedicated proof.
 
 ### Verification
 
@@ -915,8 +984,11 @@ Orange-specific handoffs:
 - E2E: WebSocket `/v1/responses` proxy still forwards frames.
 - E2E: egress-via-Envoy is the path taken by default; TLS/auth/access-log
   remain Envoy-owned.
-- E2E: MCP sidecar can inspect and route protocol messages.
+- E2E: Orange MCP sidecar can inspect and route protocol messages.
 - E2E: `integrations/tiered-ws-proxy-eg` proves the egress-via-Envoy dance.
+- E2E: `examples/orange` proves client SSE/streamable HTTP enters through
+  Envoy, loops through the sidecar, and reaches backend MCP servers through
+  Envoy egress.
 - E2E: any direct-dial mode emits a startup log naming the missing Envoy
   capability and the rationale.
 
@@ -926,6 +998,8 @@ Orange-specific handoffs:
 - Egress-via-Envoy is the documented default; direct dial is the labeled
   escape hatch with rationale.
 - Sidecars participate in Envoy-carried trace context, not a parallel one.
+- MCP streaming support is delivered by a sidecar plus Envoy egress listener,
+  not by adding long-lived MCP session state to Envoy filter callbacks.
 
 <a id="workstream-h"></a><a id="workstream-h-envoy-gateway-transport-integration"></a>
 ## Workstream H: Envoy Gateway Transport Integration
@@ -992,7 +1066,7 @@ Orange-specific handoffs:
 | Translate stage (WS-I) | required | required | required | Pure-function translators; SigV4 e2e proves auth-after-translate ordering; MCP `tools/call` e2e proves `{prefix}__{tool}` resolution + credential injection. |
 | Exchange observer | required | required | optional | request-ui is primary proof. |
 | Response modes | required | required | optional | sse-tap plus mutation example. |
-| Sidecars | required | required | required for egress-via-Envoy | ws-proxy + MCP streaming sidecar. |
+| Sidecars | required | required | required for egress-via-Envoy | ws-proxy + Orange MCP sidecar. |
 | Observability & tracing | required | required | required for sidecar paths | Every workstream's e2e must show signals flowing through Envoy access-log/stats/traces (`examples/observability`); sidecars must propagate Envoy-carried trace context (`examples/trace-propagation`). Regression = release blocker. |
 | EG transport | optional | optional | required | Needs k3d gated suite across all four EG integrations. |
 
@@ -1053,7 +1127,7 @@ Before marking the SDK work usable:
   `initialize` session-envelope encoding, with the client's view of
   partial success? Underspecified today. Mitigation: WS-E.fan ships
   with explicit policy enum, not implicit behavior.
-- **MCP streaming sidecar reconnect / backpressure** (WS-G MCP): SSE
+- **Orange MCP sidecar reconnect / backpressure** (WS-G MCP): SSE
   client reconnect via Last-Event-ID, backend reconnect, slow-client
   buffering, who owns retry. Mitigation: design note before
   implementation; cross-check against `examples/trace-propagation`
@@ -1061,7 +1135,7 @@ Before marking the SDK work usable:
 - **EG version skew across four integrations.** `tiered-router-eg`,
   `tiered-ws-proxy-eg`, `cluster-async-router-eg`,
   `mcp-profile-tiered-router-eg` (and the new
-  `mcp-streaming-sidecar-eg`) may pin different EG versions and
+  `orange-mcp-sidecar-eg`) may pin different EG versions and
   generated xDS names may drift. Mitigation: lock EG version in one
   place; e2e gate catches per-version breakage early.
 - **Multiple control channels** can make operations brittle: pipeline

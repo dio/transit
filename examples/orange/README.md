@@ -69,33 +69,34 @@ Loaded lazily at first request via the `ORANGE_CONFIG` env var (set by `make
 run`/`make demo`).
 
 ```yaml
-providers:
-  openai:
-    kind: openai
-    endpoint: https://api.openai.com
-    auth:
-      type: bearer
-      secret_ref: env://OPENAI_API_KEY
+llm:
+  providers:
+    openai:
+      kind: openai
+      endpoint: https://api.openai.com
+      auth:
+        type: bearer
+        secret_ref: env://OPENAI_API_KEY
 
-  anthropic:
-    kind: anthropic
-    endpoint: https://api.anthropic.com
-    extra:
-      anthropic_version: "2023-06-01"
-    auth:
-      type: anthropic
-      secret_ref: env://ANTHROPIC_API_KEY
+    anthropic:
+      kind: anthropic
+      endpoint: https://api.anthropic.com
+      extra:
+        anthropic_version: "2023-06-01"
+      auth:
+        type: anthropic
+        secret_ref: env://ANTHROPIC_API_KEY
 
-models:
-  gpt-4o-mini:
-    provider: openai
-    metadata:
-      description: "GPT-4o mini via OpenAI."
-      context_length: 128000
-      max_tokens: 16384
-      tags: ["chat", "responses", "fast", "vision"]
-  claude-haiku-4-5:
-    provider: anthropic
+  models:
+    gpt-4o-mini:
+      provider: openai
+      metadata:
+        description: "GPT-4o mini via OpenAI."
+        context_length: 128000
+        max_tokens: 16384
+        tags: ["chat", "responses", "fast", "vision"]
+    claude-haiku-4-5:
+      provider: anthropic
 ```
 
 `secret_ref: env://VAR` is resolved at config load; missing env vars fail boot
@@ -215,7 +216,8 @@ orange-meter saw the response.
 ## MCP demo driver
 
 `mcp-demo` is the curl-based equivalent of `codex-demo` for the Orange-managed
-MCP path. It targets `http://localhost:8080/mcp`, captures the public
+MCP path. It targets `http://localhost:8080/mcp`, or
+`http://localhost:8080/mcp/<profile>` for an MCP profile, captures the public
 `mcp-session-id` from `initialize`, and can then run `tools/list`,
 `tools/call`, SSE stream, and `DELETE`.
 
@@ -228,13 +230,21 @@ inbound /mcp -> orange-mcp sidecar -> orange-mcp egress listener -> MCP backend
 Once that wiring is enabled, run:
 
 ```bash
-./mcp-demo initialize
+./mcp-demo profile=default
 export ORANGE_MCP_SESSION_ID='<session printed by initialize>'
 
-./mcp-demo list
-./mcp-demo call kiwi__search-flight '{"origin":"SFO","destination":"JFK"}'
-./mcp-demo stream
-./mcp-demo delete
+./mcp-demo profile=default list
+./mcp-demo profile=default call kiwi__search-flight '{"origin":"SFO","destination":"JFK"}'
+./mcp-demo profile=default stream
+./mcp-demo profile=default delete
+```
+
+To contact a single MCP server directly, use the server path shorthand:
+
+```bash
+./mcp-demo server=github
+export ORANGE_MCP_SESSION_ID='<session printed by initialize>'
+./mcp-demo server=github list
 ```
 
 Useful overrides:
@@ -244,6 +254,22 @@ ORANGE_MCP_BASE_URL=http://localhost:8080/mcp
 ORANGE_MCP_ROUTE=default
 ORANGE_MCP_SUBJECT=demo-user
 ```
+
+`initialize` is profile-atomic: every backend configured under the selected MCP
+profile must initialize successfully. Orange returns one public
+`mcp-session-id` that encodes the private backend session IDs for all profile
+members. If any backend in the profile fails initialization, Orange returns
+`502` and does not issue a public session.
+
+`ORANGE_MCP_SESSION_KEYS` controls encryption for public `mcp-session-id` and
+`Last-Event-Id` envelopes:
+
+- unset: uses a fixed development key and logs a warning;
+- `orange-generated`: generates a random ephemeral key at startup and logs a
+  warning; existing sessions become invalid after restart;
+- comma-separated explicit values: first value encrypts new sessions, remaining
+  values are decryption fallbacks for key rotation, for example
+  `ORANGE_MCP_SESSION_KEYS=new-key,old-key`.
 
 ### Codex demo troubleshooting
 

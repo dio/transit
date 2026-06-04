@@ -211,7 +211,8 @@ store) is the reference design.
 
 1. The lifecycle helper (bind, readiness, shutdown, session record) used
    by ws-proxy.
-2. A concrete MCP SSE / streamable-HTTP sidecar example built on top.
+2. A concrete Orange MCP SSE / streamable-HTTP sidecar built on top under
+   `examples/orange/internal/pipeline/mcp`.
 3. Session-via-headers envelope: the sidecar encodes per-stream backend
    session state into an opaque client-facing header (analogous to
    `mcp-profile-gateway`'s composite `mcp-session-id`), so Envoy sees
@@ -220,15 +221,17 @@ store) is the reference design.
    `tiered-ws-proxy-eg`).
 5. Trace context propagation through the sidecar
    (`examples/trace-propagation`).
-6. An EG integration analogous to `tiered-ws-proxy-eg` that proves the
-   MCP streaming path end to end. Suggested name:
-   `integrations/mcp-streaming-sidecar-eg`.
+6. Orange local e2e proving the MCP streaming path end to end. Add an EG
+   integration analogous to `tiered-ws-proxy-eg` only after the local Orange
+   path is green. Suggested name if needed:
+   `integrations/orange-mcp-sidecar-eg`.
 
 **Suggested plan.md tweak:** WS-G is **upgraded**, not weakened, on the
-MCP axis. The Phase 3 row should explicitly name the MCP SSE/streamable
-sidecar as a required deliverable, not an "if/when." Recommend adding
-this to the plan's "Reference Pipelines" surface and noting that the EG
-integration list grows by one.
+MCP axis, and the primary target is Orange. The Phase 3 row should explicitly
+name the MCP SSE/streamable sidecar as an `examples/orange` deliverable, not
+an "if/when" or a standalone MCP example. Recommend adding this to the plan's
+"Reference Pipelines" surface and noting that an EG proof can follow later if
+needed.
 
 **Open questions for the MCP sidecar design (deferred from this audit
 but needed before WS-G implementation):**
@@ -255,14 +258,15 @@ Four targeted edits to `plan.md`:
 3. **WS-E**: split into base (1:1, MCP `tools/call`) and WS-E.fan
    (fan-out merge, MCP `initialize` + `tools/list`), with WS-E.fan
    deferrable to Phase 3.5.
-4. **WS-G**: **upgrade** the MCP claim. The MCP SSE / streamable-HTTP
-   sidecar is the way the stack gains streaming-MCP support at all.
-   Add a new EG integration (`integrations/mcp-streaming-sidecar-eg`)
-   to the proving-grounds list.
+4. **WS-G**: **upgrade** the MCP claim and scope it to Orange. The MCP SSE /
+   streamable-HTTP sidecar is how `examples/orange` becomes the LLM + MCP
+   proxy. Add Orange local e2e first; add
+   `integrations/orange-mcp-sidecar-eg` later only if EG needs a dedicated
+   proof.
 
 The first three sharpen MCP exit criteria without changing phase shape.
-The fourth grows scope: MCP streaming becomes an explicit deliverable of
-WS-G rather than a future possibility.
+The fourth grows scope: MCP streaming becomes an explicit Orange deliverable
+of WS-G rather than a future possibility.
 
 ## Open Questions for Implementers
 

@@ -10,13 +10,14 @@ The core thesis:
 
 > Orange is a pipeline, not one filter — and not one protocol.
 
-"Orange" names a *shape* of gateway, not a product. The same pipeline shape
-appears in the LLM proxy (`examples/orange`) and in the MCP profile fan-out
-topology (`examples/mcp-*`, `integrations/mcp-profile-tiered-router-eg`).
-Both need shared configuration, cross-phase request decisions, async host
-selection, request-response records, response taps/mutators, protocol
-sidecars, host refresh loops, and bounded Envoy Gateway transport/TLS
-coordination.
+"Orange" names the LLM + MCP proxy shape we are building in
+`examples/orange`. The same pipeline shape also appears in the older MCP
+profile fan-out topology (`examples/mcp-*`,
+`integrations/mcp-profile-tiered-router-eg`), which is now reference material
+for session envelopes, fan-out, and L2 server selection. Both need shared
+configuration, cross-phase request decisions, async host selection,
+request-response records, response taps/mutators, protocol sidecars, host
+refresh loops, and bounded Envoy Gateway transport/TLS coordination.
 
 Three goals sit alongside the pipeline thesis, in priority order:
 
@@ -73,6 +74,7 @@ it lands.
 | **LLM proxy** | classify (body → provider) → async hostpick → translate (auth/headers) → response tap (token usage) | [`examples/orange`](../../examples/orange) |
 | **MCP L1 fan-out** | session decode → profile lookup → fan-out to L2 members → response merge (tools/list, initialize) → session encode | [`examples/mcp-profile-gateway`](../../examples/mcp-profile-gateway), [`examples/mcp-catalog-router`](../../examples/mcp-catalog-router), [`examples/mcp-profile-router`](../../examples/mcp-profile-router) |
 | **MCP tiered EG** | L1 (profile gateway, dynamic module) + L2 (catalog router, cluster-router host selection) over Envoy Gateway | [`integrations/mcp-profile-tiered-router-eg`](../../integrations/mcp-profile-tiered-router-eg) |
+| **Orange MCP sidecar** | Responses MCP tool support plus streamable-HTTP/SSE session termination → stateless header-keyed HTTP through Envoy → MCP server routing/selection | [`orange-mcp-sidecar.md`](orange-mcp-sidecar.md), [agent prompt](orange-mcp-agent-prompt.md), planned [`examples/orange/internal/pipeline/mcp`](../../examples/orange/internal/pipeline), later `integrations/orange-mcp-sidecar-eg` if needed |
 | **Tiered router EG** | Generic L1/L2 tiered routing topology over EG; proving ground for bounded EG integration shapes | [`integrations/tiered-router-eg`](../../integrations/tiered-router-eg) |
 | **Tiered WS proxy EG** | WebSocket sidecar with egress-via-Envoy; reference dance for "everything through Envoy" when the natural path would skip it | [`integrations/tiered-ws-proxy-eg`](../../integrations/tiered-ws-proxy-eg) |
 | **Async cluster router EG** | Async host selection (`ClusterLBCompletion`) integrated with EG xDS | [`integrations/cluster-async-router-eg`](../../integrations/cluster-async-router-eg) |
@@ -190,10 +192,10 @@ Status legend: `spike` (research-gated) · `todo` · `wip` · `landed` ·
 | Pipeline config | `todo` | [Plan A](plan.md#workstream-a-pipeline-configuration), [Background](background.md#pipeline-configuration-plane) | LLM: [`examples/orange/config`](../../examples/orange/config) · MCP: [`examples/mcp-profile-router`](../../examples/mcp-profile-router) | One immutable config snapshot shared by all extension points. |
 | Dynamic provider host/TLS | `spike` | [Standalone question](dynamic-module-transport-tls-question.md), [Plan B](plan.md#workstream-b-dynamic-provider-host-resolution-and-tls), [Background](background.md#research-fully-dynamic-provider-host-resolution) | LLM: [`examples/orange/envoy.yaml`](../../examples/orange/envoy.yaml) | Research whether provider/backend add/remove can avoid Gateway/xDS updates while Envoy still owns TLS. |
 | Typed rendezvous | `todo` | [Plan C](plan.md#workstream-c-typed-rendezvous), [Background](background.md#typed-stream-keys) | LLM: [`examples/orange/pending`](../../examples/orange/pending) · MCP: [`examples/mcp-profile-gateway`](../../examples/mcp-profile-gateway) | Typed stream keys and `StreamPromise[T]` for cross-phase decisions (model id, profile id, session id). |
-| Async host selection | `todo` | [Plan D](plan.md#workstream-d-async-host-selector), [Background](background.md#async-host-selection-adapter) | LLM: [`examples/orange/hostpick`](../../examples/orange/hostpick) · MCP: [`examples/mcp-catalog-router`](../../examples/mcp-catalog-router) | SDK-owned `ClusterLBCompletion` scheduling and cancellation. |
-| Exchange observer | `todo` | [Plan E](plan.md#workstream-e-exchange-observer), [Background](background.md#exchange-observer) | LLM: [`examples/request-ui`](../../examples/request-ui) · MCP: fan-out merge in [`examples/mcp-profile-gateway`](../../examples/mcp-profile-gateway) | Reusable request/response/finalized accumulator. |
+| Async host selection | `todo` | [Plan D](plan.md#workstream-d-async-host-selector), [Background](background.md#async-host-selection-adapter) | LLM: [`examples/orange/hostpick`](../../examples/orange/hostpick) · MCP: cluster-router host selection behind [`integrations/mcp-profile-tiered-router-eg`](../../integrations/mcp-profile-tiered-router-eg) | SDK-owned `ClusterLBCompletion` scheduling and cancellation. |
+| Exchange observer | `todo` | [Plan E](plan.md#workstream-e-exchange-observer), [Plan E.fan](plan.md#workstream-e-fan-fan-out-exchange-observer), [Background](background.md#exchange-observer) | LLM: [`examples/request-ui`](../../examples/request-ui) · MCP: 1:1 `tools/call` plus fan-out merge in Orange MCP, with [`examples/mcp-profile-gateway`](../../examples/mcp-profile-gateway) as reference | Reusable request/response/finalized accumulator for 1:1 exchanges, plus layered fan-out records and merge. |
 | Response modes | `todo` | [Plan F](plan.md#workstream-f-response-modes), [Background](background.md#response-modes) | LLM: [`examples/sse-tap`](../../examples/sse-tap) · MCP: tools/list merge | Explicit streaming observe vs buffered mutate vs finalized-only semantics. |
-| Protocol sidecars | `todo` | [Plan G](plan.md#workstream-g-protocol-sidecars), [Orange WS sidecar](orange-websocket-sidecar.md), [Orange MCP sidecar](orange-mcp-sidecar.md), [Background](background.md#protocol-sidecar) | LLM: [`examples/ws-proxy`](../../examples/ws-proxy) · MCP: session/aggregator lifecycle in [`examples/mcp-profile-gateway`](../../examples/mcp-profile-gateway) | Embedded protocol server lifecycle for WS, MCP, and similar long-lived paths. |
+| Protocol sidecars | `todo` | [Plan G](plan.md#workstream-g-protocol-sidecars), [Orange WS sidecar](orange-websocket-sidecar.md), [Orange MCP sidecar](orange-mcp-sidecar.md), [Background](background.md#protocol-sidecar) | LLM: [`examples/orange/internal/pipeline/responsesws`](../../examples/orange/internal/pipeline/responsesws) · MCP: planned `examples/orange/internal/pipeline/mcp` | Embedded protocol server lifecycle for WS, MCP, and similar long-lived paths. |
 | Host refresh | `todo` | [Host Refresh Loop](host-refresh-loop.md) | — | Generic host snapshot refresh for Cluster Extensions. |
 | EG transport | `spike` | [Plan H](plan.md#workstream-h-envoy-gateway-transport-integration), [Background](background.md#bounded-transporttls-configuration) | LLM: [`integrations/cluster-async-router-eg`](../../integrations/cluster-async-router-eg) · MCP: [`integrations/mcp-profile-tiered-router-eg`](../../integrations/mcp-profile-tiered-router-eg) | Bounded Backend/TLS policy or `transport_socket_matches`; avoid unbounded xDS; cooperate with native Gateway API. |
 
