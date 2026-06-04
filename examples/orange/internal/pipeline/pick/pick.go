@@ -267,8 +267,10 @@ func (c *cluster) applyResolved(h up.ClusterHandle, resolved map[string]dnsResul
 		// Build a map of existing addr -> HostPtr for this provider.
 		existing := map[string]up.HostPtr{}
 		var oldRR uint64
+		var old *resolvedUpstream
 		if current != nil {
-			if old, ok := (*current)[name]; ok {
+			if o, ok := (*current)[name]; ok {
+				old = o
 				for i, addr := range old.addrs {
 					existing[addr] = old.ptrs[i]
 				}
@@ -281,10 +283,28 @@ func (c *cluster) applyResolved(h up.ClusterHandle, resolved map[string]dnsResul
 		for _, addr := range r.addrs {
 			newAddrSet[addr] = struct{}{}
 		}
+
+		// IP set unchanged (order-independent) — just extend the refresh deadline.
+		if old != nil && len(existing) == len(newAddrSet) {
+			unchanged := true
+			for addr := range existing {
+				if _, ok := newAddrSet[addr]; !ok {
+					unchanged = false
+					break
+				}
+			}
+			if unchanged {
+				entry := &resolvedUpstream{addrs: old.addrs, ptrs: old.ptrs, nextRefresh: nextRefresh}
+				entry.rr.Store(oldRR)
+				out[name] = entry
+				continue
+			}
+		}
+
 		for addr, ptr := range existing {
 			if _, keep := newAddrSet[addr]; !keep {
 				h.RemoveHosts([]up.HostPtr{ptr})
-				c.logger.Info("upstream addr removed", "upstream", name, "addr", addr)
+				c.logger.Debug("upstream addr removed", "upstream", name, "addr", addr)
 			}
 		}
 
@@ -305,7 +325,7 @@ func (c *cluster) applyResolved(h up.ClusterHandle, resolved map[string]dnsResul
 				}
 				h.UpdateHostHealth(added[0], up.HostHealthy)
 				ptrs = append(ptrs, added[0])
-				c.logger.Info("upstream addr added", "upstream", name, "addr", addr)
+				c.logger.Debug("upstream addr added", "upstream", name, "addr", addr)
 			}
 		}
 
