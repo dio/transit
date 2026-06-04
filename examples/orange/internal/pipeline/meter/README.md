@@ -4,14 +4,16 @@ Response observer that extracts LLM token usage and emits Envoy counters and dyn
 
 ## Extraction strategies
 
-The provider kind is read from the `orange.provider` dynamic metadata key (written by the `match` filter) and combined with the response `Content-Type` to select one of four strategies:
+The provider kind (`orange.provider`) and endpoint (`orange.endpoint`) are read from dynamic metadata written by the `match` filter, and combined with the response `Content-Type` to select one of six strategies:
 
-| Provider kind | Content-Type | Strategy | File |
-|---------------|-------------|----------|------|
-| `openai`, `azureopenai`, … | `application/json` | `ExtractOpenAIJSON` | `meter_openai.go` |
-| `openai`, `azureopenai`, … | `text/event-stream` | `ExtractOpenAISSE` | `meter_openai.go` |
-| `anthropic`, `awsanthropic`, `gcpanthropic` | `application/json` | `ExtractAnthropicJSON` | `meter_anthropic.go` |
-| `anthropic`, `awsanthropic`, `gcpanthropic` | `text/event-stream` | `ExtractAnthropicSSE` | `meter_anthropic.go` |
+| Provider kind | Endpoint | Content-Type | Strategy | File |
+|---------------|----------|-------------|----------|------|
+| `openai`, `azureopenai`, … | `chat_completions` / `messages` | `application/json` | `ExtractOpenAIChatCompletionsJSON` | `meter_openai_chat_completions.go` |
+| `openai`, `azureopenai`, … | `chat_completions` / `messages` | `text/event-stream` | `ExtractOpenAIChatCompletionsSSE` | `meter_openai_chat_completions.go` |
+| `openai` | `responses` | `application/json` | `ExtractOpenAIResponsesJSON` | `meter_openai_responses.go` |
+| `openai` | `responses` | `text/event-stream` | `ExtractOpenAIResponsesSSE` | `meter_openai_responses.go` |
+| `anthropic`, `awsanthropic`, `gcpanthropic` | any | `application/json` | `ExtractAnthropicMessagesJSON` | `meter_anthropic_messages.go` |
+| `anthropic`, `awsanthropic`, `gcpanthropic` | any | `text/event-stream` | `ExtractAnthropicMessagesSSE` | `meter_anthropic_messages.go` |
 
 Any other `Content-Type` (e.g. AWS EventStream binary) is skipped; meter emits zero for that stream. Additional provider files (e.g. `meter_awsbedrock.go`) can be added later following the same pattern.
 
@@ -167,20 +169,22 @@ Non-streaming (`application/json`) accumulates the full body across chunks befor
 
 | Test | What it covers |
 |------|---------------|
-| `TestExtractOpenAIJSON_Chat` | `prompt_tokens` / `completion_tokens` |
-| `TestExtractOpenAIJSON_ResponsesAPI` | `input_tokens` / `output_tokens` variant |
-| `TestExtractOpenAIJSON_WithDetails` | Full `prompt_tokens_details` + `completion_tokens_details` |
-| `TestExtractOpenAIJSON_ChunkedBody` | Body split across two chunks |
-| `TestExtractOpenAIJSON_NoUsage` / `_Empty` / `_Invalid` | Error paths |
-| `TestExtractOpenAISSE_Chat` | Usage in last SSE chunk (Chat Completions) |
-| `TestExtractOpenAISSE_ResponsesAPI` | `response.completed` event (Responses API) |
-| `TestExtractOpenAISSE_WithDetails` | Detail fields in SSE usage chunk |
-| `TestExtractOpenAISSE_LargeStream_HeadTailOnly` | >64 KB stream; usage present only in tail |
-| `TestExtractOpenAISSE_Empty` | Empty stream |
-| `TestExtractAnthropicJSON_Basic` | `input_tokens` / `output_tokens` |
-| `TestExtractAnthropicJSON_WithCacheTokens` | All cache fields including ephemeral |
-| `TestExtractAnthropicJSON_NoUsage` / `_Empty` / `_Invalid` | Error paths |
-| `TestExtractAnthropicSSE_Basic` | `message_start` (input) + `message_delta` (output) |
-| `TestExtractAnthropicSSE_WithCacheTokens` | Cache fields in `message_start` |
-| `TestExtractAnthropicSSE_LargeStream_HeadTailOnly` | >200 KB stream; head/tail split |
-| `TestExtractAnthropicSSE_Empty` | Empty stream |
+| `TestExtractOpenAIChatCompletionsJSON_Chat` | `prompt_tokens` / `completion_tokens` |
+| `TestExtractOpenAIChatCompletionsJSON_WithDetails` | Full `prompt_tokens_details` + `completion_tokens_details` |
+| `TestExtractOpenAIChatCompletionsJSON_ChunkedBody` | Body split across two chunks |
+| `TestExtractOpenAIChatCompletionsJSON_NoUsage` / `_Empty` / `_Invalid` | Error paths |
+| `TestExtractOpenAIChatCompletionsSSE_Chat` | Usage in last SSE chunk before `[DONE]` |
+| `TestExtractOpenAIChatCompletionsSSE_WithDetails` | Detail fields in SSE usage chunk |
+| `TestExtractOpenAIChatCompletionsSSE_LargeStream_HeadTailOnly` | >64 KB stream; usage present only in tail |
+| `TestExtractOpenAIChatCompletionsSSE_Empty` | Empty stream |
+| `TestExtractOpenAIResponsesJSON_Basic` | `input_tokens` / `output_tokens` |
+| `TestExtractOpenAIResponsesJSON_WithDetails` | `input_tokens_details.cached_tokens` + `output_tokens_details.reasoning_tokens` |
+| `TestExtractOpenAIResponsesSSE_NestedUsage` | `response.completed` event with nested `response.usage` |
+| `TestExtractOpenAIResponsesSSE_LargeStream` | >64 KB delta stream; `response.completed` in tail |
+| `TestExtractAnthropicMessagesJSON_Basic` | `input_tokens` / `output_tokens` |
+| `TestExtractAnthropicMessagesJSON_WithCacheTokens` | All cache fields including ephemeral |
+| `TestExtractAnthropicMessagesJSON_NoUsage` / `_Empty` / `_Invalid` | Error paths |
+| `TestExtractAnthropicMessagesSSE_Basic` | `message_start` (input) + `message_delta` (output) |
+| `TestExtractAnthropicMessagesSSE_WithCacheTokens` | Cache fields in `message_start` |
+| `TestExtractAnthropicMessagesSSE_LargeStream_HeadTailOnly` | >200 KB stream; head/tail split |
+| `TestExtractAnthropicMessagesSSE_Empty` | Empty stream |

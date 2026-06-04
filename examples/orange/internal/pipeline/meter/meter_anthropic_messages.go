@@ -5,10 +5,24 @@ import (
 	"encoding/json"
 )
 
-// ExtractAnthropicJSON extracts token usage from a non-streaming Anthropic-format response body.
-func ExtractAnthropicJSON(body []byte) TokenUsage {
+// ExtractAnthropicMessagesJSON extracts token usage from a non-streaming
+// Anthropic Messages API response body.
+//
+// Messages API usage shape (https://docs.anthropic.com/en/api/messages):
+//
+//	{"usage":{"input_tokens":N,"output_tokens":M,
+//	           "cache_creation_input_tokens":C,"cache_read_input_tokens":R,
+//	           "cache_creation":{"ephemeral_5m_input_tokens":E5,
+//	                             "ephemeral_1h_input_tokens":E1}}}
+//
+// RATIONALE for Messages suffix: naming mirrors ExtractOpenAIChatCompletionsJSON
+// and ExtractOpenAIResponsesJSON — each extractor is named after the specific
+// API endpoint it handles. Anthropic currently exposes one HTTP endpoint
+// (POST /v1/messages); the suffix keeps the pattern uniform and leaves room
+// for a future distinct API without a rename.
+func ExtractAnthropicMessagesJSON(body []byte) TokenUsage {
 	var resp struct {
-		Usage *anthropicUsage `json:"usage"`
+		Usage *anthropicMessagesUsage `json:"usage"`
 	}
 	if json.Unmarshal(body, &resp) != nil || resp.Usage == nil {
 		return TokenUsage{}
@@ -16,8 +30,8 @@ func ExtractAnthropicJSON(body []byte) TokenUsage {
 	return resp.Usage.toTokenUsage()
 }
 
-// anthropicUsage mirrors the Anthropic Messages API usage object.
-type anthropicUsage struct {
+// anthropicMessagesUsage mirrors the Anthropic Messages API usage object.
+type anthropicMessagesUsage struct {
 	InputTokens              uint32 `json:"input_tokens"`
 	OutputTokens             uint32 `json:"output_tokens"`
 	CacheCreationInputTokens uint32 `json:"cache_creation_input_tokens"`
@@ -28,7 +42,7 @@ type anthropicUsage struct {
 	} `json:"cache_creation"`
 }
 
-func (u *anthropicUsage) toTokenUsage() TokenUsage {
+func (u *anthropicMessagesUsage) toTokenUsage() TokenUsage {
 	return TokenUsage{
 		Input:              u.InputTokens,
 		Output:             u.OutputTokens,
@@ -39,10 +53,15 @@ func (u *anthropicUsage) toTokenUsage() TokenUsage {
 	}
 }
 
-// ExtractAnthropicSSE extracts token usage from an Anthropic-format SSE stream.
-// Input tokens arrive in the message_start event (head of stream).
-// Output tokens arrive in the message_delta event (tail of stream).
-func ExtractAnthropicSSE(head, tail []byte) TokenUsage {
+// ExtractAnthropicMessagesSSE extracts token usage from an Anthropic Messages
+// API SSE stream.
+//
+// The Messages API splits usage across two events:
+//   - message_start (head of stream): input_tokens and all cache token fields.
+//   - message_delta (tail of stream): output_tokens.
+//
+// Both windows are scanned; head carries input, tail carries output.
+func ExtractAnthropicMessagesSSE(head, tail []byte) TokenUsage {
 	var u TokenUsage
 
 	// Head: message_start carries input tokens and cache tokens.
@@ -54,7 +73,7 @@ func ExtractAnthropicSSE(head, tail []byte) TokenUsage {
 		case u.Input == 0 && curEvent == "message_start" && bytes.HasPrefix(line, []byte("data: ")):
 			var msg struct {
 				Message struct {
-					Usage *anthropicUsage `json:"usage"`
+					Usage *anthropicMessagesUsage `json:"usage"`
 				} `json:"message"`
 			}
 			if json.Unmarshal(line[6:], &msg) == nil && msg.Message.Usage != nil {

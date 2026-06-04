@@ -6,13 +6,16 @@
 //   - Non-streaming (Content-Type: application/json): accumulates the full
 //     body across chunks; dispatches to the provider-specific JSON extractor.
 //
-// The provider kind is read from the orange dynamic-metadata namespace
-// (written by the match filter) and selects one of four extraction strategies:
+// The provider kind and endpoint are read from the orange dynamic-metadata
+// namespace (written by the match filter) and together select one of five
+// extraction strategies:
 //
-//	openai-non-streaming  → extractOpenAIJSON
-//	openai-streaming      → extractOpenAISSE
-//	anthropic-non-streaming → extractAnthropicJSON
-//	anthropic-streaming   → extractAnthropicSSE
+//	openai-non-streaming + chat_completions/messages → ExtractOpenAIChatCompletionsJSON
+//	openai-streaming    + chat_completions/messages  → ExtractOpenAIChatCompletionsSSE
+//	openai-non-streaming + responses                 → ExtractOpenAIResponsesJSON
+//	openai-streaming    + responses                  → ExtractOpenAIResponsesSSE
+//	anthropic-non-streaming → ExtractAnthropicMessagesJSON
+//	anthropic-streaming     → ExtractAnthropicMessagesSSE
 //
 // On stream completion the extracted counts are emitted as Envoy counters
 // (orange_input_tokens, orange_output_tokens) and as dynamic metadata under
@@ -100,6 +103,7 @@ type streamState struct {
 	ring      *buffer.HeadTail // non-nil on the streaming path
 	buf       []byte           // accumulator on the non-streaming path
 	kind      providerKind
+	endpoint  string // match.EndpointResponses or "" for chat_completions/messages
 	streaming bool
 	skip      bool
 }
@@ -122,6 +126,7 @@ func meterResponse(w *up.Writer, chunk *up.ResponseChunk) {
 		}
 		if !s.skip {
 			s.kind = resolveKind(w)
+			s.endpoint = resolveEndpoint(w)
 		}
 		*chunk.Context = s
 		return
@@ -147,13 +152,17 @@ func meterResponse(w *up.Writer, chunk *up.ResponseChunk) {
 	var u TokenUsage
 	switch {
 	case s.streaming && s.kind == kindAnthropic:
-		u = ExtractAnthropicSSE(s.ring.Head(), s.ring.Tail())
+		u = ExtractAnthropicMessagesSSE(s.ring.Head(), s.ring.Tail())
+	case s.streaming && s.endpoint == match.EndpointResponses:
+		u = ExtractOpenAIResponsesSSE(s.ring.Head(), s.ring.Tail())
 	case s.streaming:
-		u = ExtractOpenAISSE(s.ring.Head(), s.ring.Tail())
+		u = ExtractOpenAIChatCompletionsSSE(s.ring.Head(), s.ring.Tail())
 	case s.kind == kindAnthropic:
-		u = ExtractAnthropicJSON(s.buf)
+		u = ExtractAnthropicMessagesJSON(s.buf)
+	case s.endpoint == match.EndpointResponses:
+		u = ExtractOpenAIResponsesJSON(s.buf)
 	default:
-		u = ExtractOpenAIJSON(s.buf)
+		u = ExtractOpenAIChatCompletionsJSON(s.buf)
 	}
 
 	for _, inc := range []struct {
@@ -206,4 +215,14 @@ func resolveKind(w *up.Writer) providerKind {
 	default:
 		return kindOpenAI
 	}
+}
+
+// resolveEndpoint reads the endpoint discriminator written by the match filter.
+// Returns match.EndpointResponses for POST /v1/responses; empty string otherwise.
+func resolveEndpoint(w *up.Writer) string {
+	v, ok := w.GetMetadataString(up.MetadataSourceDynamic, match.MetadataNamespace, match.MetadataKeyEndpoint)
+	if !ok {
+		return ""
+	}
+	return v.String()
 }
