@@ -18,17 +18,18 @@ import (
 // only if the yaml is loaded via config.Load directly (we skip secret resolution
 // by using a bearer type with a literal token for unit tests).
 const testOrangeYAML = `
-providers:
-  openai:
-    kind: openai
-    endpoint: https://api.openai.com
-    auth:
-      type: bearer
-      secret_ref: env://ORANGE_RESPONSESWS_TEST_OPENAI_KEY
+llm:
+  providers:
+    openai:
+      kind: openai
+      endpoint: https://api.openai.com
+      auth:
+        type: bearer
+        secret_ref: env://ORANGE_RESPONSESWS_TEST_OPENAI_KEY
 
-models:
-  gpt-4o-mini:
-    provider: openai
+  models:
+    gpt-4o-mini:
+      provider: openai
 `
 
 // setupTestConfig writes testOrangeYAML to a temp file and wires it as the

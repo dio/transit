@@ -1,11 +1,12 @@
-providers:
-  provider_a:
-    kind: openai
-    endpoint: https://provider-a.example.test
-    auth:
-      type: bearer
-      secret_ref: env://PICK_TEST_KEY
+llm:
+  providers:
+    provider_a:
+      kind: openai
+      endpoint: https://provider-a.example.test
+      auth:
+        type: bearer
+        secret_ref: env://PICK_TEST_KEY
 
-models:
-  model-a:
-    provider: provider_a
+  models:
+    model-a:
+      provider: provider_a

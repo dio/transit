@@ -211,14 +211,21 @@ type dnsResult struct {
 	err      error
 }
 
-// resolveAddrs performs DNS resolution for every provider in the current config.
-// It is safe to call from any goroutine; it never touches the cluster handle.
+// resolveAddrs performs DNS resolution for every LLM provider and MCP server in
+// the current config. It is safe to call from any goroutine; it never touches
+// the cluster handle.
 func (c *cluster) resolveAddrs(ctx context.Context) map[string]dnsResult {
 	cfg := config.Get()
 	out := make(map[string]dnsResult, len(cfg.Providers))
 	for name, p := range cfg.Providers {
 		addrs, ttl, err := c.resolve(ctx, p.Endpoint)
 		out[name] = dnsResult{addrs: addrs, hostname: p.Host(), ttl: ttl, err: err}
+	}
+	if cfg.MCP != nil {
+		for name, s := range cfg.MCP.Servers {
+			addrs, ttl, err := c.resolve(ctx, s.Endpoint)
+			out[name] = dnsResult{addrs: addrs, hostname: s.Host(), ttl: ttl, err: err}
+		}
 	}
 	return out
 }

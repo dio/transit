@@ -1,19 +1,20 @@
-providers:
-  provider_a:
-    kind: openai
-    endpoint: https://provider-a.example.test
-    auth:
-      type: bearer
-      secret_ref: env://PICK_TEST_KEY
-  provider_b:
-    kind: openai
-    endpoint: https://provider-b.example.test
-    auth:
-      type: bearer
-      secret_ref: env://PICK_TEST_KEY
+llm:
+  providers:
+    provider_a:
+      kind: openai
+      endpoint: https://provider-a.example.test
+      auth:
+        type: bearer
+        secret_ref: env://PICK_TEST_KEY
+    provider_b:
+      kind: openai
+      endpoint: https://provider-b.example.test
+      auth:
+        type: bearer
+        secret_ref: env://PICK_TEST_KEY
 
-models:
-  model-a:
-    provider: provider_a
-  model-b:
-    provider: provider_b
+  models:
+    model-a:
+      provider: provider_a
+    model-b:
+      provider: provider_b

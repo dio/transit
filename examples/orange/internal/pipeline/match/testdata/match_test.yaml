@@ -1,36 +1,37 @@
-providers:
-  openai_direct:
-    kind: openai
-    endpoint: https://api.openai.com
-    auth:
-      type: bearer
-      secret_ref: env://OPENAI_API_KEY
+llm:
+  providers:
+    openai_direct:
+      kind: openai
+      endpoint: https://api.openai.com
+      auth:
+        type: bearer
+        secret_ref: env://OPENAI_API_KEY
 
-  anthropic_direct:
-    kind: anthropic
-    endpoint: https://api.anthropic.com
-    auth:
-      type: anthropic
-      secret_ref: env://ANTHROPIC_API_KEY
+    anthropic_direct:
+      kind: anthropic
+      endpoint: https://api.anthropic.com
+      auth:
+        type: anthropic
+        secret_ref: env://ANTHROPIC_API_KEY
 
-  groq:
-    kind: openai
-    endpoint: https://api.groq.com
-    path_prefix: "/openai/v1"
-    auth:
-      type: bearer
-      secret_ref: env://GROQ_API_KEY
+    groq:
+      kind: openai
+      endpoint: https://api.groq.com
+      path_prefix: "/openai/v1"
+      auth:
+        type: bearer
+        secret_ref: env://GROQ_API_KEY
 
-models:
-  gpt-4o-mini:
-    provider: openai_direct
-    metadata:
-      tier: fast
-  claude-3-5-sonnet-20241022:
-    provider: anthropic_direct
-  claude-sonnet:
-    provider: anthropic_direct
-    name: claude-3-5-sonnet-20241022
-  groq/llama-3.1-8b-instant:
-    provider: groq
-    name: llama-3.1-8b-instant
+  models:
+    gpt-4o-mini:
+      provider: openai_direct
+      metadata:
+        tier: fast
+    claude-3-5-sonnet-20241022:
+      provider: anthropic_direct
+    claude-sonnet:
+      provider: anthropic_direct
+      name: claude-3-5-sonnet-20241022
+    groq/llama-3.1-8b-instant:
+      provider: groq
+      name: llama-3.1-8b-instant
