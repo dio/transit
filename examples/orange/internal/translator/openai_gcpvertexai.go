@@ -65,21 +65,28 @@ type gcpVertexAIErrorDetails struct {
 // NewChatCompletionOpenAIToGCPVertexAITranslator implements [Factory] for OpenAI to GCP Gemini translation.
 // This translator converts OpenAI ChatCompletion API requests to GCP Gemini API format.
 // CODEMOD-TODO: original params were: backendModel string
-func NewChatCompletionOpenAIToGCPVertexAITranslator(cfg ProviderConfig) Translator{
-	return &openAIToGCPVertexAITranslatorV1ChatCompletion{backendModel: cfg.BackendModel, toolCallIndex: int64(0)}
+func NewChatCompletionOpenAIToGCPVertexAITranslator(cfg ProviderConfig) Translator {
+	return &openAIToGCPVertexAITranslatorV1ChatCompletion{
+		backendModel: cfg.BackendModel,
+		gcpProject:   cfg.Extra["gcp_project"],
+		gcpLocation:  cfg.Extra["gcp_location"],
+		toolCallIndex: int64(0),
+	}
 }
 
 // openAIToGCPVertexAITranslatorV1ChatCompletion translates OpenAI Chat Completions API to GCP Vertex AI Gemini API.
 // Note: This uses the Gemini native API directly, not Vertex AI's OpenAI-compatible API:
 // https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference
 type openAIToGCPVertexAITranslatorV1ChatCompletion struct {
-	responseMode      geminiResponseMode
-	backendModel string
-	stream            bool // Track if this is a streaming request.
-	streamDelimiter   []byte
-	bufferedBody      []byte // Buffer for incomplete JSON chunks.
-	requestModel      string
-	toolCallIndex     int64
+	responseMode    geminiResponseMode
+	backendModel    string
+	gcpProject      string
+	gcpLocation     string
+	stream          bool // Track if this is a streaming request.
+	streamDelimiter []byte
+	bufferedBody    []byte // Buffer for incomplete JSON chunks.
+	requestModel    string
+	toolCallIndex   int64
 	// Redaction configuration for debug logging
 	debugLogEnabled bool
 	enableRedaction bool
@@ -100,13 +107,21 @@ func (o *openAIToGCPVertexAITranslatorV1ChatCompletion) RequestBody(raw []byte) 
 	// Set streaming flag.
 	o.stream = openAIReq.Stream
 
-	// Choose the correct endpoint based on streaming.
+	// Choose the correct endpoint based on streaming and backend type.
 	var path string
-	if o.stream {
-		// For streaming requests, use the streamGenerateContent endpoint with SSE format.
-		path = buildGCPModelPathSuffix(gcpModelPublisherGoogle, o.requestModel, gcpMethodStreamGenerateContent, "alt=sse")
+	if o.gcpProject != "" && o.gcpLocation != "" {
+		// Vertex AI: /v1/projects/{project}/locations/{location}/publishers/google/models/{model}:generateContent
+		suffix := buildGCPModelPathSuffix(gcpModelPublisherGoogle, o.requestModel, gcpMethodGenerateContent)
+		if o.stream {
+			suffix = buildGCPModelPathSuffix(gcpModelPublisherGoogle, o.requestModel, gcpMethodStreamGenerateContent, "alt=sse")
+		}
+		path = fmt.Sprintf("/v1/projects/%s/locations/%s/%s", o.gcpProject, o.gcpLocation, suffix)
+	} else if o.stream {
+		// Generative Language API (API key): /v1beta/models/{model}:streamGenerateContent?alt=sse
+		path = fmt.Sprintf("/v1beta/models/%s:streamGenerateContent?alt=sse", o.requestModel)
 	} else {
-		path = buildGCPModelPathSuffix(gcpModelPublisherGoogle, o.requestModel, gcpMethodGenerateContent)
+		// Generative Language API (API key): /v1beta/models/{model}:generateContent
+		path = fmt.Sprintf("/v1beta/models/%s:generateContent", o.requestModel)
 	}
 	// MANUAL-FIX: openAIMessageToGeminiMessage takes *openai.ChatCompletionRequest.
 	gcpReq, err := o.openAIMessageToGeminiMessage(&openAIReq, o.requestModel)

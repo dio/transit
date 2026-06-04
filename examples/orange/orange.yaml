@@ -9,6 +9,38 @@ llm:
         context_length: 128000
         max_tokens: 16384
         tags: ["chat", "responses", "fast", "vision"]
+    gemini-2.5-flash:
+      provider: gemini
+      metadata:
+        description: "Gemini 2.5 Flash via Google Generative Language API (API key)."
+        context_length: 1048576
+        tags: ["chat", "fast", "vision"]
+    vertex/gemini-2.5-flash:
+      provider: vertex
+      name: gemini-2.5-flash
+      metadata:
+        description: "Gemini 2.5 Flash via GCP Vertex AI (service account)."
+        context_length: 1048576
+        tags: ["chat", "fast", "vision"]
+    vertex/claude-opus-4:
+      provider: vertex_anthropic
+      name: claude-opus-4@20250514
+      metadata:
+        description: "Claude Opus 4 via GCP Vertex AI (service account)."
+        context_length: 200000
+        tags: ["chat"]
+    amazon.nova-lite-v1:0:
+      provider: bedrock
+      metadata:
+        description: "Amazon Nova Lite via AWS Bedrock."
+        context_length: 300000
+        tags: ["chat", "fast", "vision"]
+    amazon.nova-micro-v1:0:
+      provider: bedrock
+      metadata:
+        description: "Amazon Nova Micro via AWS Bedrock."
+        context_length: 128000
+        tags: ["chat", "fast"]
   providers:
     anthropic:
       kind: anthropic
@@ -25,6 +57,46 @@ llm:
       auth:
         type: bearer
         secret_ref: env://OPENAI_API_KEY
+
+    gemini:
+      kind: openai
+      backend_schema: gcpvertexai
+      endpoint: https://generativelanguage.googleapis.com
+      auth:
+        type: gemini
+        secret_ref: env://GEMINI_API_KEY
+
+    vertex:
+      kind: openai
+      backend_schema: gcpvertexai
+      endpoint: https://us-central1-aiplatform.googleapis.com
+      extra:
+        gcp_project: tars-production-6f92c3c
+        gcp_location: us-central1
+      auth:
+        type: gcp
+        secret_ref: env://GCP_SERVICE_ACCOUNT_JSON
+
+    vertex_anthropic:
+      kind: anthropic
+      backend_schema: gcpanthropic
+      endpoint: https://us-east5-aiplatform.googleapis.com
+      extra:
+        anthropic_version: "vertex-2023-10-16"
+        gcp_project: tars-production-6f92c3c
+        gcp_location: us-east5
+      auth:
+        type: gcp
+        secret_ref: env://GCP_SERVICE_ACCOUNT_JSON
+
+    bedrock:
+      kind: openai
+      backend_schema: awsbedrock
+      endpoint: https://bedrock-runtime.us-east-1.amazonaws.com
+      extra:
+        aws_region: us-east-1
+      auth:
+        type: aws
 
 mcp:
   profiles:

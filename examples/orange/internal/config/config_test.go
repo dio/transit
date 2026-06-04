@@ -134,6 +134,8 @@ func TestLoadFile_exampleOrangeYAMLIncludesGPT4oMiniMetadata(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-test-openai")
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test-anthropic")
 	t.Setenv("GITHUB_TOKEN", "github-test-token")
+	t.Setenv("GEMINI_API_KEY", "test-gemini-api-key")
+	t.Setenv("GCP_SERVICE_ACCOUNT_JSON", `{"type":"service_account"}`)
 
 	cfg, err := LoadFile("../../orange.yaml")
 	require.NoError(t, err)

@@ -541,9 +541,17 @@ func resolveSecrets(cfg *Config) error {
 		if p.Auth.SecretRef == "" {
 			continue
 		}
-		v, err := resolveSecretRef(p.Auth.SecretRef)
-		if err != nil {
-			return fmt.Errorf("orange/config: provider %q: %w", name, err)
+		var v string
+		var err error
+		if p.Auth.Type == "gcp" && strings.HasPrefix(p.Auth.SecretRef, "file://") {
+			// For GCP, pass the file path directly so NewGCPAuth can use
+			// CredentialsFile without reading the file here.
+			v = strings.TrimPrefix(p.Auth.SecretRef, "file://")
+		} else {
+			v, err = resolveSecretRef(p.Auth.SecretRef)
+			if err != nil {
+				return fmt.Errorf("orange/config: provider %q: %w", name, err)
+			}
 		}
 		cfg.resolvedSecrets[name] = v
 	}

@@ -96,18 +96,18 @@
       "additionalProperties": false,
       "properties": {
         "type": {
-          "description": "Auth handler name. bearer/x-api-key/anthropic require secret_ref. aws reads extra.aws_region. gcp uses Application Default Credentials.",
+          "description": "Auth handler name. bearer/x-api-key/gemini/anthropic require secret_ref. aws reads extra.aws_region. gcp uses ADC by default; supply secret_ref with SA JSON to skip ADC. gemini injects the secret as x-goog-api-key header.",
           "type": "string",
-          "enum": ["bearer", "x-api-key", "anthropic", "aws", "gcp"]
+          "enum": ["bearer", "x-api-key", "gemini", "anthropic", "aws", "gcp"]
         },
         "secret_ref": {
-          "description": "URI reference to a credential resolved at config load. Only env://VAR_NAME is supported. Required for bearer, x-api-key, and anthropic types.",
+          "description": "URI reference to a credential resolved at config load. Supported schemes: env://VAR_NAME (env var value), file:///abs/path (file contents, or file path for type:gcp), literal://value (inline). Required for bearer, x-api-key, gemini, and anthropic types.",
           "type": "string",
-          "pattern": "^env://.+"
+          "pattern": "^(env|file|literal)://.+"
         }
       },
       "if": {
-        "properties": { "type": { "enum": ["bearer", "x-api-key", "anthropic"] } }
+        "properties": { "type": { "enum": ["bearer", "x-api-key", "gemini", "anthropic"] } }
       },
       "then": {
         "required": ["secret_ref"]

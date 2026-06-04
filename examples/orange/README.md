@@ -23,7 +23,7 @@ Envoy.
                               │    model →         on match's promise,       inject auth,         Vertex / Groq / …)
                               │    provider)       picks resolved IP)        count tokens)
                               │
-   POST   /mcp[/profile|/s/x] │                                                                ┌─► kiwi
+   POST   /mcp[/profile|/s/x] │                                                               ┌─► kiwi
    GET    /mcp[/...]   (SSE)  ├─► orange-mcp ─────────────────────────►  orange-mcp-egress ───┼─► github
    DELETE /mcp[/...]          │   (sealed public session,                 (sets backend →     └─► aws-knowledge
                               ┘    fans out to backends,                   pick host, applies     (any MCP server)
@@ -360,17 +360,143 @@ mcp:
 `secret_ref: env://VAR` is resolved at config load; missing env vars fail
 boot loudly — secrets are never silently empty.
 
-Supported `auth.type` values: `bearer`, `x-api-key`, `anthropic`, `aws`,
-`gcp`.
+Supported `auth.type` values: `bearer`, `x-api-key`, `anthropic`, `gemini`,
+`aws`, `gcp`.
 Supported `backend_schema` values (override `kind` for the wire translator):
 `azureopenai`, `awsbedrock`, `awsanthropic`, `gcpvertexai`, `gcpanthropic`.
+
+### Provider credentials
+
+Each provider in `orange.yaml` declares how it obtains credentials. The table
+below lists what you need to set before running Orange with that provider.
+
+| Provider type | `auth.type` | What to supply | Notes |
+|---|---|---|---|
+| OpenAI, any bearer-token API | `bearer` | `secret_ref: env://OPENAI_API_KEY` | Any env var name; token injected as `Authorization: Bearer …`. |
+| Anthropic direct | `anthropic` | `secret_ref: env://ANTHROPIC_API_KEY` | Injects `x-api-key` + `anthropic-version` header. |
+| Google Generative Language API (`generativelanguage.googleapis.com`) | `gemini` | `secret_ref: env://GEMINI_API_KEY` | Injects `x-goog-api-key` header. No project/location needed. |
+| GCP Vertex AI (Gemini or Anthropic via rawPredict) | `gcp` | `secret_ref: env://GCP_SERVICE_ACCOUNT_JSON` **or** `secret_ref: file:///path/to/key.json` **or** nothing | Three credential modes: (1) `env://` — env var holds the full service-account JSON string; (2) `file://` — absolute path to a key file, passed directly to the GCP SDK as `CredentialsFile`; (3) no `secret_ref` — [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials) (`GOOGLE_APPLICATION_CREDENTIALS`, Workload Identity, gcloud user creds). |
+| AWS Bedrock / Bedrock Anthropic | `aws` | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` + `AWS_REGION` in environment | No `secret_ref`; credentials come from the AWS SDK default chain (env vars, `~/.aws/credentials`, instance role). `extra.aws_region` is still required in `orange.yaml` for SigV4 signing. |
+
+#### Vertex AI provider example
+
+```yaml
+llm:
+  providers:
+    # Gemini via Google Generative Language API (API key, no project needed)
+    gemini:
+      kind: openai
+      backend_schema: gcpvertexai
+      endpoint: https://generativelanguage.googleapis.com
+      auth:
+        type: gemini
+        secret_ref: env://GEMINI_API_KEY
+
+    # Gemini via Vertex AI (service account or ADC)
+    vertex:
+      kind: openai
+      backend_schema: gcpvertexai
+      endpoint: https://us-central1-aiplatform.googleapis.com
+      extra:
+        gcp_project: my-project
+        gcp_location: us-central1
+      auth:
+        type: gcp
+        secret_ref: env://GCP_SERVICE_ACCOUNT_JSON   # env var holds SA JSON — or:
+        # secret_ref: file:///path/to/key.json       # path passed directly to GCP SDK
+        # (omit secret_ref entirely to fall back to ADC)
+
+    # Anthropic claude-* via Vertex AI rawPredict
+    vertex_anthropic:
+      kind: anthropic
+      backend_schema: gcpanthropic
+      endpoint: https://us-east5-aiplatform.googleapis.com
+      extra:
+        anthropic_version: "vertex-2023-10-16"       # required by Vertex; differs from direct Anthropic
+        gcp_project: my-project
+        gcp_location: us-east5
+      auth:
+        type: gcp
+        secret_ref: env://GCP_SERVICE_ACCOUNT_JSON   # or file:///path/to/key.json, or omit for ADC
+  models:
+    gemini-2.5-flash:
+      provider: gemini
+    vertex/gemini-2.5-flash:
+      provider: vertex
+      name: gemini-2.5-flash
+    vertex/claude-opus-4:
+      provider: vertex_anthropic
+      name: claude-opus-4@20250514
+```
+
+> **Vertex `anthropic_version`** must be `"vertex-2023-10-16"`, not the
+> `"2023-06-01"` header used by the direct Anthropic API. Orange does not
+> override this automatically; the correct value must be in `extra`.
+
+> **Vertex Anthropic via `/v1/messages`** is routed through the
+> `gcpanthropic:messages` translator, which builds the `rawPredict` /
+> `streamRawPredict` path, injects `anthropic_version`, and removes the
+> `model` field from the body (Vertex rejects requests that include it —
+> the model is encoded in the URL path only).
+
+#### AWS Bedrock provider example
+
+```yaml
+llm:
+  providers:
+    bedrock:
+      kind: openai
+      backend_schema: awsbedrock
+      endpoint: https://bedrock-runtime.us-east-1.amazonaws.com
+      extra:
+        aws_region: us-east-1      # must match the endpoint region; used for SigV4
+      auth:
+        type: aws                  # no secret_ref; reads AWS_* env vars / IAM role
+  models:
+    amazon.nova-lite-v1:0:
+      provider: bedrock
+    amazon.nova-micro-v1:0:
+      provider: bedrock
+```
+
+Set before running:
+
+```bash
+export AWS_ACCESS_KEY_ID=AKIA…
+export AWS_SECRET_ACCESS_KEY=…
+export AWS_REGION=us-east-1        # or AWS_DEFAULT_REGION
+```
+
+Orange delegates entirely to the AWS SDK default credential chain — IAM
+instance roles, `~/.aws/credentials`, and the env vars above all work.
+`extra.aws_region` is still required so Orange can scope the SigV4
+signature to the right region.
+
+> **SigV4 service name**: Bedrock Runtime's signing service is `bedrock`
+> (not `bedrock-runtime`); the hostname uses `bedrock-runtime` but the
+> credential scope must say `bedrock`.
 
 ## Quickstart
 
 ```bash
+# Required for the default orange.yaml providers
 export OPENAI_API_KEY=sk-...
 export ANTHROPIC_API_KEY=sk-ant-...
-export GITHUB_TOKEN=ghp-...        # only needed if you use the github MCP backend
+export GITHUB_TOKEN=$(gh auth token)   # MCP github backend
+
+# GCP providers — pick one or both:
+export GEMINI_API_KEY=AIza...          # Gemini via generativelanguage.googleapis.com
+export GCP_SERVICE_ACCOUNT_JSON=$(cat my-sa-key.json)  # Vertex AI: env var holds SA JSON
+# Alternatives for GCP credentials:
+#   secret_ref: file:///abs/path/to/key.json  (path passed directly to GCP SDK — no env var needed)
+#   omit secret_ref entirely and rely on ADC:
+#     gcloud auth application-default login
+#     export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json
+
+# AWS Bedrock
+export AWS_ACCESS_KEY_ID=AKIA...
+export AWS_SECRET_ACCESS_KEY=...
+export AWS_REGION=us-east-1
 
 make demo     # builds the .so, renders envoy.yaml, prints curl examples,
               # then runs envoy in the foreground.
@@ -406,6 +532,32 @@ curl -s localhost:8080/v1/messages -H 'content-type: application/json' \
 # Anthropic Messages — streaming (SSE)
 curl -N -s localhost:8080/v1/messages -H 'content-type: application/json' \
   -d '{"model":"claude-haiku-4-5","max_tokens":64,"stream":true,
+       "messages":[{"role":"user","content":"count 1 to 5"}]}'
+
+# Gemini via Google Generative Language API (API key)
+curl -s localhost:8080/v1/chat/completions -H 'content-type: application/json' \
+  -d '{"model":"gemini-2.5-flash","messages":[{"role":"user","content":"hi"}]}'
+
+# Gemini via Vertex AI (service account / ADC)
+curl -s localhost:8080/v1/chat/completions -H 'content-type: application/json' \
+  -d '{"model":"vertex/gemini-2.5-flash","messages":[{"role":"user","content":"hi"}]}'
+
+# Anthropic claude via Vertex AI rawPredict — OpenAI Chat Completions path
+curl -s localhost:8080/v1/chat/completions -H 'content-type: application/json' \
+  -d '{"model":"vertex/claude-opus-4","messages":[{"role":"user","content":"hi"}]}'
+
+# Anthropic claude via Vertex AI rawPredict — native Anthropic Messages path
+curl -s localhost:8080/v1/messages -H 'content-type: application/json' \
+  -d '{"model":"vertex/claude-opus-4","max_tokens":64,
+       "messages":[{"role":"user","content":"hi"}]}'
+
+# AWS Bedrock — Amazon Nova Lite
+curl -s localhost:8080/v1/chat/completions -H 'content-type: application/json' \
+  -d '{"model":"amazon.nova-lite-v1:0","messages":[{"role":"user","content":"hi"}]}'
+
+# AWS Bedrock — streaming
+curl -N -s localhost:8080/v1/chat/completions -H 'content-type: application/json' \
+  -d '{"model":"amazon.nova-lite-v1:0","stream":true,
        "messages":[{"role":"user","content":"count 1 to 5"}]}'
 ```
 

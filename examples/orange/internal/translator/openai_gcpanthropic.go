@@ -33,8 +33,10 @@ const (
 // MANUAL-FIX: codemod used wrong Extra key "azure_api_version"; corrected to "anthropic_version".
 func NewChatCompletionOpenAIToGCPAnthropicTranslator(cfg ProviderConfig) Translator {
 	return &openAIToGCPAnthropicTranslatorV1ChatCompletion{
-		apiVersion:        cfg.Extra["anthropic_version"],
+		apiVersion:   cfg.Extra["anthropic_version"],
 		backendModel: cfg.BackendModel,
+		gcpProject:   cfg.Extra["gcp_project"],
+		gcpLocation:  cfg.Extra["gcp_location"],
 	}
 }
 
@@ -42,10 +44,12 @@ func NewChatCompletionOpenAIToGCPAnthropicTranslator(cfg ProviderConfig) Transla
 // This uses the Claude rawPredict and streamRawPredict APIs on Vertex AI:
 // https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/claude
 type openAIToGCPAnthropicTranslatorV1ChatCompletion struct {
-	apiVersion        string
+	apiVersion   string
 	backendModel string
-	streamParser      *anthropicStreamParser
-	requestModel      string
+	gcpProject   string
+	gcpLocation  string
+	streamParser *anthropicStreamParser
+	requestModel string
 	// Redaction configuration for debug logging
 	debugLogEnabled bool
 	enableRedaction bool
@@ -84,7 +88,8 @@ func (o *openAIToGCPAnthropicTranslatorV1ChatCompletion) RequestBody(raw []byte)
 		o.streamParser = newAnthropicStreamParser(o.requestModel)
 	}
 
-	path := buildGCPModelPathSuffix(gcpModelPublisherAnthropic, o.requestModel, specifier)
+	suffix := buildGCPModelPathSuffix(gcpModelPublisherAnthropic, o.requestModel, specifier)
+	path := fmt.Sprintf("/v1/projects/%s/locations/%s/%s", o.gcpProject, o.gcpLocation, suffix)
 	// b. Set the "anthropic_version" key in the JSON body
 	// Using same logic as anthropic go SDK: https://github.com/anthropics/anthropic-sdk-go/blob/e252e284244755b2b2f6eef292b09d6d1e6cd989/bedrock/bedrock.go#L167
 	anthropicVersion := anthropicVertex.DefaultVersion
@@ -214,8 +219,76 @@ func (o *openAIToGCPAnthropicTranslatorV1ChatCompletion) RequestHeaders(_ map[st
 	return nil, nil
 }
 
+// anthropicToGCPAnthropicMessagesTranslator handles /v1/messages → Vertex AI rawPredict.
+// The client body is already in Anthropic Messages format; we only need to set
+// the correct Vertex path and inject anthropic_version. No response translation
+// is needed: Vertex rawPredict proxies the Anthropic SSE format through unchanged.
+type anthropicToGCPAnthropicMessagesTranslator struct {
+	apiVersion   string
+	backendModel string
+	gcpProject   string
+	gcpLocation  string
+}
+
+func (t *anthropicToGCPAnthropicMessagesTranslator) RequestHeaders(_ map[string]string) ([]Header, error) {
+	return nil, nil
+}
+
+func (t *anthropicToGCPAnthropicMessagesTranslator) RequestBody(raw []byte) ([]Header, []byte, error) {
+	var req struct {
+		Model  string `json:"model"`
+		Stream bool   `json:"stream"`
+	}
+	_ = json.Unmarshal(raw, &req)
+
+	model := req.Model
+	if t.backendModel != "" {
+		model = t.backendModel
+	}
+
+	specifier := "rawPredict"
+	if req.Stream {
+		specifier = "streamRawPredict"
+	}
+	suffix := buildGCPModelPathSuffix(gcpModelPublisherAnthropic, model, specifier)
+	p := fmt.Sprintf("/v1/projects/%s/locations/%s/%s", t.gcpProject, t.gcpLocation, suffix)
+
+	version := anthropicVertex.DefaultVersion
+	if t.apiVersion != "" {
+		version = t.apiVersion
+	}
+	body, err := sjson.SetBytes(raw, anthropicVersionKey, version)
+	if err != nil {
+		return nil, nil, err
+	}
+	body, err = sjson.DeleteBytes(body, "model")
+	if err != nil {
+		return nil, nil, err
+	}
+	return []Header{
+		{pathHeaderName, p},
+		{contentLengthHeaderName, strconv.Itoa(len(body))},
+	}, body, nil
+}
+
+func (t *anthropicToGCPAnthropicMessagesTranslator) ResponseHeaders(_ map[string]string) ([]Header, error) {
+	return nil, nil
+}
+
+func (t *anthropicToGCPAnthropicMessagesTranslator) ResponseBody(_ []byte, _ bool) ([]Header, []byte, error) {
+	return nil, nil, nil
+}
+
 func init() {
 	Register("gcpanthropic", func(cfg ProviderConfig) Translator {
 		return NewChatCompletionOpenAIToGCPAnthropicTranslator(cfg)
+	})
+	Register("gcpanthropic:messages", func(cfg ProviderConfig) Translator {
+		return &anthropicToGCPAnthropicMessagesTranslator{
+			apiVersion:   cfg.Extra["anthropic_version"],
+			backendModel: cfg.BackendModel,
+			gcpProject:   cfg.Extra["gcp_project"],
+			gcpLocation:  cfg.Extra["gcp_location"],
+		}
 	})
 }

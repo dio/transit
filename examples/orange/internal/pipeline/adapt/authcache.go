@@ -63,17 +63,21 @@ func InjectHeaderAuth(w *up.Writer, upstreamName string, prov config.Provider, s
 }
 
 // buildAuthHandler constructs the right handler for prov using this priority:
-//  1. Secret non-empty → static credential handler
-//  2. gcpvertexai / gcpanthropic → GCPAuth (ADC)
-//  3. awsbedrock / awsanthropic  → AWSAuth (SigV4; requires extra.aws_region)
-//  4. Otherwise → noAuth{}
+//  1. type: gcp → GCPAuth (secret = SA JSON if secret_ref set, otherwise ADC)
+//  2. Secret non-empty → static credential handler
+//  3. gcpvertexai / gcpanthropic (no explicit type) → GCPAuth (ADC)
+//  4. awsbedrock / awsanthropic  → AWSAuth (SigV4; requires extra.aws_region)
+//  5. Otherwise → noAuth{}
 func buildAuthHandler(prov config.Provider, secret string) (backendAuthHandler, error) {
+	if prov.Auth.Type == "gcp" {
+		return NewGCPAuth(context.Background(), secret)
+	}
 	if secret != "" {
 		return staticAuthHandler(prov, secret), nil
 	}
 	switch prov.EffectiveBackendSchema() {
 	case "gcpvertexai", "gcpanthropic":
-		return NewGCPAuth(context.Background())
+		return NewGCPAuth(context.Background(), "")
 	case "awsbedrock", "awsanthropic":
 		region := prov.Extra["aws_region"]
 		if region == "" {
@@ -91,6 +95,8 @@ func staticAuthHandler(prov config.Provider, secret string) backendAuthHandler {
 		return BearerAuth{Token: secret}
 	case "x-api-key":
 		return APIKeyAuth{Header: "x-api-key", Key: secret}
+	case "gemini":
+		return APIKeyAuth{Header: "x-goog-api-key", Key: secret}
 	case "anthropic":
 		return AnthropicAuth{APIKey: secret, Version: prov.Extra["anthropic_version"]}
 	default:
