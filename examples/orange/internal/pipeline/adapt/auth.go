@@ -96,17 +96,11 @@ func NewGCPAuth(ctx context.Context) (*GCPAuth, error) {
 		Scopes: []string{gcpCloudPlatformScope},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("orange: GCP Application Default Credentials not found: %w\n"+
-			"Run: gcloud auth application-default login\n"+
-			"Or set GOOGLE_APPLICATION_CREDENTIALS to a service account key file.", err)
+		return nil, fmt.Errorf("orange: GCP Application Default Credentials not found: %w; "+
+			"run: gcloud auth application-default login "+
+			"or set GOOGLE_APPLICATION_CREDENTIALS to a service account key file", err)
 	}
 	return &GCPAuth{creds: creds}, nil
-}
-
-// newGCPAuthFromCreds constructs a GCPAuth from an already-resolved *authlib.Credentials.
-// Used by tests to inject a fake credential source without ADC.
-func newGCPAuthFromCreds(creds *authlib.Credentials) *GCPAuth {
-	return &GCPAuth{creds: creds}
 }
 
 func (a *GCPAuth) InjectAuth(w *up.Writer) {
@@ -132,8 +126,8 @@ const awsBedrockService = "bedrock-runtime"
 func NewAWSAuth(ctx context.Context, region string) (*AWSAuth, error) {
 	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
 	if err != nil {
-		return nil, fmt.Errorf("orange: AWS credentials not found for region %q: %w\n"+
-			"Set AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY, or configure an IAM role.", region, err)
+		return nil, fmt.Errorf("orange: AWS credentials not found for region %q: %w; "+
+			"set AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY or configure an IAM role", region, err)
 	}
 	return &AWSAuth{creds: cfg.Credentials, region: region, signer: v4.NewSigner()}, nil
 }

@@ -254,7 +254,7 @@ func toolMsgToGeminiParts(msg openai.ChatCompletionToolMessageParam, knownToolCa
 
 // assistantMsgToGeminiParts converts OpenAI assistant message to Gemini Parts and known tool calls.
 func assistantMsgToGeminiParts(msg *openai.ChatCompletionAssistantMessageParam) ([]*genai.Part, map[string]string, error) {
-	var parts []*genai.Part
+	parts := make([]*genai.Part, 0, len(msg.ToolCalls))
 	var thoughtSignature []byte // Collect signature from thinking content
 
 	// First pass: scan content to find thinking signature

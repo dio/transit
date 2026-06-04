@@ -40,8 +40,8 @@ func ExtractOpenAIChatCompletionsJSON(body []byte) TokenUsage {
 // Do not add Responses API fields here; use responsesAPIUsage in
 // meter_openai_responses.go instead.
 type chatCompletionsUsage struct {
-	PromptTokens     uint32 `json:"prompt_tokens"`
-	CompletionTokens uint32 `json:"completion_tokens"`
+	PromptTokens        uint32 `json:"prompt_tokens"`
+	CompletionTokens    uint32 `json:"completion_tokens"`
 	PromptTokensDetails struct {
 		CachedTokens uint32 `json:"cached_tokens"`
 		AudioTokens  uint32 `json:"audio_tokens"`

@@ -108,7 +108,7 @@ type MCPConfig struct {
 
 // MCPProfile describes a named group of MCP servers.
 type MCPProfile struct {
-	Tools map[string]MCPProfileTools `yaml:"tools"` // per-server tool scoping; keys define the server set
+	Tools map[string]MCPProfileTools `yaml:"tools"`          // per-server tool scoping; keys define the server set
 	Auth  map[string]Auth            `yaml:"auth,omitempty"` // per-server auth overrides; key is server name
 }
 
@@ -470,7 +470,10 @@ func fileConfigSource(path string) up.ConfigSource {
 // configTransport is the shared HTTP transport for all config sources.
 // Initialized once; provides connection pooling across refreshes and reloads.
 var configTransport = sync.OnceValue(func() http.RoundTripper {
-	return http.DefaultTransport.(*http.Transport).Clone()
+	if t, ok := http.DefaultTransport.(*http.Transport); ok {
+		return t.Clone()
+	}
+	return http.DefaultTransport
 })
 
 func httpConfigSource(rawURL string, timeout time.Duration) up.ConfigSource {
@@ -494,7 +497,7 @@ func httpConfigSource(rawURL string, timeout time.Duration) up.ConfigSource {
 		if err != nil {
 			return nil, fmt.Errorf("orange/config: fetch %s: %w", rawURL, err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		if resp.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("orange/config: fetch %s: HTTP %d", rawURL, resp.StatusCode)
 		}
@@ -672,7 +675,7 @@ func pipeline() *up.PipelineConfig[*Config] {
 		}
 	}
 	p := up.NewPollingConfig(src, Decoder(), opts)
-	p.RefreshOnce(context.Background()) //nolint:errcheck — nil snapshot causes Get() to panic
+	_ = p.RefreshOnce(context.Background()) // nil snapshot causes Get() to panic with a descriptive message
 	globalPipeline = p
 	return p
 }

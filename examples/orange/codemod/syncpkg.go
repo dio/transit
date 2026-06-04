@@ -147,9 +147,7 @@ func syncHelperFile(src, dst string) error {
 	rewrites := append([]struct{ from, to string }{}, commonImportRewrites...)
 
 	// Add helper type rewrites.
-	for _, r := range helperTypeRewrites {
-		rewrites = append(rewrites, r)
-	}
+	rewrites = append(rewrites, helperTypeRewrites...)
 
 	return syncGoFile(src, dst, rewrites, helperDropImports, []struct{ from, to string }{
 		// Replace internalapi.Header → Header, ModelNameOverride → string everywhere.
@@ -235,18 +233,20 @@ func addMetricsTODOs(content string) string {
 		result = append(result, indent+"// CODEMOD-TODO: wire token usage via Envoy stats")
 		depth := 0
 		for _, ch := range line {
-			if ch == '(' {
+			switch ch {
+			case '(':
 				depth++
-			} else if ch == ')' {
+			case ')':
 				depth--
 			}
 		}
 		i++
 		for depth > 0 && i < len(lines) {
 			for _, ch := range lines[i] {
-				if ch == '(' {
+				switch ch {
+				case '(':
 					depth++
-				} else if ch == ')' {
+				case ')':
 					depth--
 				}
 			}
@@ -271,7 +271,7 @@ func removeTracingapiRefs(content string) string {
 
 	// Remove pure `span.` call lines (standalone statements).
 	lines := strings.Split(content, "\n")
-	var result []string
+	result := make([]string, 0, len(lines))
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		// Drop `_ = span` and `span.RecordXxx(...)` lines.
@@ -294,7 +294,7 @@ func removeSlogRedactionRefs(content string) string {
 	// Only remove in translators. For sync-helpers we keep slog if it's in the original.
 	// NOTE: This is intentionally conservative – we only drop redaction references.
 	lines := strings.Split(content, "\n")
-	var result []string
+	result := make([]string, 0, len(lines))
 	for _, line := range lines {
 		if strings.Contains(line, `"github.com/envoyproxy/ai-gateway/internal/redaction"`) {
 			continue

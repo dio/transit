@@ -373,7 +373,7 @@ func TestFrameTap_multiTurn_accumulatesRecords(t *testing.T) {
 	tap, records := tapWithCapture("sid", "tid", "rid")
 
 	for i := range 3 {
-		tap.FeedClient([]byte(fmt.Sprintf(`{"type":"response.create","model":"gpt-4o-mini"}`)))
+		tap.FeedClient([]byte(`{"type":"response.create","model":"gpt-4o-mini"}`))
 		frame := fmt.Sprintf(`{"type":"response.completed","response":{"id":"resp_%d","usage":{"input_tokens":5,"output_tokens":10}}}`, i)
 		tap.FeedUpstream([]byte(frame))
 	}

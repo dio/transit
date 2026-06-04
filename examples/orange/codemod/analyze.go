@@ -41,9 +41,7 @@ func analyzeFile(srcPath string) (*ast.File, *token.FileSet, *TranslatorShape, e
 	shape := &TranslatorShape{}
 
 	// Collect imports.
-	for _, imp := range f.Imports {
-		shape.Imports = append(shape.Imports, imp)
-	}
+	shape.Imports = append(shape.Imports, f.Imports...)
 
 	// Find the translator struct. Look for a struct that has RequestBody, ResponseBody
 	// etc. methods, i.e., the type that implements OpenAIChatCompletionTranslator.

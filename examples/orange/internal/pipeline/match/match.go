@@ -112,10 +112,10 @@ var router = up.NewRouter(func(w *up.Writer, r *up.Request) {
 	POST(pathV1ChatCompletions, tagRequestForEndpoint(EndpointChatCompletions)).
 	POST(pathV1Messages, tagRequestForEndpoint(EndpointMessages)).
 	POST(pathV1Responses, tagRequestForEndpoint(EndpointResponses)).
-	GET(pathV1Responses, func(*up.Writer, *up.Request) {}).    // passthrough for WS upgrades → orange-responsesws sidecar
-	GETPrefix(pathMCP, func(*up.Writer, *up.Request) {}).     // passthrough to orange-mcp sidecar
-	POSTPrefix(pathMCP, func(*up.Writer, *up.Request) {}).    // passthrough to orange-mcp sidecar
-	DELETEPrefix(pathMCP, func(*up.Writer, *up.Request) {})   // passthrough to orange-mcp sidecar
+	GET(pathV1Responses, func(*up.Writer, *up.Request) {}). // passthrough for WS upgrades → orange-responsesws sidecar
+	GETPrefix(pathMCP, func(*up.Writer, *up.Request) {}).   // passthrough to orange-mcp sidecar
+	POSTPrefix(pathMCP, func(*up.Writer, *up.Request) {}).  // passthrough to orange-mcp sidecar
+	DELETEPrefix(pathMCP, func(*up.Writer, *up.Request) {}) // passthrough to orange-mcp sidecar
 
 func init() {
 	up.Register(FilterName, router.Dispatch,

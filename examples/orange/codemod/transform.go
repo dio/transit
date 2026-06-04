@@ -17,7 +17,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -154,7 +153,7 @@ found:
 	importBlock := text[openParen+1 : closeIdx]
 	lines := strings.Split(importBlock, "\n")
 
-	var kept []string
+	kept := make([]string, 0, len(lines))
 	alreadyHas := map[string]bool{}
 
 	for _, line := range lines {
@@ -247,7 +246,7 @@ func rewriteStructText(text string, shape *TranslatorShape, fset *token.FileSet)
 
 	structDecl := text[loc[0]:loc[1]]
 	lines := strings.Split(structDecl, "\n")
-	var newLines []string
+	newLines := make([]string, 0, len(lines))
 
 	for _, line := range lines {
 		// Drop fields of dropped types.
@@ -478,9 +477,10 @@ func removeForceBodyMutationLines(fnText string) string {
 				i++
 				for i < len(lines) && depth > 0 {
 					for _, ch := range lines[i] {
-						if ch == '{' {
+						switch ch {
+						case '{':
 							depth++
-						} else if ch == '}' {
+						case '}':
 							depth--
 						}
 					}
@@ -647,9 +647,10 @@ func removeSpanLines(fnText string) string {
 		if strings.HasPrefix(trimmed, "if span") && strings.Contains(trimmed, "nil") {
 			depth := 0
 			for _, ch := range line {
-				if ch == '{' {
+				switch ch {
+				case '{':
 					depth++
-				} else if ch == '}' {
+				case '}':
 					depth--
 				}
 			}
@@ -658,9 +659,10 @@ func removeSpanLines(fnText string) string {
 				// Multi-line block: skip until depth reaches 0.
 				for i < len(lines) && depth > 0 {
 					for _, ch := range lines[i] {
-						if ch == '{' {
+						switch ch {
+						case '{':
 							depth++
-						} else if ch == '}' {
+						case '}':
 							depth--
 						}
 					}
@@ -707,9 +709,10 @@ func removeTokenUsageLines(fnText string) string {
 				// Skip the whole block.
 				depth := 0
 				for _, ch := range line {
-					if ch == '{' {
+					switch ch {
+					case '{':
 						depth++
-					} else if ch == '}' {
+					case '}':
 						depth--
 					}
 				}
@@ -717,9 +720,10 @@ func removeTokenUsageLines(fnText string) string {
 				if depth > 0 {
 					for i < len(lines) && depth > 0 {
 						for _, ch := range lines[i] {
-							if ch == '{' {
+							switch ch {
+							case '{':
 								depth++
-							} else if ch == '}' {
+							case '}':
 								depth--
 							}
 						}
@@ -745,7 +749,7 @@ func removeTokenUsageLines(fnText string) string {
 
 func removeModelAssignLines(fnText string) string {
 	lines := strings.Split(fnText, "\n")
-	var result []string
+	result := make([]string, 0, len(lines))
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		// Remove responseModel = ... and requestModel = ... (not in return statements).
@@ -760,7 +764,7 @@ func removeModelAssignLines(fnText string) string {
 
 func removeExtractUsageCall(fnText string) string {
 	lines := strings.Split(fnText, "\n")
-	var result []string
+	result := make([]string, 0, len(lines))
 	for _, line := range lines {
 		if strings.Contains(line, "extractUsageFromBufferEvent") {
 			indent := leadingWhitespace(line)
@@ -774,7 +778,7 @@ func removeExtractUsageCall(fnText string) string {
 
 func removeStreamingModelTracking(fnText string) string {
 	lines := strings.Split(fnText, "\n")
-	var result []string
+	result := make([]string, 0, len(lines))
 	for _, line := range lines {
 		// Remove streamingResponseModel assignments.
 		if strings.Contains(line, "streamingResponseModel") && !strings.Contains(line, "//") {
@@ -846,7 +850,7 @@ func removeDebugLogBlock(fnText string) string {
 
 func removeBlockContaining(fnText, keyword string) string {
 	lines := strings.Split(fnText, "\n")
-	var result []string
+	result := make([]string, 0, len(lines))
 	inBlock := false
 	depth := 0
 	for _, line := range lines {
@@ -856,9 +860,10 @@ func removeBlockContaining(fnText, keyword string) string {
 				inBlock = true
 				depth = 0
 				for _, ch := range line {
-					if ch == '{' {
+					switch ch {
+					case '{':
 						depth++
-					} else if ch == '}' {
+					case '}':
 						depth--
 					}
 				}
@@ -872,9 +877,10 @@ func removeBlockContaining(fnText, keyword string) string {
 		}
 		if inBlock {
 			for _, ch := range line {
-				if ch == '{' {
+				switch ch {
+				case '{':
 					depth++
-				} else if ch == '}' {
+				case '}':
 					depth--
 				}
 			}
@@ -1021,10 +1027,11 @@ func removeFuncByName(text, funcName string) string {
 			started := false
 			for i < len(lines) {
 				for _, ch := range lines[i] {
-					if ch == '{' {
+					switch ch {
+					case '{':
 						depth++
 						started = true
-					} else if ch == '}' {
+					case '}':
 						depth--
 					}
 				}
@@ -1107,7 +1114,7 @@ func replaceRemainingInternalapiRefs(text string) string {
 
 func removeMetricsLines(text string) string {
 	lines := strings.Split(text, "\n")
-	var result []string
+	result := make([]string, 0, len(lines))
 	for _, line := range lines {
 		if strings.Contains(line, "metrics.") {
 			indent := leadingWhitespace(line)
@@ -1121,7 +1128,7 @@ func removeMetricsLines(text string) string {
 
 func removeTracingLines(text string) string {
 	lines := strings.Split(text, "\n")
-	var result []string
+	result := make([]string, 0, len(lines))
 	for _, line := range lines {
 		if strings.Contains(line, "tracingapi.") || strings.Contains(line, "span.Record") {
 			continue
@@ -1133,7 +1140,7 @@ func removeTracingLines(text string) string {
 
 func removeRedactionLines(text string) string {
 	lines := strings.Split(text, "\n")
-	var result []string
+	result := make([]string, 0, len(lines))
 	for _, line := range lines {
 		if strings.Contains(line, "redaction.") {
 			indent := leadingWhitespace(line)
@@ -1147,7 +1154,7 @@ func removeRedactionLines(text string) string {
 
 func removeSlogLines(text string) string {
 	lines := strings.Split(text, "\n")
-	var result []string
+	result := make([]string, 0, len(lines))
 	for _, line := range lines {
 		if strings.Contains(line, "slog.") {
 			continue
@@ -1207,10 +1214,11 @@ func findFuncBounds(text, funcName, structName string) (int, int) {
 		started := false
 		for i := lineIdx; i < len(lines); i++ {
 			for _, ch := range lines[i] {
-				if ch == '{' {
+				switch ch {
+				case '{':
 					depth++
 					started = true
-				} else if ch == '}' {
+				case '}':
 					depth--
 				}
 			}
@@ -1268,21 +1276,4 @@ func providerNameFromFile(base string) string {
 		return parts[1]
 	}
 	return base
-}
-
-// renderToBytes renders an AST file to formatted bytes (unused in text mode, kept for compatibility).
-func renderToBytes(f *ast.File, fset *token.FileSet) ([]byte, error) {
-	_ = f
-	_ = fset
-	return nil, fmt.Errorf("renderToBytes not used in text-mode transform")
-}
-
-// sortedKeys returns sorted keys from a string map.
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }

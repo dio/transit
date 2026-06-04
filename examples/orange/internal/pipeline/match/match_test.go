@@ -483,7 +483,9 @@ func TestResponses_missingModel_400(t *testing.T) {
 	require.EqualValues(t, 400, h.LocalResponses[0].Status)
 
 	var got struct {
-		Error struct{ Code string `json:"code"` } `json:"error"`
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
 	}
 	require.NoError(t, json.Unmarshal(h.LocalResponses[0].Body, &got))
 	require.Equal(t, ErrModelRequired, got.Error.Code)
@@ -502,7 +504,9 @@ func TestResponses_unknownModel_404(t *testing.T) {
 	require.EqualValues(t, 404, h.LocalResponses[0].Status)
 
 	var got struct {
-		Error struct{ Code string `json:"code"` } `json:"error"`
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
 	}
 	require.NoError(t, json.Unmarshal(h.LocalResponses[0].Body, &got))
 	require.Equal(t, ErrUnknownModel, got.Error.Code)

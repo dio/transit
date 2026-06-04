@@ -152,7 +152,7 @@ func TestSyncHelpers(t *testing.T) {
 // normalizeBlankLines collapses sequences of blank lines to a single blank line.
 func normalizeBlankLines(s string) string {
 	lines := strings.Split(s, "\n")
-	var result []string
+	result := make([]string, 0, len(lines))
 	lastWasBlank := false
 	for _, line := range lines {
 		isBlank := strings.TrimSpace(line) == ""

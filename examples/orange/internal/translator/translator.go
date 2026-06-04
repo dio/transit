@@ -11,12 +11,6 @@ var sjsonOptions = &sjson.Options{
 	ReplaceInPlace: false,
 }
 
-// sjsonOptionsInPlace are the options used for sjson operations that modify in place.
-// Note: ensure the original body is not modified when using this.
-var sjsonOptionsInPlace = &sjson.Options{
-	Optimistic:     true,
-	ReplaceInPlace: true,
-}
 
 // Header pseudo-header and well-known header name constants.
 // Copied from ai-gateway/internal/translator/translator.go.

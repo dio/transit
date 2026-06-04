@@ -88,7 +88,7 @@ func anthropicMessagesToOpenAI(body *anthropic.MessagesRequest) []openai.ChatCom
 // any text content alongside them.
 func appendAnthropicAssistantMessage(messages []openai.ChatCompletionMessageParamUnion, msg anthropic.MessageParam) []openai.ChatCompletionMessageParamUnion {
 	text := anthropicContentToText(msg.Content)
-	var toolCalls []openai.ChatCompletionMessageToolCallParam
+	toolCalls := make([]openai.ChatCompletionMessageToolCallParam, 0, len(msg.Content.Array))
 
 	for _, block := range msg.Content.Array {
 		if block.ToolUse == nil {
@@ -507,8 +507,7 @@ func (s *openAIStreamToAnthropicState) processEventBlock(block []byte, out *[]by
 
 	var chunk openai.ChatCompletionResponseChunk
 	if err := json.Unmarshal(eventData, &chunk); err != nil {
-		// Skip malformed chunks silently.
-		return nil
+		return nil //nolint:nilerr // malformed chunks are skipped silently; callers continue the stream
 	}
 
 	return s.handleChunk(&chunk, out)

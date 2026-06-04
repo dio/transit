@@ -78,7 +78,8 @@ func ensureMeterState(requestID string) *meterState {
 		return nil
 	}
 	actual, _ := meterStates.LoadOrStore(requestID, &meterState{updated: make(chan struct{}, 1)})
-	return actual.(*meterState)
+	ms, _ := actual.(*meterState)
+	return ms
 }
 
 func publishTurn(rec TurnRecord) {
@@ -120,7 +121,10 @@ func publishSummary(summary SessionSummary) {
 	if !ok {
 		return
 	}
-	w := actual.(*meterState)
+	w, ok := actual.(*meterState)
+	if !ok {
+		return
+	}
 	w.mu.Lock()
 	w.record.SessionID = summary.SessionID
 	w.record.RequestID = summary.RequestID

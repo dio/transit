@@ -29,14 +29,14 @@ const (
 	envEgressURL   = "ORANGE_MCP_EGRESS_URL"
 	envSessionKeys = "ORANGE_MCP_SESSION_KEYS"
 
-	headerRoute          = "x-orange-mcp-route"
-	headerBackend        = "x-orange-mcp-backend"
-	headerMethod         = "x-orange-mcp-method"
-	headerRequestID      = "x-orange-mcp-request-id"
-	headerTool           = "x-orange-mcp-tool"
-	headerSession        = "x-orange-mcp-session"
-	headerLastEventID    = "x-orange-mcp-last-event-id"
-	headerBackendStatus  = "x-orange-mcp-backend-status"
+	headerRoute         = "x-orange-mcp-route"
+	headerBackend       = "x-orange-mcp-backend"
+	headerMethod        = "x-orange-mcp-method"
+	headerRequestID     = "x-orange-mcp-request-id"
+	headerTool          = "x-orange-mcp-tool"
+	headerSession       = "x-orange-mcp-session"
+	headerLastEventID   = "x-orange-mcp-last-event-id"
+	headerBackendStatus = "x-orange-mcp-backend-status"
 
 	sessionIDHeader   = "mcp-session-id"
 	lastEventIDHeader = "Last-Event-Id"
@@ -89,7 +89,7 @@ func resolveSessionCrypto() sessionCrypto {
 func resolveSessionKeySpecs(raw string) (string, []string) {
 	keys := strings.Split(raw, ",")
 	var primary string
-	var fallbacks []string
+	fallbacks := make([]string, 0, len(keys))
 	for _, key := range keys {
 		key = strings.TrimSpace(key)
 		if key == "" {

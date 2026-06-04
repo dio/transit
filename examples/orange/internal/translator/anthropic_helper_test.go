@@ -6,7 +6,6 @@
 package translator
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -17,13 +16,6 @@ import (
 
 	"github.com/dio/transit/examples/orange/internal/apischema/openai"
 )
-
-// mockErrorReader is a helper for testing io.Reader failures.
-type mockErrorReader struct{}
-
-func (r *mockErrorReader) Read(_ []byte) (n int, err error) {
-	return 0, fmt.Errorf("mock reader error")
-}
 
 // New test function for helper coverage.
 func TestHelperFunctions(t *testing.T) {
