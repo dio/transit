@@ -535,9 +535,24 @@ func schemaValidate(data []byte) error {
 }
 
 // resolveSecrets resolves all auth secret_ref values and caches them.
+// It also resolves any extra map values that use a secret_ref scheme
+// (env://, file://, literal://) in-place, so translators and auth handlers
+// can read plain strings from Provider.Extra without knowing about indirection.
 func resolveSecrets(cfg *Config) error {
 	cfg.resolvedSecrets = make(map[string]string, len(cfg.Providers))
 	for name, p := range cfg.Providers {
+		// Resolve extra values that use secret_ref schemes.
+		for k, val := range p.Extra {
+			if !strings.Contains(val, "://") {
+				continue
+			}
+			resolved, err := resolveSecretRef(val)
+			if err != nil {
+				return fmt.Errorf("orange/config: provider %q extra %q: %w", name, k, err)
+			}
+			p.Extra[k] = resolved
+		}
+
 		if p.Auth.SecretRef == "" {
 			continue
 		}

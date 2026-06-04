@@ -398,7 +398,7 @@ llm:
       backend_schema: gcpvertexai
       endpoint: https://us-central1-aiplatform.googleapis.com
       extra:
-        gcp_project: my-project
+        gcp_project: env://GCP_PROJECT   # resolved at load time
         gcp_location: us-central1
       auth:
         type: gcp
@@ -413,7 +413,7 @@ llm:
       endpoint: https://us-east5-aiplatform.googleapis.com
       extra:
         anthropic_version: "vertex-2023-10-16"       # required by Vertex; differs from direct Anthropic
-        gcp_project: my-project
+        gcp_project: env://GCP_PROJECT   # resolved at load time
         gcp_location: us-east5
       auth:
         type: gcp

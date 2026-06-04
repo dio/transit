@@ -60,7 +60,7 @@
           "default": "/v1"
         },
         "extra": {
-          "description": "Free-form string map for translator and auth handler configuration. Common keys: anthropic_version, aws_region, azure_api_version, gcp_project, gcp_location.",
+          "description": "Free-form string map for translator and auth handler configuration. Values may use secret_ref schemes (env://VAR, file:///path, literal://value) and are resolved at config load. Common keys: anthropic_version, aws_region, azure_api_version, gcp_project, gcp_location.",
           "type": "object",
           "additionalProperties": { "type": "string" },
           "properties": {

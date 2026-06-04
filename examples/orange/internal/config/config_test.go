@@ -136,6 +136,7 @@ func TestLoadFile_exampleOrangeYAMLIncludesGPT4oMiniMetadata(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "github-test-token")
 	t.Setenv("GEMINI_API_KEY", "test-gemini-api-key")
 	t.Setenv("GCP_SERVICE_ACCOUNT_JSON", `{"type":"service_account"}`)
+	t.Setenv("GCP_PROJECT", "my-gcp-project")
 
 	cfg, err := LoadFile("../../orange.yaml")
 	require.NoError(t, err)
