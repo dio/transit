@@ -25,3 +25,24 @@ models:
       context_length: 128000
       max_tokens: 16384
       tags: ["chat", "responses", "fast", "vision"]
+
+mcp:
+  routes:
+    default:
+      backends:
+        kiwi:
+          cluster: orange-mcp-kiwi
+          endpoint: https://mcp.kiwi.com
+          tools:
+            include: ["search-flight"]
+        aws-knowledge:
+          cluster: orange-mcp-aws-knowledge
+          endpoint: https://knowledge-mcp.global.api.aws
+          tools:
+            include: ["aws____read_documentation", "aws____search_documentation"]
+        github:
+          cluster: orange-mcp-github
+          endpoint: https://api.githubcopilot.com/mcp/
+          credential_ref: env://GITHUB_TOKEN
+          tools:
+            include: ["search_repositories", "get_file_contents"]

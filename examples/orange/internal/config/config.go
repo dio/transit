@@ -63,8 +63,10 @@ var compiledSchema = func() *jsonschema.Schema {
 type Config struct {
 	Providers map[string]Provider   `yaml:"providers"`
 	Models    map[string]ModelEntry `yaml:"models"`
+	MCP       *MCPConfig            `yaml:"mcp,omitempty"`
 
-	resolvedSecrets map[string]string
+	resolvedSecrets        map[string]string
+	resolvedMCPCredentials map[string]string
 }
 
 // Provider describes a single upstream LLM provider.
@@ -88,6 +90,33 @@ type ModelEntry struct {
 	Provider string         `yaml:"provider"`
 	Name     string         `yaml:"name,omitempty"`
 	Metadata map[string]any `yaml:"metadata,omitempty"`
+}
+
+// MCPConfig describes Orange-managed MCP routes.
+type MCPConfig struct {
+	Routes map[string]MCPRoute `yaml:"routes"`
+}
+
+// MCPRoute describes one logical downstream MCP route.
+type MCPRoute struct {
+	Backends map[string]MCPBackend `yaml:"backends"`
+}
+
+// MCPBackend describes one Envoy-routed MCP backend.
+type MCPBackend struct {
+	Cluster       string          `yaml:"cluster"`
+	Endpoint      string          `yaml:"endpoint,omitempty"`
+	CredentialRef string          `yaml:"credential_ref,omitempty"`
+	Tools         MCPToolSelector `yaml:"tools,omitempty"`
+}
+
+// MCPToolSelector filters backend-visible tools. Later protocol code compiles
+// these into deny-wins selectors.
+type MCPToolSelector struct {
+	Include      []string `yaml:"include,omitempty"`
+	IncludeRegex []string `yaml:"include_regex,omitempty"`
+	Exclude      []string `yaml:"exclude,omitempty"`
+	ExcludeRegex []string `yaml:"exclude_regex,omitempty"`
 }
 
 // EffectiveBackendSchema returns BackendSchema if set, otherwise Kind.
@@ -146,6 +175,12 @@ func (c *Config) LookupModelProvider(model string) (upstream string, provider Pr
 // Empty if the provider is unknown or carries no auth secret.
 func (c *Config) ProviderSecret(name string) string {
 	return c.resolvedSecrets[name]
+}
+
+// MCPCredential returns the resolved credential for an MCP route/backend pair.
+// Empty means the backend has no configured credential or the pair is unknown.
+func (c *Config) MCPCredential(route, backend string) string {
+	return c.resolvedMCPCredentials[mcpCredentialKey(route, backend)]
 }
 
 // V1Model is a single entry in the OpenAI-compatible GET /v1/models response.
@@ -390,7 +425,26 @@ func resolveSecrets(cfg *Config) error {
 		}
 		cfg.resolvedSecrets[name] = v
 	}
+	cfg.resolvedMCPCredentials = make(map[string]string)
+	if cfg.MCP != nil {
+		for routeName, route := range cfg.MCP.Routes {
+			for backendName, backend := range route.Backends {
+				if backend.CredentialRef == "" {
+					continue
+				}
+				v, err := resolveSecretRef(backend.CredentialRef)
+				if err != nil {
+					return fmt.Errorf("orange/config: mcp.routes[%q].backends[%q]: %w", routeName, backendName, err)
+				}
+				cfg.resolvedMCPCredentials[mcpCredentialKey(routeName, backendName)] = v
+			}
+		}
+	}
 	return nil
+}
+
+func mcpCredentialKey(route, backend string) string {
+	return route + "\x00" + backend
 }
 
 // resolveSecretRef resolves a secret_ref URI. Only env://VAR_NAME is supported.

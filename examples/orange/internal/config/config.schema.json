@@ -16,6 +16,9 @@
       "description": "Map of client-facing model ID to routing entry. Keys are the exact strings clients send in the request body `model` field.",
       "type": "object",
       "additionalProperties": { "$ref": "#/$defs/ModelEntry" }
+    },
+    "mcp": {
+      "$ref": "#/$defs/MCPConfig"
     }
   },
   "$defs": {
@@ -143,6 +146,83 @@
               "additionalProperties": true
             }
           }
+        }
+      }
+    },
+    "MCPConfig": {
+      "description": "Orange-managed MCP route catalog.",
+      "type": "object",
+      "required": ["routes"],
+      "additionalProperties": false,
+      "properties": {
+        "routes": {
+          "description": "Map of route name to MCP backends.",
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "$ref": "#/$defs/MCPRoute" }
+        }
+      }
+    },
+    "MCPRoute": {
+      "description": "A logical MCP route with one or more configured backends.",
+      "type": "object",
+      "required": ["backends"],
+      "additionalProperties": false,
+      "properties": {
+        "backends": {
+          "description": "Map of backend name to MCP backend definition.",
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "$ref": "#/$defs/MCPBackend" }
+        }
+      }
+    },
+    "MCPBackend": {
+      "description": "One Orange-managed MCP backend reached through Envoy egress.",
+      "type": "object",
+      "required": ["cluster"],
+      "additionalProperties": false,
+      "properties": {
+        "cluster": {
+          "description": "Envoy cluster or route target for the MCP backend.",
+          "type": "string",
+          "minLength": 1
+        },
+        "endpoint": {
+          "description": "Optional backend MCP endpoint URL used for path or authority decisions.",
+          "type": "string",
+          "format": "uri"
+        },
+        "credential_ref": {
+          "description": "Optional credential reference for the MCP backend. Only env://VAR_NAME is supported.",
+          "type": "string",
+          "pattern": "^env://.+"
+        },
+        "tools": {
+          "$ref": "#/$defs/MCPToolSelector"
+        }
+      }
+    },
+    "MCPToolSelector": {
+      "description": "Tool include/exclude selectors. Exclude rules win over include rules.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "include": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "include_regex": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "exclude": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "exclude_regex": {
+          "type": "array",
+          "items": { "type": "string" }
         }
       }
     }

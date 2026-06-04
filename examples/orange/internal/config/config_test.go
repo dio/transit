@@ -32,6 +32,7 @@ func setFullEnv(t *testing.T) {
 	t.Setenv("TEST_AZURE_KEY", "sk-test-azure")
 	t.Setenv("TEST_GROQ_KEY", "sk-test-groq")
 	t.Setenv("TEST_DEEPINFRA_KEY", "sk-test-deepinfra")
+	t.Setenv("TEST_GITHUB_TOKEN", "github-test-token")
 	// aws and gcp providers carry no secret_ref — no env var needed.
 }
 
@@ -98,11 +99,30 @@ func TestLoadFile_full(t *testing.T) {
 	assert.Contains(t, cfg.Models, "groq/llama-3.1-8b-instant")
 	assert.Contains(t, cfg.Models, "deepinfra/microsoft/phi-4")
 	assert.Contains(t, cfg.Models, "vertex/claude-3-5-sonnet")
+
+	require.NotNil(t, cfg.MCP)
+	defaultRoute := cfg.MCP.Routes["default"]
+	require.Contains(t, defaultRoute.Backends, "kiwi")
+	assert.Equal(t, "orange-mcp-kiwi", defaultRoute.Backends["kiwi"].Cluster)
+	assert.Equal(t, "https://mcp.kiwi.com", defaultRoute.Backends["kiwi"].Endpoint)
+	assert.Equal(t, []string{"search-flight"}, defaultRoute.Backends["kiwi"].Tools.Include)
+
+	require.Contains(t, defaultRoute.Backends, "aws-knowledge")
+	assert.Equal(t, "https://knowledge-mcp.global.api.aws", defaultRoute.Backends["aws-knowledge"].Endpoint)
+	assert.Empty(t, cfg.MCPCredential("default", "aws-knowledge"), "public backend has no resolved credential")
+
+	require.Contains(t, defaultRoute.Backends, "github")
+	github := defaultRoute.Backends["github"]
+	assert.Equal(t, "orange-mcp-github", github.Cluster)
+	assert.Equal(t, "https://api.githubcopilot.com/mcp/", github.Endpoint)
+	assert.Equal(t, "env://TEST_GITHUB_TOKEN", github.CredentialRef)
+	assert.Equal(t, "github-test-token", cfg.MCPCredential("default", "github"))
 }
 
 func TestLoadFile_exampleOrangeYAMLIncludesGPT4oMiniMetadata(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-test-openai")
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test-anthropic")
+	t.Setenv("GITHUB_TOKEN", "github-test-token")
 
 	cfg, err := LoadFile("../../orange.yaml")
 	require.NoError(t, err)
