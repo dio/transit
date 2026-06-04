@@ -179,6 +179,34 @@ func capabilitiesFromInitialize(body []byte) capabilities {
 	}
 }
 
+// rewriteInitializeServerInfo replaces the serverInfo field in an MCP initialize
+// response body with Orange's own identity so backend names are not leaked to clients.
+// TODO: allow the name and version to be overridden via config.
+func rewriteInitializeServerInfo(body []byte, req rpcRequest) []byte {
+	var resp rpcResponse
+	if err := json.Unmarshal(bodyJSON(body), &resp); err != nil || len(resp.Result) == 0 {
+		return body
+	}
+	var result map[string]json.RawMessage
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		return body
+	}
+	override, err := json.Marshal(map[string]string{"name": "orange", "version": "1.0.0"})
+	if err != nil {
+		return body
+	}
+	result["serverInfo"] = override
+	rawResult, err := json.Marshal(result)
+	if err != nil {
+		return body
+	}
+	out, err := json.Marshal(rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: rawResult})
+	if err != nil {
+		return body
+	}
+	return out
+}
+
 func toolCallIsError(body []byte) bool {
 	var resp rpcResponse
 	if err := json.Unmarshal(body, &resp); err != nil || len(resp.Result) == 0 {

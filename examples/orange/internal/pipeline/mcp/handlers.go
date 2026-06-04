@@ -46,7 +46,6 @@ type handlerOptions struct {
 }
 
 type handler struct {
-	mu      sync.Mutex
 	options handlerOptions
 }
 
@@ -198,7 +197,7 @@ func (h *handler) handleInitialize(w http.ResponseWriter, r *http.Request, req r
 	w.Header().Set(sessionIDHeader, publicSession)
 	rec.PublicSessionHash = hashPublicToken(publicSession)
 	rec.Outcome = "success"
-	writeJSONBytes(w, http.StatusOK, first.body)
+	writeJSONBytes(w, http.StatusOK, rewriteInitializeServerInfo(first.body, req))
 }
 
 func (h *handler) handleList(w http.ResponseWriter, r *http.Request, req rpcRequest, raw []byte, session sessionEnvelope, requestID string, rec *record) {
@@ -267,6 +266,18 @@ func (h *handler) handleToolsCall(w http.ResponseWriter, r *http.Request, req rp
 func (h *handler) handleClientResponse(w http.ResponseWriter, r *http.Request, req rpcRequest, raw []byte, session sessionEnvelope, requestID string, rec *record) {
 	backend := backendFromResponseID(req.ID)
 	if backend == "" {
+		// Client is responding to a server-initiated request (e.g. the ping we send on SSE open).
+		// The ID is a plain string, not a {"backend":"...","id":...} envelope, so there is nothing
+		// to forward. We ack and return.
+		//
+		// This path fires on every heartbeat and will litter log storage at scale. Options:
+		//   1. Set rec.Skip = true (requires a skip field on record + a guard in publishRecord)
+		//      to suppress these entries entirely from the sink.
+		//   2. Set a dedicated rec.Outcome such as "heartbeat" so downstream log pipelines can
+		//      cheaply drop or sample them with a filter (e.g. Envoy access log filter on
+		//      response_code_details or a log-aggregator drop rule).
+		//   3. Add an Envoy access log filter that drops 202 responses on /mcp/* whose
+		//      x-mcp-method header is empty, at the proxy layer before they hit storage.
 		rec.Outcome = "success"
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
 		return
@@ -487,7 +498,7 @@ func (h *handler) doBackend(ctx context.Context, routeName, backendName string, 
 		result.err = err
 		return result
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	result.status = resp.StatusCode
 	result.sessionID = resp.Header.Get(sessionIDHeader)
 	result.body, result.err = io.ReadAll(io.LimitReader(resp.Body, maxBackendResponseBody))
