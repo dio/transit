@@ -61,12 +61,20 @@ var compiledSchema = func() *jsonschema.Schema {
 
 // Config is the fully validated, secret-resolved configuration.
 type Config struct {
-	Providers map[string]Provider   `yaml:"providers"`
-	Models    map[string]ModelEntry `yaml:"models"`
-	MCP       *MCPConfig            `yaml:"mcp,omitempty"`
+	LLM LLMConfig  `yaml:"llm"`
+	MCP *MCPConfig `yaml:"mcp,omitempty"`
+
+	Providers map[string]Provider   `yaml:"-"`
+	Models    map[string]ModelEntry `yaml:"-"`
 
 	resolvedSecrets        map[string]string
 	resolvedMCPCredentials map[string]string
+}
+
+// LLMConfig describes provider and model routing for LLM APIs.
+type LLMConfig struct {
+	Providers map[string]Provider   `yaml:"providers"`
+	Models    map[string]ModelEntry `yaml:"models"`
 }
 
 // Provider describes a single upstream LLM provider.
@@ -92,22 +100,87 @@ type ModelEntry struct {
 	Metadata map[string]any `yaml:"metadata,omitempty"`
 }
 
-// MCPConfig describes Orange-managed MCP routes.
+// MCPConfig describes Orange-managed MCP server profiles.
 type MCPConfig struct {
-	Routes map[string]MCPRoute `yaml:"routes"`
+	Profiles map[string]MCPProfile `yaml:"profiles"`
+	Servers  map[string]MCPServer  `yaml:"servers"`
 }
 
-// MCPRoute describes one logical downstream MCP route.
-type MCPRoute struct {
-	Backends map[string]MCPBackend `yaml:"backends"`
+// MCPProfile describes a named group of MCP servers.
+type MCPProfile struct {
+	Tools map[string]MCPProfileTools `yaml:"tools"` // per-server tool scoping; keys define the server set
+	Auth  map[string]Auth            `yaml:"auth,omitempty"` // per-server auth overrides; key is server name
 }
 
-// MCPBackend describes one Envoy-routed MCP backend.
-type MCPBackend struct {
-	Cluster       string          `yaml:"cluster"`
-	Endpoint      string          `yaml:"endpoint,omitempty"`
-	CredentialRef string          `yaml:"credential_ref,omitempty"`
-	Tools         MCPToolSelector `yaml:"tools,omitempty"`
+// ServerNames returns the sorted list of server names for this profile,
+// derived from the Tools map keys.
+func (p MCPProfile) ServerNames() []string {
+	names := make([]string, 0, len(p.Tools))
+	for name := range p.Tools {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// MCPProfileTools is the profile-level capability slice for one server.
+// Include and Exclude are mutually exclusive: use one or the other, not both.
+// Exclude wins when both are set (consistent with MCPToolSelector semantics).
+// Optional marks the backend as best-effort: initialize succeeds even if this
+// backend fails, and the session simply won't include its tools.
+type MCPProfileTools struct {
+	Include  []string `yaml:"include,omitempty"`
+	Exclude  []string `yaml:"exclude,omitempty"`
+	Optional bool     `yaml:"optional,omitempty"`
+}
+
+// MCPServer describes one MCP backend reached via its endpoint.
+type MCPServer struct {
+	Endpoint    string          `yaml:"endpoint"`
+	Namespace   string          `yaml:"namespace,omitempty"`
+	Transport   string          `yaml:"transport,omitempty"`
+	Timeout     string          `yaml:"timeout,omitempty"`
+	HealthCheck *MCPHealthCheck `yaml:"health_check,omitempty"`
+	Retry       *MCPRetry       `yaml:"retry,omitempty"`
+	Auth        *Auth           `yaml:"auth,omitempty"`
+	Tools       MCPToolSelector `yaml:"tools,omitempty"`
+}
+
+// MCPHealthCheck configures periodic health probing for an MCP server.
+type MCPHealthCheck struct {
+	Interval string `yaml:"interval,omitempty"`
+	Path     string `yaml:"path,omitempty"`
+}
+
+// MCPRetry configures retry behaviour for failed upstream requests.
+type MCPRetry struct {
+	MaxAttempts int    `yaml:"max_attempts,omitempty"`
+	Backoff     string `yaml:"backoff,omitempty"`
+	BaseDelay   string `yaml:"base_delay,omitempty"`
+}
+
+// Host returns the hostname of the MCP server endpoint (e.g. "mcp.kiwi.com").
+func (s MCPServer) Host() string {
+	if s.Endpoint == "" {
+		return ""
+	}
+	u, err := url.Parse(s.Endpoint)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
+}
+
+// Path returns the path component of the MCP server endpoint, defaulting to "/".
+func (s MCPServer) Path() string {
+	if s.Endpoint == "" {
+		return "/"
+	}
+	u, err := url.Parse(s.Endpoint)
+	if err != nil || u.Path == "" || u.Path == "/" {
+		return "/"
+	}
+	return u.Path
 }
 
 // MCPToolSelector filters backend-visible tools. Later protocol code compiles
@@ -177,10 +250,16 @@ func (c *Config) ProviderSecret(name string) string {
 	return c.resolvedSecrets[name]
 }
 
-// MCPCredential returns the resolved credential for an MCP route/backend pair.
-// Empty means the backend has no configured credential or the pair is unknown.
-func (c *Config) MCPCredential(route, backend string) string {
-	return c.resolvedMCPCredentials[mcpCredentialKey(route, backend)]
+// MCPCredential returns the resolved credential for an MCP profile/server pair.
+// Profile-level auth overrides take precedence over server-level defaults.
+// Empty means neither level has a configured credential.
+func (c *Config) MCPCredential(profile, server string) string {
+	if profile != "" {
+		if v, ok := c.resolvedMCPCredentials[profile+":"+server]; ok {
+			return v
+		}
+	}
+	return c.resolvedMCPCredentials[server]
 }
 
 // V1Model is a single entry in the OpenAI-compatible GET /v1/models response.
@@ -230,11 +309,51 @@ func Load(data []byte) (*Config, error) {
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("orange/config: unmarshal: %w", err)
 	}
+	cfg.Providers = cfg.LLM.Providers
+	cfg.Models = cfg.LLM.Models
 
 	// Semantic: every models[].provider must exist in providers.
 	for id, entry := range cfg.Models {
 		if _, ok := cfg.Providers[entry.Provider]; !ok {
 			return nil, fmt.Errorf("orange/config: models[%q].provider %q: not in providers", id, entry.Provider)
+		}
+	}
+	if cfg.MCP != nil {
+		// Namespace uniqueness across all servers.
+		seenNS := make(map[string]string) // namespace → first server name
+		for serverName, server := range cfg.MCP.Servers {
+			if server.Namespace == "" {
+				continue
+			}
+			if prior, dup := seenNS[server.Namespace]; dup {
+				return nil, fmt.Errorf("orange/config: mcp.servers: duplicate namespace %q for servers %q and %q", server.Namespace, prior, serverName)
+			}
+			seenNS[server.Namespace] = serverName
+		}
+		for profileName, profile := range cfg.MCP.Profiles {
+			if len(profile.Tools) == 0 {
+				return nil, fmt.Errorf("orange/config: mcp.profiles[%q].tools: must not be empty", profileName)
+			}
+			for serverName, pt := range profile.Tools {
+				server, ok := cfg.MCP.Servers[serverName]
+				if !ok {
+					return nil, fmt.Errorf("orange/config: mcp.profiles[%q].tools: server %q not found in mcp.servers", profileName, serverName)
+				}
+				expose := server.Tools.Include
+				if len(expose) == 0 {
+					// Open boundary — all tools available; no subset check needed.
+					continue
+				}
+				exposeSet := make(map[string]struct{}, len(expose))
+				for _, t := range expose {
+					exposeSet[t] = struct{}{}
+				}
+				for _, tool := range pt.Include {
+					if _, allowed := exposeSet[tool]; !allowed {
+						return nil, fmt.Errorf("orange/config: mcp.profiles[%q].tools[%q]: tool %q not in server expose list; available: %v", profileName, serverName, tool, expose)
+					}
+				}
+			}
 		}
 	}
 
@@ -427,41 +546,61 @@ func resolveSecrets(cfg *Config) error {
 	}
 	cfg.resolvedMCPCredentials = make(map[string]string)
 	if cfg.MCP != nil {
-		for routeName, route := range cfg.MCP.Routes {
-			for backendName, backend := range route.Backends {
-				if backend.CredentialRef == "" {
+		for serverName, server := range cfg.MCP.Servers {
+			if server.Auth == nil || server.Auth.SecretRef == "" {
+				continue
+			}
+			v, err := resolveSecretRef(server.Auth.SecretRef)
+			if err != nil {
+				return fmt.Errorf("orange/config: mcp server %q: %w", serverName, err)
+			}
+			cfg.resolvedMCPCredentials[serverName] = v
+		}
+		for profileName, profile := range cfg.MCP.Profiles {
+			for serverName, auth := range profile.Auth {
+				if auth.SecretRef == "" {
 					continue
 				}
-				v, err := resolveSecretRef(backend.CredentialRef)
+				v, err := resolveSecretRef(auth.SecretRef)
 				if err != nil {
-					return fmt.Errorf("orange/config: mcp.routes[%q].backends[%q]: %w", routeName, backendName, err)
+					return fmt.Errorf("orange/config: mcp profile %q server %q: %w", profileName, serverName, err)
 				}
-				cfg.resolvedMCPCredentials[mcpCredentialKey(routeName, backendName)] = v
+				cfg.resolvedMCPCredentials[profileName+":"+serverName] = v
 			}
 		}
 	}
 	return nil
 }
 
-func mcpCredentialKey(route, backend string) string {
-	return route + "\x00" + backend
-}
-
-// resolveSecretRef resolves a secret_ref URI. Only env://VAR_NAME is supported.
+// resolveSecretRef resolves a secret_ref URI.
+// Supported schemes: env://VAR_NAME, file:///absolute/path, literal://value.
 func resolveSecretRef(ref string) (string, error) {
-	const prefix = "env://"
-	if !strings.HasPrefix(ref, prefix) {
-		return "", fmt.Errorf("unsupported secret_ref scheme %q (only env:// is supported)", ref)
+	switch {
+	case strings.HasPrefix(ref, "env://"):
+		name := ref[len("env://"):]
+		if name == "" {
+			return "", fmt.Errorf("env:// secret_ref is missing the variable name")
+		}
+		v, ok := os.LookupEnv(name)
+		if !ok {
+			return "", fmt.Errorf("env var %s referenced by secret_ref is not set", name)
+		}
+		return v, nil
+	case strings.HasPrefix(ref, "file://"):
+		path := ref[len("file://"):]
+		if path == "" {
+			return "", fmt.Errorf("file:// secret_ref is missing the file path")
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("file:// secret_ref %q: %w", path, err)
+		}
+		return strings.TrimRight(string(data), "\r\n"), nil
+	case strings.HasPrefix(ref, "literal://"):
+		return ref[len("literal://"):], nil
+	default:
+		return "", fmt.Errorf("unsupported secret_ref scheme %q (supported: env://, file://, literal://)", ref)
 	}
-	name := ref[len(prefix):]
-	if name == "" {
-		return "", fmt.Errorf("env:// secret_ref is missing the variable name")
-	}
-	v, ok := os.LookupEnv(name)
-	if !ok {
-		return "", fmt.Errorf("env var %s referenced by secret_ref is not set", name)
-	}
-	return v, nil
 }
 
 // --- runtime singleton --------------------------------------------------------

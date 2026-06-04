@@ -1,11 +1,12 @@
-# provider.kind is required.
-providers:
-  openai:
-    endpoint: https://api.openai.com
-    auth:
-      type: bearer
-      secret_ref: env://TEST_OPENAI_KEY
+llm:
+  # provider.kind is required.
+  providers:
+    openai:
+      endpoint: https://api.openai.com
+      auth:
+        type: bearer
+        secret_ref: env://TEST_OPENAI_KEY
 
-models:
-  gpt-4o:
-    provider: openai
+  models:
+    gpt-4o:
+      provider: openai

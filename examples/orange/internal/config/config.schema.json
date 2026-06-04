@@ -4,24 +4,35 @@
   "title": "orange configuration",
   "description": "Configuration for the orange LLM proxy (orange.yaml).",
   "type": "object",
-  "required": ["providers", "models"],
+  "required": ["llm"],
   "additionalProperties": false,
   "properties": {
-    "providers": {
-      "description": "Map of provider name to provider definition.",
-      "type": "object",
-      "additionalProperties": { "$ref": "#/$defs/Provider" }
-    },
-    "models": {
-      "description": "Map of client-facing model ID to routing entry. Keys are the exact strings clients send in the request body `model` field.",
-      "type": "object",
-      "additionalProperties": { "$ref": "#/$defs/ModelEntry" }
+    "llm": {
+      "$ref": "#/$defs/LLMConfig"
     },
     "mcp": {
       "$ref": "#/$defs/MCPConfig"
     }
   },
   "$defs": {
+    "LLMConfig": {
+      "description": "LLM provider and model routing configuration.",
+      "type": "object",
+      "required": ["providers", "models"],
+      "additionalProperties": false,
+      "properties": {
+        "providers": {
+          "description": "Map of provider name to provider definition.",
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/Provider" }
+        },
+        "models": {
+          "description": "Map of client-facing model ID to routing entry. Keys are the exact strings clients send in the request body `model` field.",
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/ModelEntry" }
+        }
+      }
+    },
     "Provider": {
       "description": "A single upstream provider definition.",
       "type": "object",
@@ -150,56 +161,156 @@
       }
     },
     "MCPConfig": {
-      "description": "Orange-managed MCP route catalog.",
+      "description": "Orange-managed MCP server profiles.",
       "type": "object",
-      "required": ["routes"],
+      "required": ["profiles", "servers"],
       "additionalProperties": false,
       "properties": {
-        "routes": {
-          "description": "Map of route name to MCP backends.",
+        "profiles": {
+          "description": "Map of profile name to MCP profile definition.",
           "type": "object",
-          "minProperties": 1,
-          "additionalProperties": { "$ref": "#/$defs/MCPRoute" }
-        }
-      }
-    },
-    "MCPRoute": {
-      "description": "A logical MCP route with one or more configured backends.",
-      "type": "object",
-      "required": ["backends"],
-      "additionalProperties": false,
-      "properties": {
-        "backends": {
-          "description": "Map of backend name to MCP backend definition.",
-          "type": "object",
-          "minProperties": 1,
-          "additionalProperties": { "$ref": "#/$defs/MCPBackend" }
-        }
-      }
-    },
-    "MCPBackend": {
-      "description": "One Orange-managed MCP backend reached through Envoy egress.",
-      "type": "object",
-      "required": ["cluster"],
-      "additionalProperties": false,
-      "properties": {
-        "cluster": {
-          "description": "Envoy cluster or route target for the MCP backend.",
-          "type": "string",
-          "minLength": 1
+          "additionalProperties": { "$ref": "#/$defs/MCPProfile" }
         },
+        "servers": {
+          "description": "Map of server name to MCP server definition.",
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/MCPServer" }
+        }
+      }
+    },
+    "MCPProfile": {
+      "description": "A named group of MCP servers. The server set is derived from the keys of tools.",
+      "type": "object",
+      "required": ["tools"],
+      "additionalProperties": false,
+      "properties": {
+        "tools": {
+          "description": "Per-server tool scoping. Keys define which servers this profile uses. Omitting include inherits all exposed tools; include: [] receives zero tools.",
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "include": {
+                "description": "Allowlist: profile receives only these tools. Omit to inherit all.",
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "exclude": {
+                "description": "Blocklist: profile receives all tools except these. Exclude wins if both are set.",
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "optional": {
+                "description": "When true, initialize succeeds even if this backend fails. The session will not include tools from unavailable optional backends.",
+                "type": "boolean",
+                "default": false
+              }
+            }
+          }
+        },
+        "auth": {
+          "description": "Per-server auth overrides for this profile. Keys are server names; values replace (not merge with) the server-level auth.",
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/MCPAuth" }
+        }
+      }
+    },
+    "MCPServer": {
+      "description": "One Orange-managed MCP server.",
+      "type": "object",
+      "required": ["endpoint"],
+      "additionalProperties": false,
+      "properties": {
         "endpoint": {
-          "description": "Optional backend MCP endpoint URL used for path or authority decisions.",
+          "description": "MCP server endpoint URL. Must use http:// or https:// scheme.",
           "type": "string",
           "format": "uri"
         },
-        "credential_ref": {
-          "description": "Optional credential reference for the MCP backend. Only env://VAR_NAME is supported.",
+        "namespace": {
+          "description": "Tool name prefix. If set, clients see tools as namespace/tool-name. Must match [a-z0-9_-]+, max 32 chars.",
           "type": "string",
-          "pattern": "^env://.+"
+          "pattern": "^[a-z0-9_-]{1,32}$"
+        },
+        "transport": {
+          "description": "MCP transport variant.",
+          "type": "string",
+          "enum": ["streamable-http", "sse"],
+          "default": "streamable-http"
+        },
+        "timeout": {
+          "description": "Per-request timeout, e.g. 30s. Default: 30s.",
+          "type": "string"
+        },
+        "health_check": {
+          "$ref": "#/$defs/MCPHealthCheck"
+        },
+        "retry": {
+          "$ref": "#/$defs/MCPRetry"
+        },
+        "auth": {
+          "description": "Default credential for this server. Profile-level auth overrides take precedence.",
+          "$ref": "#/$defs/MCPAuth"
         },
         "tools": {
+          "description": "Tool security boundary. Omit for open boundary (all tools available to profiles).",
           "$ref": "#/$defs/MCPToolSelector"
+        }
+      }
+    },
+    "MCPHealthCheck": {
+      "description": "Periodic health probe configuration.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "interval": {
+          "description": "Probe interval, e.g. 60s. Default: 60s.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Health endpoint path. Default: /health.",
+          "type": "string"
+        }
+      }
+    },
+    "MCPRetry": {
+      "description": "Retry policy for failed upstream requests.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_attempts": {
+          "description": "Maximum retry attempts. Default: 0 (no retries).",
+          "type": "integer",
+          "minimum": 0
+        },
+        "backoff": {
+          "description": "Retry backoff strategy.",
+          "type": "string",
+          "enum": ["fixed", "exponential"],
+          "default": "exponential"
+        },
+        "base_delay": {
+          "description": "Initial retry delay, e.g. 1s.",
+          "type": "string"
+        }
+      }
+    },
+    "MCPAuth": {
+      "description": "Credential injection configuration for an MCP server.",
+      "type": "object",
+      "required": ["type", "secret_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "description": "Auth handler type.",
+          "type": "string",
+          "enum": ["bearer"]
+        },
+        "secret_ref": {
+          "description": "URI reference to a credential resolved at config load. Supported schemes: env://VAR_NAME, file:///path, literal://value.",
+          "type": "string",
+          "pattern": "^(env|file|literal)://.+"
         }
       }
     },

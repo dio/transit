@@ -101,22 +101,33 @@ func TestLoadFile_full(t *testing.T) {
 	assert.Contains(t, cfg.Models, "vertex/claude-3-5-sonnet")
 
 	require.NotNil(t, cfg.MCP)
-	defaultRoute := cfg.MCP.Routes["default"]
-	require.Contains(t, defaultRoute.Backends, "kiwi")
-	assert.Equal(t, "orange-mcp-kiwi", defaultRoute.Backends["kiwi"].Cluster)
-	assert.Equal(t, "https://mcp.kiwi.com", defaultRoute.Backends["kiwi"].Endpoint)
-	assert.Equal(t, []string{"search-flight"}, defaultRoute.Backends["kiwi"].Tools.Include)
+	require.Contains(t, cfg.MCP.Servers, "kiwi")
+	kiwi := cfg.MCP.Servers["kiwi"]
+	assert.Equal(t, "https://mcp.kiwi.com", kiwi.Endpoint)
+	assert.Equal(t, "kiwi", kiwi.Namespace)
+	assert.Equal(t, []string{"search-flight"}, kiwi.Tools.Include)
 
-	require.Contains(t, defaultRoute.Backends, "aws-knowledge")
-	assert.Equal(t, "https://knowledge-mcp.global.api.aws", defaultRoute.Backends["aws-knowledge"].Endpoint)
-	assert.Empty(t, cfg.MCPCredential("default", "aws-knowledge"), "public backend has no resolved credential")
+	require.Contains(t, cfg.MCP.Servers, "aws-knowledge")
+	awsKnowledge := cfg.MCP.Servers["aws-knowledge"]
+	assert.Equal(t, "https://knowledge-mcp.global.api.aws", awsKnowledge.Endpoint)
+	assert.Equal(t, "aws", awsKnowledge.Namespace)
+	assert.Equal(t, []string{"read_documentation", "search_documentation"}, awsKnowledge.Tools.Include)
+	assert.Empty(t, cfg.MCPCredential("", "aws-knowledge"), "public backend has no resolved credential")
 
-	require.Contains(t, defaultRoute.Backends, "github")
-	github := defaultRoute.Backends["github"]
-	assert.Equal(t, "orange-mcp-github", github.Cluster)
+	require.Contains(t, cfg.MCP.Servers, "github")
+	github := cfg.MCP.Servers["github"]
 	assert.Equal(t, "https://api.githubcopilot.com/mcp/", github.Endpoint)
-	assert.Equal(t, "env://TEST_GITHUB_TOKEN", github.CredentialRef)
-	assert.Equal(t, "github-test-token", cfg.MCPCredential("default", "github"))
+	assert.Equal(t, "github", github.Namespace)
+	require.NotNil(t, github.Auth)
+	assert.Equal(t, "bearer", github.Auth.Type)
+	assert.Equal(t, "env://TEST_GITHUB_TOKEN", github.Auth.SecretRef)
+	assert.Equal(t, "github-test-token", cfg.MCPCredential("", "github"))
+
+	require.Contains(t, cfg.MCP.Profiles, "default")
+	defaultProfile := cfg.MCP.Profiles["default"]
+	assert.ElementsMatch(t, []string{"kiwi", "aws-knowledge", "github"}, defaultProfile.ServerNames())
+	assert.Equal(t, []string{"search-flight"}, defaultProfile.Tools["kiwi"].Include)
+	assert.Equal(t, []string{"search_repositories"}, defaultProfile.Tools["github"].Include)
 }
 
 func TestLoadFile_exampleOrangeYAMLIncludesGPT4oMiniMetadata(t *testing.T) {

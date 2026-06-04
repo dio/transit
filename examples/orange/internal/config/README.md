@@ -10,22 +10,23 @@ after the typed unmarshal.
 ## Shape
 
 ```yaml
-providers:
-  <name>:
-    kind: openai | anthropic               # client-facing API schema
-    backend_schema: <enum>                  # optional, defaults to kind
-    endpoint: https://...                   # upstream base URL
-    path_prefix: /v1                        # optional, defaults to /v1
-    extra: { key: value, ... }              # translator/auth config
-    auth:
-      type: bearer | x-api-key | anthropic | aws | gcp
-      secret_ref: env://VAR_NAME            # required for bearer/x-api-key/anthropic
+llm:
+  providers:
+    <name>:
+      kind: openai | anthropic               # client-facing API schema
+      backend_schema: <enum>                  # optional, defaults to kind
+      endpoint: https://...                   # upstream base URL
+      path_prefix: /v1                        # optional, defaults to /v1
+      extra: { key: value, ... }              # translator/auth config
+      auth:
+        type: bearer | x-api-key | anthropic | aws | gcp
+        secret_ref: env://VAR_NAME            # required for bearer/x-api-key/anthropic
 
-models:
-  <client-facing model id>:
-    provider: <name>                        # must exist in providers
-    name: <backend model id>                # optional override
-    metadata: { ... }                       # emitted verbatim by /v1/models
+  models:
+    <client-facing model id>:
+      provider: <name>                        # must exist in providers
+      name: <backend model id>                # optional override
+      metadata: { ... }                       # emitted verbatim by /v1/models
 ```
 
 `backend_schema` enum: `openai`, `anthropic`, `azureopenai`, `awsbedrock`,
@@ -61,7 +62,7 @@ the first successful load; tests can call `MustReload` to drop the cache.
    shapes, the `bearer/x-api-key/anthropic ⇒ secret_ref required` rule. YAML
    is roundtripped through JSON before validation so integer types match what
    the JSON Schema validator expects.
-2. **Semantic**: every `models[*].provider` must exist in `providers`.
+2. **Semantic**: every `llm.models[*].provider` must exist in `llm.providers`.
 3. **Secret resolution**: every `auth.secret_ref` is resolved against the
    environment (`env://VAR_NAME`) and cached on the `Config`. Missing env vars
    surface as load errors. Retrieve resolved secrets with
