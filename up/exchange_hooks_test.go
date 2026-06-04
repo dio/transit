@@ -20,15 +20,14 @@ func applyExchangeHooks[T any](hooks ExchangeHooks[T]) (HandlerFunc, ResponseHan
 }
 
 // newExchangeFilter creates a filter wired with the given phase functions and a fresh handle.
-func newExchangeFilter(h HandlerFunc, rh ResponseHandlerFunc, fin OnStreamFinalizedFunc) (*filter, *testutil.FakeFilterHandle) {
-	handle := testutil.NewFilterHandle()
+func newExchangeFilter(h HandlerFunc, rh ResponseHandlerFunc, fin OnStreamFinalizedFunc) *filter {
 	return &filter{
 		name:              "test-exchange",
-		handle:            handle,
+		handle:            testutil.NewFilterHandle(),
 		handler:           h,
 		responseHandler:   rh,
 		onStreamFinalized: fin,
-	}, handle
+	}
 }
 
 func getHeaders() *fake.FakeHeaderMap {
@@ -49,7 +48,7 @@ func TestExchangeHooks_onRequestToFinalized(t *testing.T) {
 		OnFinalized: func(s accum, _ FinalizedInfo) { got = s },
 	})
 
-	f, _ := newExchangeFilter(handler, nil, fin)
+	f := newExchangeFilter(handler, nil, fin)
 	f.OnRequestHeaders(fake.NewFakeHeaderMap(map[string][]string{
 		":method": {"DELETE"},
 		":path":   {"/item"},
@@ -88,7 +87,7 @@ func TestExchangeHooks_onResponseHeadersAndBody(t *testing.T) {
 		OnFinalized: func(s *accum, _ FinalizedInfo) {},
 	})
 
-	f, _ := newExchangeFilter(handler, rh, fin)
+	f := newExchangeFilter(handler, rh, fin)
 	f.OnRequestHeaders(getHeaders(), true)
 
 	// Headers phase.
@@ -111,7 +110,7 @@ func TestExchangeHooks_nilOnResponseIsSafe(t *testing.T) {
 	})
 	require.Nil(t, rh)
 
-	f, _ := newExchangeFilter(handler, rh, nil)
+	f := newExchangeFilter(handler, rh, nil)
 	require.NotPanics(t, func() {
 		f.OnRequestHeaders(getHeaders(), true)
 	})
@@ -130,7 +129,7 @@ func TestExchangeHooks_localReplyPath(t *testing.T) {
 		OnFinalized: func(s accum, info FinalizedInfo) { got = s; gotInfo = info },
 	})
 
-	f, _ := newExchangeFilter(handler, nil, fin)
+	f := newExchangeFilter(handler, nil, fin)
 	f.OnRequestHeaders(fake.NewFakeHeaderMap(map[string][]string{
 		":method": {"GET"},
 		":path":   {"/secure"},
@@ -157,7 +156,7 @@ func TestExchangeHooks_upstreamFailurePath(t *testing.T) {
 		OnFinalized: func(s accum, info FinalizedInfo) { got = s; gotInfo = info },
 	})
 
-	f, _ := newExchangeFilter(handler, nil, fin)
+	f := newExchangeFilter(handler, nil, fin)
 	f.OnRequestHeaders(fake.NewFakeHeaderMap(map[string][]string{
 		":method": {"DELETE"},
 		":path":   {"/item"},
@@ -184,14 +183,14 @@ func TestExchangeHooks_poolReuse(t *testing.T) {
 	})
 
 	// Stream 1.
-	f1, _ := newExchangeFilter(handler, nil, fin)
+	f1 := newExchangeFilter(handler, nil, fin)
 	f1.OnRequestHeaders(getHeaders(), true)
 	fin(&f1.context, FinalizedInfo{})
 	// Second call must be a no-op (context cleared).
 	fin(&f1.context, FinalizedInfo{})
 
 	// Stream 2 — pool may return the same slot, but zeroed.
-	f2, _ := newExchangeFilter(handler, nil, fin)
+	f2 := newExchangeFilter(handler, nil, fin)
 	f2.OnRequestHeaders(getHeaders(), true)
 	fin(&f2.context, FinalizedInfo{})
 

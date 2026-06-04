@@ -13,6 +13,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log"
 	"net"
 	"strings"
 	"sync"
@@ -159,5 +160,7 @@ func main() {
 	}
 	fmt.Printf("traces: %v  logs: %v\n\n", *showTraces, *showLogs)
 
-	srv.Serve(lis)
+	if err := srv.Serve(lis); err != nil {
+		log.Fatalf("serve: %v", err)
+	}
 }

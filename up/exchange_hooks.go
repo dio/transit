@@ -33,7 +33,10 @@ func WithExchangeObserver[T any](hooks ExchangeHooks[T]) []FilterOption {
 
 	handlerOpt := FilterOption(func(cf *configFactory) {
 		cf.handler = func(w *Writer, r *Request) {
-			slot := pool.Get().(*T)
+			slot, ok := pool.Get().(*T)
+			if !ok {
+				slot = new(T)
+			}
 			*slot = hooks.OnRequest(w, r)
 			*r.Context = slot
 		}

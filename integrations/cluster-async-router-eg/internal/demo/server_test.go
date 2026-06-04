@@ -16,7 +16,7 @@ func TestUpstreamEchoesNameAndBody(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
-		writeJSON(w, http.StatusOK, UpstreamResponse{Upstream: "upstream-a", Body: string(raw)})
+		writeJSON(w, UpstreamResponse{Upstream: "upstream-a", Body: string(raw)})
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -38,7 +38,7 @@ func TestClientRequestSendsTargetBody(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
-		writeJSON(w, http.StatusOK, map[string]string{"got": string(raw), "host": r.Host})
+		writeJSON(w, map[string]string{"got": string(raw), "host": r.Host})
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()

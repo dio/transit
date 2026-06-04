@@ -7,10 +7,10 @@ github.com/dio/gateway-pairs v0.2.1 h1:Zh17zIT+9ZG7biE1DA7Nd+FTblAtFKW6LpOO4FO6j
 github.com/dio/gateway-pairs v0.2.1/go.mod h1:aljNERGVh0A3YLKWQkq6Uarr3jgzCOivqJ1vOCwGR34=
 github.com/dio/sh v0.0.2 h1:pfkcMHE8lIcTxfMiWyTAr/BD6UHUR6S6K/JvJhYGtZA=
 github.com/dio/sh v0.0.2/go.mod h1:9qbav4SIwj+iR/rkgxYQYmFfpco4pADdBUrkszbVaRs=
-github.com/dio/transit v0.0.0-20260524011848-c4ee1587ea44 h1:WSBDx2839SgPu6su1aV2Kwpb6cHdQY+dJBR8O7ubUew=
-github.com/dio/transit v0.0.0-20260524011848-c4ee1587ea44/go.mod h1:Ngt06ok4nPyUSywxTuhXjDHl++fkYIdTPHRukSyUIBY=
 github.com/envoyproxy/envoy/source/extensions/dynamic_modules v0.0.0-20260521055639-0d6e3c60aa55 h1:lTewRAh7QFyxr0VG4GyFrAg5FUT95W8jOYWmMgQ+iaI=
 github.com/envoyproxy/envoy/source/extensions/dynamic_modules v0.0.0-20260521055639-0d6e3c60aa55/go.mod h1:NpQosaDAX20s0ak0o/4b5dLOdvkbk15XqoakhSNX1Gg=
+github.com/fsnotify/fsnotify v1.10.1 h1:b0/UzAf9yR5rhf3RPm9gf3ehBPpf0oZKIjtpKrx59Ho=
+github.com/fsnotify/fsnotify v1.10.1/go.mod h1:TLheqan6HD6GBK6PrDWyDPBaEV8LspOxvPSjC+bVfgo=
 github.com/kr/pretty v0.3.1 h1:flRD4NNwYAUpkphVc1HcthR4KEIFJ65n8Mw5qdRn3LE=
 github.com/kr/pretty v0.3.1/go.mod h1:hoEshYVHaxMs3cyo3Yncou5ZscifuDolrwPKZanG3xk=
 github.com/kr/text v0.2.0 h1:5Nx0Ya0ZqY2ygV366QzturHI13Jq95ApcVaJBhpS+AY=
@@ -23,6 +23,8 @@ github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 go.uber.org/mock v0.6.0 h1:hyF9dfmbgIX5EfOdasqLsWD6xqpNZlXblLB/Dbnwv3Y=
 go.uber.org/mock v0.6.0/go.mod h1:KiVJ4BqZJaMj4svdfmHM0AUx4NJYO8ZNpPnZn1Z+BBU=
+golang.org/x/sys v0.45.0 h1:dO4czNzziLiiXplLQgBCEpCvXQ3dnkn0SdaZSYdQ+FY=
+golang.org/x/sys v0.45.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
 gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c h1:Hei/4ADfdWqJk1ZMxUNpqntNwaWcugrBjAiHlqqRiVk=
 gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c/go.mod h1:JHkPIbrfpd72SG/EVd6muEfDQjcINNoR0C8j2r3qZ4Q=

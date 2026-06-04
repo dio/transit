@@ -41,7 +41,7 @@ func RunUpstream(ctx context.Context, addr, name string) error {
 			_ = r.Body.Close()
 			body = string(raw)
 		}
-		writeJSON(w, http.StatusOK, UpstreamResponse{Upstream: name, Body: body})
+		writeJSON(w, UpstreamResponse{Upstream: name, Body: body})
 	})
 	return runHTTP(ctx, addr, mux)
 }
@@ -68,7 +68,7 @@ func RunUpstreamTLS(ctx context.Context, addr, healthzAddr, name, expectedSNI, c
 			_ = r.Body.Close()
 			body = string(raw)
 		}
-		writeJSON(w, http.StatusOK, UpstreamResponse{Upstream: name, Body: body})
+		writeJSON(w, UpstreamResponse{Upstream: name, Body: body})
 	})
 
 	tlsServer := &http.Server{
@@ -161,9 +161,9 @@ func runHTTP(ctx context.Context, addr string, handler http.Handler) error {
 	}
 }
 
-func writeJSON(w http.ResponseWriter, status int, value any) {
+func writeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("content-type", "application/json")
-	w.WriteHeader(status)
+	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(value); err != nil {
 		log.Printf("write json response: %v", err)
 	}

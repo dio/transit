@@ -11,7 +11,9 @@ require (
 require (
 	github.com/dio/sh v0.0.2 // indirect
 	github.com/envoyproxy/envoy/source/extensions/dynamic_modules v0.0.0-20260521055639-0d6e3c60aa55 // indirect
+	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
 )
 
 require (
@@ -20,3 +22,5 @@ require (
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/dio/transit => ..

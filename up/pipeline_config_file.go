@@ -44,7 +44,7 @@ func cachedFileSource(path string) ConfigSource {
 		size := info.Size()
 
 		// Cache hit: file unchanged.
-		if modTime == lastModTime && size == lastSize && len(lastData) > 0 {
+		if modTime.Equal(lastModTime) && size == lastSize && len(lastData) > 0 {
 			return lastData, nil
 		}
 
@@ -77,7 +77,7 @@ func StartFileWatch[T any](p *PipelineConfig[T], path string) func() {
 
 	dir := filepath.Dir(absPath)
 	if err := watcher.Add(dir); err != nil {
-		watcher.Close()
+		_ = watcher.Close()
 		return func() {}
 	}
 
@@ -108,7 +108,7 @@ func StartFileWatch[T any](p *PipelineConfig[T], path string) func() {
 	}()
 
 	return func() {
-		watcher.Close()
+		_ = watcher.Close()
 		wg.Wait()
 	}
 }

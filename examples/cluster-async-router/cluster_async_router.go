@@ -153,7 +153,9 @@ func Register(token string) *Pending {
 	p := newPending()
 	actual, loaded := registry.LoadOrStore(token, p)
 	if loaded {
-		return actual.(*Pending)
+		if pend, ok := actual.(*Pending); ok {
+			return pend
+		}
 	}
 	return p
 }
@@ -163,7 +165,8 @@ func Lookup(token string) *Pending {
 	if !ok {
 		return nil
 	}
-	return v.(*Pending)
+	pend, _ := v.(*Pending)
+	return pend
 }
 
 func Delete(token string) { registry.Delete(token) }
