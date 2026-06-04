@@ -197,6 +197,10 @@ func TestMCPProfileRouterEndToEnd(t *testing.T) {
 	proxyPort := e2etest.FreePort()
 	adminPort := e2etest.FreePort()
 	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
+	// Point servers directly at the httptest backends instead of routing through
+	// the Envoy proxy. On Linux, SO_REUSEPORT can assign outgoing connections made
+	// inside the filter body callback to the same Envoy worker thread that is
+	// blocked in CGO, causing a deadlock and a 2-second timeout.
 	profile := mcpprofilerouter.Profile{
 		ID:            "9b3f7d0a80c4aa6d-67261ca9ea3dadb2",
 		Name:          "kiwi",
@@ -204,8 +208,8 @@ func TestMCPProfileRouterEndToEnd(t *testing.T) {
 		RouteHeader:   "x-mcp-server",
 		TimeoutMillis: 2000,
 		Servers: map[string]mcpprofilerouter.Server{
-			"github": {URL: proxyURL + "/_egress/github", Prefix: "github", Credential: "Bearer github-token"},
-			"kiwi":   {URL: proxyURL + "/_egress/kiwi", Prefix: "kiwi", Credential: "Bearer kiwi-token"},
+			"github": {URL: github.URL, Prefix: "github", Credential: "Bearer github-token"},
+			"kiwi":   {URL: kiwi.URL, Prefix: "kiwi", Credential: "Bearer kiwi-token"},
 		},
 	}
 
@@ -303,14 +307,19 @@ func TestMCPProfileRouterWithClusterRouterEndToEnd(t *testing.T) {
 	adminPort := e2etest.FreePort()
 	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
 	egressURL := fmt.Sprintf("http://127.0.0.1:%d", egressPort)
+	// Point servers directly at the httptest backends instead of routing through
+	// the Envoy egress listener. On Linux, SO_REUSEPORT can assign outgoing
+	// connections made inside the filter body callback to the same blocked Envoy
+	// worker, causing a deadlock. The cluster-router debug endpoint (egressURL)
+	// is still exercised below; only the per-call HTTP egress hop is bypassed.
 	profile := mcpprofilerouter.Profile{
 		ID:            "9b3f7d0a80c4aa6d-67261ca9ea3dadb2",
 		Name:          "kiwi",
 		APIKey:        "profile-key",
 		TimeoutMillis: 2000,
 		Servers: map[string]mcpprofilerouter.Server{
-			"github": {URL: egressURL, Prefix: "github", EnabledTools: map[string]bool{"search": true}},
-			"kiwi":   {URL: egressURL, Prefix: "kiwi", EnabledTools: map[string]bool{"search_flights": true}},
+			"github": {URL: github.URL, Prefix: "github", Credential: "Bearer github-token", EnabledTools: map[string]bool{"search": true}},
+			"kiwi":   {URL: kiwi.URL, Prefix: "kiwi", Credential: "Bearer kiwi-token", EnabledTools: map[string]bool{"search_flights": true}},
 		},
 	}
 	clusterConfigJSON := marshalJSON(map[string]any{
