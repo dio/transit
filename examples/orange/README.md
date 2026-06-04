@@ -131,8 +131,9 @@ right name.
 `match` plays the other half of this trick: it rewrites `:authority` to the
 provider hostname from its **downstream headers handler**, before the
 upstream connection pool opens. Doing it in the body handler is too late —
-the router has already locked SNI by the time the body arrives. (`pick`'s
-README has the gory phase-ordering details.)
+the router has already locked SNI by the time the body arrives. See
+[`internal/pipeline/pick/README.md`](internal/pipeline/pick/README.md)
+for the gory phase-ordering details.
 
 The DNS refresh loop is STRICT_DNS-shaped: it wakes at the earliest TTL
 across all registered hostnames, re-resolves, and reconciles the host set in
