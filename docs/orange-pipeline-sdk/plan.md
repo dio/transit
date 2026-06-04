@@ -501,6 +501,306 @@ Reference: `/Users/dio/src/dio/llm-spike/AI_GATEWAY_EXTPROC_PHASES.md`,
 - The `Route` value is the single thing carried across the Classify →
   Translate handoff (via `StreamKey` from WS-C).
 
+### Orange `POST /v1/responses` Support Plan
+
+Status: design handoff for the Orange M8 milestone.
+
+References:
+
+- OpenAI migration guide:
+  `https://developers.openai.com/api/docs/guides/migrate-to-responses`
+- OpenAI Responses API reference:
+  `https://developers.openai.com/api/reference/resources/responses`
+- OpenAI Responses create reference:
+  `https://platform.openai.com/docs/api-reference/responses/create?api-mode=responses`
+- OpenAI Responses streaming events reference:
+  `https://platform.openai.com/docs/api-reference/responses-streaming/response`
+- Orange README "Planned Codex support":
+  [`../../examples/orange/README.md`](../../examples/orange/README.md)
+- Existing Responses WebSocket handoff:
+  [`orange-websocket-sidecar.md`](orange-websocket-sidecar.md)
+- Existing meter support for Responses usage:
+  [`../../examples/orange/internal/pipeline/meter`](../../examples/orange/internal/pipeline/meter)
+
+Reference checked: 2026-06-04.
+
+#### Motivation
+
+Orange currently handles `POST /v1/chat/completions`, `POST /v1/messages`,
+and WebSocket upgrades on `GET /v1/responses`. Modern Codex provider
+configuration uses the OpenAI Responses API for normal chat and
+non-interactive requests, so the missing HTTP `POST /v1/responses` path blocks
+Codex from using Orange as its local OpenAI-compatible provider endpoint.
+
+The first milestone is OpenAI-compatible Responses HTTP passthrough and
+translation. It should not create a new sidecar: unlike the WebSocket path,
+plain HTTP Responses bodies are visible to the existing `match -> pick ->
+adapt -> meter` pipeline. The sidecar remains only for protocol modes where
+Envoy filters cannot inspect the framing ergonomically.
+
+#### Handoff Contract
+
+Build the HTTP path as a normal Orange endpoint:
+
+```text
+POST /v1/responses
+```
+
+Do not treat this as the existing WebSocket `GET /v1/responses` path and do
+not route it through the sidecar. The implementation should preserve the
+current Envoy-owned request path:
+
+- `orange-match` recognizes the endpoint, buffers the body, extracts
+  top-level `model`, and publishes a `Decision` containing
+  `EndpointResponses`.
+- `orange-pick` remains endpoint-agnostic; it still maps the resolved
+  provider to the selected `HostPtr`.
+- `orange-adapt` selects a translator by `(provider backend schema,
+  endpoint)`, not provider schema alone.
+- `orange-meter` keeps using OpenAI JSON/SSE usage extraction, because it
+  already supports `input_tokens` / `output_tokens`.
+
+The first engineer implementing this should start in `match`, because the
+endpoint discriminator must exist before translator routing can be correct.
+`adapt` is the second cut: its current registry key is only the effective
+backend schema, which is insufficient once a provider may support
+Chat Completions and Responses differently.
+
+#### Protocol Facts
+
+The Responses API is not just Chat Completions at a different path:
+
+- Request input uses top-level `input` plus optional `instructions`, rather
+  than only a `messages` array.
+- Responses return a typed `response` object with `output` items; `message`,
+  function/custom tool calls, and tool-call outputs are item variants.
+- Responses has one generation per request; Chat Completions `n` does not map.
+- Multi-turn state can be explicit by passing previous `output` items back in
+  `input`, or OpenAI-hosted by using `store` and `previous_response_id`.
+- `previous_response_id` cannot be combined with `conversation`; if
+  `instructions` is used with `previous_response_id`, prior instructions are
+  not carried forward automatically.
+- Structured output moved from Chat Completions `response_format` to
+  Responses `text.format`.
+- Usage fields are `input_tokens` and `output_tokens`; the existing
+  `orange-meter` already recognizes that shape for JSON and SSE.
+- `stream: true` returns SSE events. Native passthrough should preserve the
+  event stream; compatibility conversion only needs the text-delta subset for
+  M8.
+
+#### Scope
+
+M8 includes:
+
+- `POST /v1/responses` route in `orange-match`.
+- Model extraction from Responses request bodies:
+  `{"model": "..."}` is required and drives the same provider lookup as chat
+  completions.
+- New Orange endpoint discriminator for Responses, separate from
+  Chat Completions.
+- Request and response translators for OpenAI-compatible Responses:
+  `OpenAIResponses -> OpenAIResponses` passthrough, including model override,
+  path rewrite to `/v1/responses`, `content-length` fixup when the body
+  changes, streaming flag capture, and usage preservation.
+- Down-conversion translators where the selected backend does not expose a
+  native Responses API:
+  `OpenAIResponses -> OpenAIChatCompletions` and response conversion back to
+  Responses for the minimum text/message subset.
+- Codex-oriented e2e proof: configure Codex with
+  `model_providers.orange.wire_api="responses"` and show a normal prompt
+  reaches the selected provider through Orange, with Orange injecting the real
+  upstream credential.
+
+M8 explicitly defers:
+
+- Native OpenAI built-in tools (`web_search`, `file_search`,
+  `code_interpreter`, computer use, remote MCP) beyond forwarding them to a
+  native OpenAI Responses backend.
+- Provider-portable execution of Responses function calls/tool loops.
+- OpenAI-hosted state emulation for non-OpenAI backends. If a backend route
+  does not support `previous_response_id`, Orange should reject it with a
+  clear local response unless the request includes all needed context in
+  `input`.
+- Encrypted reasoning item handling beyond passthrough to native OpenAI.
+- Audio/image-generation-specific response item semantics.
+
+#### Supported M8 Request Contract
+
+Accept and pass through these fields on a native Responses backend:
+
+| Field | M8 behavior |
+| --- | --- |
+| `model` | Required. Drives Orange provider lookup and may be overridden to the configured backend model. |
+| `input` | Required by practical use, though OpenAI marks the field optional. Support string input and text-only message items for compatibility conversion. Native passthrough preserves all item shapes. |
+| `instructions` | Preserve on native passthrough. Convert to a leading `system` message for chat-only backends. |
+| `stream` | Preserve for native passthrough. Chat compatibility supports SSE text deltas only. |
+| `previous_response_id` | Preserve only for native Responses backends. Reject for chat-only backends unless the request also carries complete context in `input`. |
+| `store`, `conversation` | Preserve for native Responses backends. Reject for chat-only backends. |
+| `max_output_tokens`, `temperature`, `top_p` | Map when the destination schema has an equivalent; otherwise preserve native or reject compatibility. |
+| `tools`, `tool_choice`, `parallel_tool_calls`, `max_tool_calls` | Native passthrough only for M8. Chat compatibility rejects anything beyond simple function-tool shapes that are explicitly implemented and tested. |
+| `text.format` | Native passthrough. Chat compatibility may map to `response_format` only for JSON schema/text cases with clear equivalence. |
+| `include`, `metadata`, `prompt`, `prompt_cache_key` | Native passthrough. Chat compatibility rejects unless explicitly mapped. |
+
+Reject before upstream selection for chat-only compatibility when the request
+contains item types or state semantics Orange cannot faithfully emulate. Use
+an OpenAI-shaped local response with code `orange.responses_unsupported`.
+
+#### Architecture
+
+Use the existing HTTP pipeline:
+
+```text
+client
+  -> POST /v1/responses
+  -> orange-match
+       parse model from body
+       resolve provider + endpoint=responses
+       publish Decision/Route via StreamKey
+  -> orange-pick
+       wait for the match promise
+       choose provider host
+  -> orange-adapt
+       select Responses translator
+       mutate request path/body/headers
+       inject provider auth after mutation
+       translate response when needed
+  -> orange-meter
+       extract input_tokens/output_tokens from JSON or response.completed SSE
+```
+
+For OpenAI-compatible providers, this is a narrow passthrough translator. For
+providers with only Chat Completions, the translator owns a deliberately small
+lossy compatibility subset:
+
+- `instructions` becomes a leading `system` message.
+- String `input` becomes one `user` message.
+- Message-like `input` items become Chat Completions messages when their
+  content is text-only.
+- `max_output_tokens`, `temperature`, `top_p`, `stream`, `tools`, and
+  `tool_choice` are mapped only when the destination schema has an equivalent.
+- Unsupported item types, built-in tools, hosted state, encrypted reasoning,
+  and non-text content fail before upstream selection completes, producing an
+  OpenAI-shaped error body with an `orange.responses_unsupported` code.
+
+#### Concrete File Map
+
+| Area | Files | Required change |
+| --- | --- | --- |
+| Endpoint routing | `examples/orange/internal/pipeline/match/match.go` | Add `POST /v1/responses`; distinguish HTTP POST from existing WebSocket `GET /v1/responses`; carry endpoint on `Decision`; write endpoint dynamic metadata. |
+| Match tests | `examples/orange/internal/pipeline/match/match_test.go`, `examples/orange/internal/pipeline/match/testdata/match_test.yaml` | Add model extraction, missing model, unknown model, endpoint metadata, and GET WebSocket passthrough regression tests. |
+| Translator routing | `examples/orange/internal/pipeline/adapt/adapt.go`, `examples/orange/internal/translator/registry.go` | Change translator lookup from `schema` to `(schema, endpoint)` or an equivalent route key; keep one translator instance per request. |
+| API structs | `examples/orange/internal/apischema/openai` | Add typed structs only for the M8 subset; use raw JSON preservation for native passthrough where practical. |
+| Native Responses translator | `examples/orange/internal/translator/openai_openai.go` or a new generated `openai_openai_responses.go` | Implement OpenAI Responses passthrough: model override, path rewrite to `/v1/responses`, content-length fixup, stream flag capture, JSON/SSE response passthrough. |
+| Compatibility translators | `examples/orange/internal/translator/openai_*` | Add Responses-to-chat request conversion and chat-to-Responses response conversion where the backend lacks native Responses. Keep unsupported feature checks explicit. |
+| Metering | `examples/orange/internal/pipeline/meter/meter_openai.go` | No broad rewrite expected; add regression tests for native Responses JSON and `response.completed` SSE usage if not already covered. |
+| E2E config | `examples/orange/e2e/testdata/orange.yaml`, `examples/orange/envoy.tmpl.yaml` | Add a native Responses provider route and one chat-only compatibility route. Keep provider credentials injected by Orange, not Codex. |
+| User docs | `examples/orange/README.md` | Move Codex Responses setup out of "planned" only after e2e is green; document unsupported compatibility cases. |
+
+#### Development
+
+1. Extend Orange endpoint/schema selection:
+   - add `EndpointResponses` beside the existing chat-completions/messages
+     endpoint shapes;
+   - ensure `Decision` carries endpoint information through WS-C/WS-I instead
+     of deriving all OpenAI traffic as chat completions.
+2. Extend `orange-match`:
+   - register `POST /v1/responses`;
+   - parse `model` from the top-level Responses body;
+   - reject missing/unknown model with the existing local-reply style;
+   - keep `GET /v1/responses` WebSocket passthrough untouched.
+3. Add API schema structs under `internal/apischema/openai` for the supported
+   Responses request/response subset:
+   - request: `model`, `input`, `instructions`, `stream`, `store`,
+     `previous_response_id`, `conversation`, `max_output_tokens`,
+     `temperature`, `top_p`, `tools`, `tool_choice`,
+     `parallel_tool_calls`, `max_tool_calls`, `text.format`, `include`,
+     `metadata`, `prompt`, `prompt_cache_key`;
+   - response: `id`, `object`, `created_at`, `model`, `output`, `usage`,
+     `error`, `incomplete_details`;
+   - SSE event envelope for at least `response.output_text.delta`,
+     `response.completed`, and `response.failed`.
+4. Add translator functions:
+   - `TranslateOpenAIResponsesToOpenAIResponses`;
+   - `TranslateOpenAIResponsesToOpenAIChatCompletions`;
+   - `TranslateOpenAIChatCompletionsToOpenAIResponses`;
+   - streaming response conversion only for the text-delta subset.
+5. Update translator registry/factory routing so provider config can choose
+   a backend schema per endpoint:
+   - native OpenAI provider uses Responses passthrough for `/v1/responses`;
+   - Azure OpenAI uses Responses passthrough only if its configured endpoint
+     path supports it, otherwise returns unsupported;
+   - OpenAI-compatible chat-only providers use the down-conversion route.
+6. Keep auth after body mutation:
+   - bearer/x-api-key unchanged;
+   - SigV4/GCP signing must observe the converted body and final
+     `content-length`.
+7. Preserve metering:
+   - for native Responses, rely on existing `input_tokens`/`output_tokens`;
+   - for converted Chat Completions responses, synthesize the Responses
+     `usage` object from `prompt_tokens`/`completion_tokens` when returning a
+     converted body.
+8. Update docs and examples:
+   - move the Codex command in `examples/orange/README.md` from "planned" to
+     runnable once e2e is green;
+   - document unsupported request features and the native-provider passthrough
+     rule.
+
+#### Suggested Implementation Sequence
+
+1. Add endpoint types and `Decision.Endpoint`; update unit tests that construct
+   decisions.
+2. Add `POST /v1/responses` in `match` with body model extraction and endpoint
+   metadata.
+3. Split translator route keys by endpoint while preserving existing chat and
+   messages behavior.
+4. Add native OpenAI Responses passthrough and tests. This is the first
+   runnable slice and should make Codex-with-native-OpenAI possible.
+5. Add meter regression tests for Responses JSON and SSE.
+6. Add minimal chat compatibility conversion for string/text-only inputs.
+7. Add e2e: native passthrough first, chat compatibility second, Codex config
+   last.
+8. Update README only after the native e2e passes.
+
+#### Verification
+
+- Unit: `orange-match` accepts `POST /v1/responses`, extracts model, resolves
+  provider, and leaves `GET /v1/responses` upgrade behavior unchanged.
+- Unit: missing model returns `400 orange.model_required`; unknown model
+  returns `404 orange.model_not_found`.
+- Unit: Responses passthrough rewrites only model/path/content-length when
+  needed and preserves `input`, `instructions`, `tools`, `text.format`,
+  `store`, `previous_response_id`, and `include`.
+- Unit: Responses-to-chat conversion handles string input, system
+  instructions, message-like text input, streaming false, and streaming text
+  deltas.
+- Unit: unsupported Responses features fail with a local OpenAI-shaped error
+  before an upstream request is sent.
+- Unit: converted response body exposes `object: "response"`, `output`
+  message items, and `usage.input_tokens` / `usage.output_tokens`.
+- Unit: SigV4/GCP auth tests prove signing happens after Responses-to-backend
+  body mutation.
+- E2E: OpenAI native `/v1/responses` reaches `api.openai.com/v1/responses`
+  through Envoy, with Orange-injected bearer auth and non-zero meter counters.
+- E2E: chat-only provider compatibility path returns a Responses-shaped body
+  for a simple text prompt.
+- E2E: streaming `/v1/responses` emits SSE to the client and `orange-meter`
+  records usage from `response.completed`.
+- E2E: Codex configured with `base_url="http://localhost:8080/v1"` and
+  `wire_api="responses"` can complete one chat-mode and one non-interactive
+  prompt through Orange.
+
+#### Acceptance Criteria
+
+- `POST /v1/responses` is a first-class Orange endpoint, not an alias for
+  chat completions hidden in translator internals.
+- Native OpenAI Responses traffic stays lossless except for documented model
+  override/path/auth changes.
+- Lossy compatibility is explicit, small, and tested; unsupported request
+  shapes fail locally with stable Orange error codes.
+- Codex can use Orange as an OpenAI-compatible Responses provider without a
+  Codex-side upstream provider key.
+- The HTTP path does not introduce a sidecar or bypass Envoy.
+
 <a id="workstream-e"></a><a id="workstream-e-exchange-observer"></a>
 ## Workstream E: Exchange Observer
 
@@ -572,6 +872,17 @@ Reference: `/Users/dio/src/dio/llm-spike/AI_GATEWAY_EXTPROC_PHASES.md`,
 
 <a id="workstream-g"></a><a id="workstream-g-protocol-sidecars"></a>
 ## Workstream G: Protocol Sidecars
+
+Orange-specific handoffs:
+
+- [`orange-websocket-sidecar.md`](orange-websocket-sidecar.md) fixes the v1
+  Responses WebSocket sidecar architecture, including the mandatory
+  egress-via-Envoy path, proposed filters, internal headers, and test
+  checklist.
+- [`orange-mcp-sidecar.md`](orange-mcp-sidecar.md) fixes the v1 MCP
+  streamable-HTTP/SSE sidecar architecture, including the AI Gateway
+  `internal/mcpproxy` pattern review, codemod/import decision, internal
+  headers, session envelope, method plan, and test checklist.
 
 ### Research
 
