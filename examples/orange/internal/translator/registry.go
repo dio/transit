@@ -24,3 +24,18 @@ func New(name string, cfg ProviderConfig) (Translator, error) {
 	}
 	return f(cfg), nil
 }
+
+// NewForRoute returns a fresh Translator for the given backend schema and
+// endpoint discriminator. It tries the combined "schema:endpoint" key first
+// (e.g. "openai:responses"), then falls back to the schema-only key. This lets
+// endpoint-specific translators coexist with the existing schema-keyed ones
+// without touching existing registrations.
+func NewForRoute(schema, endpoint string, cfg ProviderConfig) (Translator, error) {
+	if endpoint != "" {
+		key := schema + ":" + endpoint
+		if f, ok := registry[key]; ok {
+			return f(cfg), nil
+		}
+	}
+	return New(schema, cfg)
+}
