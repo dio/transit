@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -79,7 +80,7 @@ func mergeListResponse(req rpcRequest, results []backendResult) ([]byte, error) 
 			continue
 		}
 		var resp rpcResponse
-		if err := json.Unmarshal(result.body, &resp); err != nil {
+		if err := json.Unmarshal(bodyJSON(result.body), &resp); err != nil {
 			continue
 		}
 		if resp.Error != nil || len(resp.Result) == 0 {
@@ -143,7 +144,7 @@ func rewriteToolCall(req rpcRequest) (backend, tool string, raw []byte, err erro
 
 func capabilitiesFromInitialize(body []byte) capabilities {
 	var resp rpcResponse
-	if err := json.Unmarshal(body, &resp); err != nil || len(resp.Result) == 0 {
+	if err := json.Unmarshal(bodyJSON(body), &resp); err != nil || len(resp.Result) == 0 {
 		return capabilities{}
 	}
 	var result struct {
@@ -215,4 +216,17 @@ func backendFromResponseID(raw json.RawMessage) string {
 		return ""
 	}
 	return envelope.Backend
+}
+
+// bodyJSON returns the JSON payload from body, stripping SSE framing when present.
+// MCP backends may respond with raw JSON or an SSE stream (event:/data: lines);
+// we extract the first data: line whose content is valid JSON.
+func bodyJSON(body []byte) []byte {
+	for _, line := range bytes.Split(body, []byte("\n")) {
+		line = bytes.TrimRight(line, "\r")
+		if data, ok := bytes.CutPrefix(line, []byte("data: ")); ok && json.Valid(data) {
+			return data
+		}
+	}
+	return body
 }

@@ -105,6 +105,7 @@ func (h *handler) servePOST(w http.ResponseWriter, r *http.Request) {
 		Start:     start,
 	}
 	defer func() { h.publishRecord(rec.finish(time.Since(start))) }()
+	w.Header().Set(headerMethod, req.Method)
 
 	var session sessionEnvelope
 	if req.Method != methodInitialize {
@@ -205,6 +206,9 @@ func (h *handler) handleList(w http.ResponseWriter, r *http.Request, req rpcRequ
 	rec.Backends = resultBackends(results)
 	rec.LegCount = len(results)
 	rec.FailedLegs = countFailed(results)
+	cfg := h.options.config()
+	route, _ := lookupMCPRoute(cfg, session.Route)
+	w.Header().Set(headerBackendStatus, buildBackendStatusHeader(results, route.OptionalBackends))
 	if len(results) == 0 || rec.FailedLegs == len(results) {
 		rec.Outcome = "error"
 		rec.ErrorClass = "all_backends_failed"
@@ -241,6 +245,7 @@ func (h *handler) handleToolsCall(w http.ResponseWriter, r *http.Request, req rp
 	rec.Backends = []string{backend}
 	rec.SelectedBackend = backend
 	rec.Tool = backend + toolSeparator + stripped
+	w.Header().Set(headerTool, rec.Tool)
 	result := h.doBackend(r.Context(), session.Route, backend, rewritten, entry.SessionID, "", req.Method, stripped, requestID, http.MethodPost)
 	rec.LegCount = 1
 	if result.err != nil || result.status < 200 || result.status >= 300 {
@@ -293,6 +298,9 @@ func (h *handler) handleSingleBackendBroadcast(w http.ResponseWriter, r *http.Re
 	rec.Backends = resultBackends(results)
 	rec.LegCount = len(results)
 	rec.FailedLegs = countFailed(results)
+	cfg := h.options.config()
+	route, _ := lookupMCPRoute(cfg, session.Route)
+	w.Header().Set(headerBackendStatus, buildBackendStatusHeader(results, route.OptionalBackends))
 	for _, result := range results {
 		if result.err == nil && result.status >= 200 && result.status < 300 {
 			rec.Outcome = "success"
@@ -498,12 +506,6 @@ func backendEgressURL(baseURL, backendName string) (string, error) {
 
 func (h *handler) routeForRequest(r *http.Request) string {
 	if route := routeFromPath(r.URL.Path); route != "" {
-		return route
-	}
-	if route := r.Header.Get(headerRoute); route != "" {
-		return route
-	}
-	if route := r.URL.Query().Get("route"); route != "" {
 		return route
 	}
 	return defaultRouteName
