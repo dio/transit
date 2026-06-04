@@ -35,13 +35,41 @@ All three egress paths (`orange_default`, `orange-mcp-egress`,
 `orange-responsesws-default`) are *separate cluster entries* in
 `envoy.yaml`, but they all delegate host selection to the same `pick`
 extension and share the same DNS/SNI machinery — one resolver, one host
-table, one TLS context, many possible upstream hostnames.
+table, one TLS context, many possible upstream hostnames. Per-host TLS
+SNI is derived automatically from each registered host's `Hostname`
+field. No `transport_socket_matches`. No cluster per provider.
 
-All upstream traffic — LLM providers *and* MCP backends — exits through one
-shared dynamic cluster (`orange_default` / `orange-mcp-egress` /
-`orange-responsesws-default`). Per-host TLS SNI is derived automatically from
-each registered host's `Hostname` field. No `transport_socket_matches`. No
-cluster per provider.
+## Everything via Envoy
+
+A guiding principle: **every byte in or out of Orange flows through
+Envoy.** That includes the things it's tempting to short-circuit:
+
+- **Ingress** — `/v1/*`, `/mcp/*`, the Responses WebSocket — is a normal
+  Envoy listener with HCM, filters, access logs, and upgrade configs.
+- **Egress** — provider HTTPS and MCP backend HTTPS — exits through
+  Envoy clusters, even though Orange does its own DNS resolution and
+  host selection in `pick`. The sidecars (`orange-mcp`,
+  `orange-responsesws`) loop back through Envoy via a loopback cluster
+  rather than punching out directly with a Go `http.Client`.
+- **Metrics** — token usage isn't a parallel telemetry pipeline. The
+  `orange-meter` filter emits `orange_input_tokens` /
+  `orange_output_tokens` as Envoy counters and dynamic metadata, so
+  they show up on `/stats`, `/clusters`, and any `stats_sinks` you wire
+  up (statsd, OTLP, Prometheus) — alongside Envoy's own counters.
+- **Logs** — request/response logs come out of Envoy access logs, with
+  the `mcp_method` / `mcp_tool` / `orange_meter.*` fields populated
+  through dynamic metadata that the filters write. No separate Orange
+  log stream to ship.
+- **Traces** — when Envoy tracing is configured, every Orange span is
+  an Envoy span. The filters add tags via dynamic metadata; Envoy
+  emits them through whatever tracer is wired up.
+
+The payoff is operational uniformity: one binary to deploy, one
+config surface for ingress/egress/observability, one set of dashboards.
+The cost is that every new capability has to fit Envoy's filter and
+cluster model — which is exactly why `pick` looks like an LB extension
+and `match`/`adapt`/`meter` look like HTTP filters rather than some
+bespoke Orange runtime.
 
 ## Modules at a glance
 
