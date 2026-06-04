@@ -5,10 +5,10 @@
 //
 // Four hosts are registered in the cluster config:
 //
-//   - httpbin.org:443  — bucket=tls-system-ca, Hostname=httpbin.org
-//   - example.com:443  — bucket=tls-system-ca, Hostname=example.com
-//   - 127.0.0.1:<port> — bucket=plaintext
-//   - (unknown)        — not registered; triggers async error → 503
+//   - www.cloudflare.com:443 — bucket=tls-system-ca, Hostname=www.cloudflare.com
+//   - example.com:443        — bucket=tls-system-ca, Hostname=example.com
+//   - 127.0.0.1:<port>       — bucket=plaintext
+//   - (unknown)              — not registered; triggers async error → 503
 //
 // The envoy config has two transport_socket_matches entries keyed on the
 // "bucket" field in endpoint metadata. Envoy selects the TLS socket for the
@@ -86,7 +86,7 @@ func TestMain(m *testing.M) {
 	}
 	cfg := clusterCfg{
 		Hosts: []hostEntry{
-			{Name: "httpbin", Address: "httpbin.org:443", SNI: "httpbin.org", Bucket: "tls-system-ca"},
+			{Name: "cloudflare", Address: "www.cloudflare.com:443", SNI: "www.cloudflare.com", Bucket: "tls-system-ca"},
 			{Name: "example", Address: "example.com:443", SNI: "example.com", Bucket: "tls-system-ca"},
 			{Name: "plain", Address: plainAddr, Bucket: "plaintext"},
 		},
@@ -129,15 +129,15 @@ func post(t *testing.T, body string) *http.Response {
 	return resp
 }
 
-// TestAsyncRouter_TLS_Httpbin routes {"target":"httpbin"} to httpbin.org:443
+// TestAsyncRouter_TLS_Cloudflare routes {"target":"cloudflare"} to www.cloudflare.com:443
 // via the tls-system-ca bucket. A non-5xx response proves auto_host_sni set
 // the correct SNI and the TLS handshake succeeded.
-func TestAsyncRouter_TLS_Httpbin(t *testing.T) {
-	resp := post(t, `{"target":"httpbin"}`)
+func TestAsyncRouter_TLS_Cloudflare(t *testing.T) {
+	resp := post(t, `{"target":"cloudflare"}`)
 	defer resp.Body.Close()
 	t.Logf("status=%d", resp.StatusCode)
 	require.Less(t, resp.StatusCode, 500,
-		"TLS handshake to httpbin.org failed; auto_host_sni or tls-system-ca bucket did not work")
+		"TLS handshake to www.cloudflare.com failed; auto_host_sni or tls-system-ca bucket did not work")
 }
 
 // TestAsyncRouter_TLS_Example routes {"target":"example"} to example.com:443

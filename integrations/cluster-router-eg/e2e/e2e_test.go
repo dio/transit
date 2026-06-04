@@ -90,17 +90,21 @@ func (s *clusterRouterSuite) TestClusterRouterEnvoyGateway() {
 	defer stopControl()
 
 	liveLogf(s.T(), "asserting bootstrap routes")
-	assertRoute(s.Ctx, s.T(), gatewayURL, "gpt-fast", upstreamResponse{
-		Upstream: "upstream-a",
-		Auth:     "Bearer openai-token",
-		Provider: "openai",
-		Version:  "bootstrap",
+	eventually(s.Ctx, s.T(), func() error {
+		return checkRoute(s.Ctx, gatewayURL, "gpt-fast", upstreamResponse{
+			Upstream: "upstream-a",
+			Auth:     "Bearer openai-token",
+			Provider: "openai",
+			Version:  "bootstrap",
+		})
 	})
-	assertRoute(s.Ctx, s.T(), gatewayURL, "claude-safe", upstreamResponse{
-		Upstream: "upstream-b",
-		Auth:     "Bearer anthropic-token",
-		Provider: "anthropic",
-		Version:  "bootstrap",
+	eventually(s.Ctx, s.T(), func() error {
+		return checkRoute(s.Ctx, gatewayURL, "claude-safe", upstreamResponse{
+			Upstream: "upstream-b",
+			Auth:     "Bearer anthropic-token",
+			Provider: "anthropic",
+			Version:  "bootstrap",
+		})
 	})
 
 	liveLogf(s.T(), "posting updated model routes")
@@ -158,11 +162,6 @@ type upstreamResponse struct {
 	Auth     string `json:"auth"`
 	Provider string `json:"provider"`
 	Version  string `json:"version"`
-}
-
-func assertRoute(ctx context.Context, t *testing.T, gatewayURL, model string, want upstreamResponse) {
-	t.Helper()
-	require.NoError(t, checkRoute(ctx, gatewayURL, model, want))
 }
 
 func checkRoute(ctx context.Context, gatewayURL, model string, want upstreamResponse) error {
