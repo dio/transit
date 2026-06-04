@@ -2,8 +2,6 @@
 set -euo pipefail
 
 BASE_URL="${ORANGE_MCP_BASE_URL:-http://localhost:8080/mcp}"
-ROUTE="${ORANGE_MCP_ROUTE:-default}"
-SUBJECT="${ORANGE_MCP_SUBJECT:-orange-mcp-demo}"
 SESSION_ID="${ORANGE_MCP_SESSION_ID:-}"
 PROFILE=""
 SERVER=""
@@ -27,8 +25,6 @@ Usage:
 
 Environment:
   ORANGE_MCP_BASE_URL      MCP base endpoint. Default: http://localhost:8080/mcp
-  ORANGE_MCP_ROUTE         Default MCP profile. Default: default
-  ORANGE_MCP_SUBJECT       Subject bound into the public session. Default: orange-mcp-demo
   ORANGE_MCP_SESSION_ID    Existing public mcp-session-id for list/call/stream/delete
   ORANGE_MCP_SHOW_HEADERS  Set to 1 to print request and response headers (or use --headers)
 
@@ -98,7 +94,6 @@ target_path() {
     echo "$PROFILE"
     return
   fi
-  echo "$ROUTE"
 }
 
 request_url() {
@@ -142,8 +137,6 @@ print_request_headers() {
   echo "--- request headers ---" >&2
   echo "> $method $url" >&2
   [[ "$method" == "POST" ]] && echo "> content-type: application/json" >&2
-  [[ "$method" == "POST" ]] && echo "> x-orange-mcp-route: $ROUTE" >&2
-  echo "> x-orange-subject: $SUBJECT" >&2
   [[ -n "$SESSION_ID" ]] && echo "> mcp-session-id: $SESSION_ID" >&2
   echo "-----------------------" >&2
 }
@@ -179,8 +172,6 @@ post_rpc() {
     -w '%{http_code}'
     -X POST "$(request_url)"
     -H 'content-type: application/json'
-    -H "x-orange-mcp-route: $ROUTE"
-    -H "x-orange-subject: $SUBJECT"
     --data-binary "$payload"
   )
   if [[ -n "$SESSION_ID" ]]; then
@@ -224,7 +215,8 @@ call_tool() {
     exit 2
   fi
   local tool="${1:-}"
-  local arguments="${2:-{}}"
+  local arguments="${2:-}"
+  [[ -z "$arguments" ]] && arguments='{}'
   if [[ -z "$tool" ]]; then
     echo "call requires <backend__tool>" >&2
     usage >&2
@@ -246,7 +238,6 @@ stream_events() {
   [[ "$SHOW_HEADERS" == "1" ]] && dump_args=(-D "$resp_headers")
   print_request_headers GET
   curl -N -sS "${dump_args[@]}" "$(request_url)" \
-    -H "x-orange-subject: $SUBJECT" \
     -H "mcp-session-id: $SESSION_ID"
   [[ "$SHOW_HEADERS" == "1" ]] && print_response_headers "$resp_headers"
 }
@@ -261,7 +252,6 @@ delete_session() {
   [[ "$SHOW_HEADERS" == "1" ]] && dump_args=(-D "$resp_headers")
   print_request_headers DELETE
   curl -sS -X DELETE "${dump_args[@]}" "$(request_url)" \
-    -H "x-orange-subject: $SUBJECT" \
     -H "mcp-session-id: $SESSION_ID"
   echo
   [[ "$SHOW_HEADERS" == "1" ]] && print_response_headers "$resp_headers"
