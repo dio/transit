@@ -17,9 +17,9 @@ ENVOY_GATEWAY_VERSION ?= v1.8.0
 K3S_TAG ?= v1.31.6-k3s1
 IMAGE_TAG := $(shell date +%s)
 IMAGE ?= transit-cluster-async-router-eg:$(IMAGE_TAG)
-DEMO_IMAGE ?= transit-cluster-async-router-eg-demo:$(IMAGE_TAG)
+CONTROL_PLANE_IMAGE ?= transit-cluster-async-router-eg-demo:$(IMAGE_TAG)
 PUBLISH_IMAGE ?= ttl.sh/transit-cluster-async-router-eg-$(IMAGE_TAG):1h
-PUBLISH_DEMO_IMAGE ?= ttl.sh/transit-cluster-async-router-eg-demo-$(IMAGE_TAG):1h
+PUBLISH_CONTROL_PLANE_IMAGE ?= ttl.sh/transit-cluster-async-router-eg-demo-$(IMAGE_TAG):1h
 K3D_IMAGE_IMPORT_MODE ?= direct
 K3D_SKIP_IMAGE_IMPORT ?= 0
 K3D_AGENTS ?= 0
@@ -62,13 +62,13 @@ demo-image: demo-binary
 	docker build --platform $(PLATFORM) \
 	  --build-arg TARGETARCH=$(ARCH) \
 	  -f Dockerfile.demo \
-	  -t $(DEMO_IMAGE) .
+	  -t $(CONTROL_PLANE_IMAGE) .
 
 publish: IMAGE=$(PUBLISH_IMAGE)
-publish: DEMO_IMAGE=$(PUBLISH_DEMO_IMAGE)
+publish: CONTROL_PLANE_IMAGE=$(PUBLISH_CONTROL_PLANE_IMAGE)
 publish: image demo-image
 	docker push $(IMAGE)
-	docker push $(DEMO_IMAGE)
+	docker push $(CONTROL_PLANE_IMAGE)
 
 eg-install:
 	RUN_CLUSTER_ASYNC_ROUTER_EG_INSTALL=1 \
@@ -92,7 +92,7 @@ e2e: image demo-image
 endif
 	RUN_CLUSTER_ASYNC_ROUTER_EG_E2E=1 \
 	IMAGE=$(IMAGE) \
-	DEMO_IMAGE=$(DEMO_IMAGE) \
+	DEMO_IMAGE=$(CONTROL_PLANE_IMAGE) \
 	ENVOY_GATEWAY_VERSION=$(ENVOY_GATEWAY_VERSION) \
 	K3S_TAG=$(K3S_TAG) \
 	K3D_AGENTS=$(K3D_AGENTS) \
