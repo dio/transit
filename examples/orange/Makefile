@@ -11,6 +11,15 @@ ENVOY_BIN ?= $(ROOT)/.bin/envoy
 
 include $(ROOT)/scripts/zig.mk
 
+# Load .env if present (e.g. API keys). Variables in .env use KEY=value format
+# and override nothing already set on the command line.
+-include $(CURDIR)/.env
+export ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY GCP_PROJECT GCP_SERVICE_ACCOUNT_JSON GITHUB_TOKEN ORANGE_MCP_SESSION_KEYS
+
+# Config file: override with `make run ORANGE_CONFIG=/path/to/orange.yaml` or
+# set ORANGE_CONFIG in .env. Defaults to orange.yaml in this directory.
+ORANGE_CONFIG ?= $(CURDIR)/orange.yaml
+
 # TLS trust bundle for upstream HTTPS (auto_san_validation needs a root CA).
 # Override with `make run ORANGE_TRUSTED_CA=/path/to/bundle.pem`.
 UNAME_S := $(shell uname -s)
@@ -49,10 +58,11 @@ e2e: build
 	  ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./$(EXAMPLE)/e2e/... -v -timeout=90s -count=1
 
 run: build $(ENVOY_BIN) $(CURDIR)/envoy.yaml
-	@if [ -z "$$OPENAI_API_KEY" ]; then echo "OPENAI_API_KEY is unset (env://OPENAI_API_KEY in orange.yaml will fail Envoy boot)"; exit 1; fi
-	@if [ -z "$$ANTHROPIC_API_KEY" ]; then echo "ANTHROPIC_API_KEY is unset (env://ANTHROPIC_API_KEY in orange.yaml will fail Envoy boot)"; exit 1; fi
+	@for var in OPENAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY GITHUB_TOKEN; do \
+	  if grep -q "env://$$var" "$(ORANGE_CONFIG)" 2>/dev/null && [ -z "$$(eval echo \$$$$var)" ]; then \
+	    echo "$$var is unset but referenced via env://$$var in $(ORANGE_CONFIG)"; exit 1; fi; done
 	GODEBUG=cgocheck=0 \
-	ORANGE_CONFIG=$(CURDIR)/orange.yaml \
+	ORANGE_CONFIG=$(ORANGE_CONFIG) \
 	ENVOY_DYNAMIC_MODULES_SEARCH_PATH=$(CURDIR) \
 	$(ENVOY_BIN) -c $(CURDIR)/envoy.yaml --log-level info
 

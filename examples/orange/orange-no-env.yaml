@@ -1,0 +1,41 @@
+llm:
+  models:
+    amazon.nova-lite-v1:0:
+      provider: bedrock
+      metadata:
+        description: "Amazon Nova Lite via AWS Bedrock."
+        context_length: 300000
+        tags: ["chat", "fast", "vision"]
+    amazon.nova-micro-v1:0:
+      provider: bedrock
+      metadata:
+        description: "Amazon Nova Micro via AWS Bedrock."
+        context_length: 128000
+        tags: ["chat", "fast"]
+  providers:
+    bedrock:
+      kind: openai
+      backend_schema: awsbedrock
+      endpoint: https://bedrock-runtime.us-east-1.amazonaws.com
+      extra:
+        aws_region: us-east-1
+      auth:
+        type: aws
+
+mcp:
+  profiles:
+    kiwi-only:
+      tools:
+        kiwi: {}
+  servers:
+    kiwi:
+      endpoint: https://mcp.kiwi.com
+      namespace: kiwi
+      tools:
+        include: ["search-flight"]
+    aws-knowledge:
+      endpoint: https://knowledge-mcp.global.api.aws
+      namespace: aws
+      tools:
+        include: ["read_documentation", "search_documentation"]
+

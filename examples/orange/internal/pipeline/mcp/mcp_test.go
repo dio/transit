@@ -12,7 +12,6 @@ import (
 )
 
 func TestFilterConstants(t *testing.T) {
-	assert.Equal(t, "orange-mcp", FilterName)
 	assert.Equal(t, "orange-mcp-egress-match", EgressFilterName)
 }
 
@@ -59,19 +58,19 @@ func TestSidecarReadyAndStop(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}), sidecarOptions{listenAddr: "127.0.0.1:0", shutdownTimeout: time.Second, egressURL: defaultEgressURL})
 
+	require.NoError(t, sc.Listen())
+	require.NotEmpty(t, sc.ListenAddr())
+
 	done := make(chan error, 1)
-	go func() { done <- sc.execute("test-orange-mcp") }()
+	go func() { done <- sc.Serve() }()
 
 	select {
 	case <-sc.Ready():
-	case err := <-done:
-		require.NoError(t, err)
 	case <-time.After(2 * time.Second):
 		t.Fatal("sidecar Ready() did not close in time")
 	}
-	require.NotEmpty(t, sc.ListenAddr())
 
-	sc.stop()
+	sc.Stop()
 
 	select {
 	case <-done:
@@ -86,17 +85,16 @@ func TestHandlerReady(t *testing.T) {
 		shutdownTimeout: time.Second,
 		egressURL:       defaultEgressURL,
 	})
+	require.NoError(t, sc.Listen())
 	done := make(chan error, 1)
-	go func() { done <- sc.execute("test-orange-mcp") }()
+	go func() { done <- sc.Serve() }()
 	select {
 	case <-sc.Ready():
-	case err := <-done:
-		require.NoError(t, err)
 	case <-time.After(2 * time.Second):
 		t.Fatal("sidecar Ready() did not close in time")
 	}
 	t.Cleanup(func() {
-		sc.stop()
+		sc.Stop()
 		<-done
 	})
 

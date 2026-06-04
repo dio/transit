@@ -15,11 +15,32 @@ import (
 	"github.com/dio/transit/up"
 )
 
+// NewSidecar constructs the MCP handler and sidecar. listenAddr overrides
+// ORANGE_MCP_LISTEN_ADDR and the compiled-in default; pass "" to use the env
+// var / default. Supports TCP ("127.0.0.1:0") and Unix sockets
+// ("unix:///tmp/orange-mcp.sock"). The sidecar is not yet bound; call Listen
+// then Serve to start it.
+func NewSidecar(listenAddr string) (*Sidecar, error) {
+	if listenAddr == "" {
+		listenAddr = resolveListenAddr()
+	}
+	handler := newHandler(handlerOptions{
+		egressURL: resolveEgressURL(),
+		config:    config.Get,
+		crypto:    resolveSessionCrypto(),
+	})
+	sc := newSidecar(handler, sidecarOptions{
+		listenAddr:      listenAddr,
+		shutdownTimeout: 5 * time.Second,
+		egressURL:       handler.egressURL(),
+	})
+	return sc, nil
+}
+
 const (
-	FilterName       = "orange-mcp"
 	EgressFilterName = "orange-mcp-egress-match"
 
-	defaultListenAddr = "127.0.0.1:10004"
+	defaultListenAddr = "127.0.0.1:0"
 	defaultEgressURL  = "http://127.0.0.1:10005"
 	defaultSessionKey = "orange-mcp-dev-session-key"
 	generatedKeySpec  = "orange-generated"
@@ -46,24 +67,6 @@ const (
 var log = observability.Logger("orange/mcp")
 
 func init() {
-	handler := newHandler(handlerOptions{
-		egressURL: resolveEgressURL(),
-		config:    config.Get,
-		crypto:    resolveSessionCrypto(),
-	})
-	sc := newSidecar(handler, sidecarOptions{
-		listenAddr:      resolveListenAddr(),
-		shutdownTimeout: 5 * time.Second,
-		egressURL:       handler.egressURL(),
-	})
-
-	g := up.NewGroup()
-	g.Add(
-		func() error { return sc.execute(FilterName) },
-		sc.stop,
-	)
-
-	up.Register(FilterName, func(*up.Writer, *up.Request) {}, up.WithGroup(g))
 	up.Register(EgressFilterName, egressHandler)
 }
 
