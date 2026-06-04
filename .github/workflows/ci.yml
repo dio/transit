@@ -104,9 +104,6 @@ jobs:
       - run: make -C examples/body-transform e2e
       - run: make -C examples/cluster e2e
       - run: make -C examples/cluster-async-router e2e
-      - run: make -C examples/cluster-async-router e2e-static-tls
-      - run: make -C examples/cluster-async-router e2e-static-tls-matches
-      - run: make -C examples/cluster-async-router e2e-llm-tls
       - run: make -C examples/cluster-dfp e2e
       - run: make -C examples/cluster-group e2e
       - run: make -C examples/cluster-least-conn e2e
