@@ -74,19 +74,22 @@ func TestMain(m *testing.M) {
 	proxyPort := e2etest.FreePort()
 	adminPort := e2etest.FreePort()
 	debugPort := e2etest.FreePort()
+	mcpEgressPort := e2etest.FreePort()
 	proxyURL = fmt.Sprintf("http://127.0.0.1:%d", proxyPort)
 	debugURL = fmt.Sprintf("http://127.0.0.1:%d", debugPort)
 
 	cfgPath := e2etest.WriteEnvoyConfig("orange", envoyConfigTmpl, map[string]any{
-		"ProxyPort":    proxyPort,
-		"AdminPort":    adminPort,
-		"SystemCAFile": systemCA,
+		"ProxyPort":     proxyPort,
+		"AdminPort":     adminPort,
+		"SystemCAFile":  systemCA,
+		"MCPEgressPort": mcpEgressPort,
 	})
 
 	exampleDir := filepath.Join(examplesRoot, "orange")
 	stop, ok := e2etest.StartEnvoy(bin, cfgPath, exampleDir, adminPort, []string{
 		"ORANGE_CONFIG=" + orangeCfgFile.Name(),
 		fmt.Sprintf("ORANGE_DEBUG_ADDR=127.0.0.1:%d", debugPort),
+		fmt.Sprintf("ORANGE_MCP_EGRESS_URL=http://127.0.0.1:%d", mcpEgressPort),
 	})
 	if !ok {
 		os.Exit(1)

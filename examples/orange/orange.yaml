@@ -1,48 +1,66 @@
-providers:
-  anthropic:
-    kind: anthropic
-    endpoint: https://api.anthropic.com
-    extra:
-      anthropic_version: "2023-06-01"
-    auth:
-      type: anthropic
-      secret_ref: env://ANTHROPIC_API_KEY
+llm:
+  models:
+    claude-haiku-4-5:
+      provider: anthropic
+    gpt-4o-mini:
+      provider: openai
+      metadata:
+        description: "GPT-4o mini via OpenAI."
+        context_length: 128000
+        max_tokens: 16384
+        tags: ["chat", "responses", "fast", "vision"]
+  providers:
+    anthropic:
+      kind: anthropic
+      endpoint: https://api.anthropic.com
+      extra:
+        anthropic_version: "2023-06-01"
+      auth:
+        type: anthropic
+        secret_ref: env://ANTHROPIC_API_KEY
 
-  openai:
-    kind: openai
-    endpoint: https://api.openai.com
-    auth:
-      type: bearer
-      secret_ref: env://OPENAI_API_KEY
-
-models:
-  claude-haiku-4-5:
-    provider: anthropic
-  gpt-4o-mini:
-    provider: openai
-    metadata:
-      description: "GPT-4o mini via OpenAI."
-      context_length: 128000
-      max_tokens: 16384
-      tags: ["chat", "responses", "fast", "vision"]
+    openai:
+      kind: openai
+      endpoint: https://api.openai.com
+      auth:
+        type: bearer
+        secret_ref: env://OPENAI_API_KEY
 
 mcp:
-  routes:
+  profiles:
     default:
-      backends:
+      tools:
         kiwi:
-          cluster: orange-mcp-kiwi
-          endpoint: https://mcp.kiwi.com
-          tools:
-            include: ["search-flight"]
+          include: ["search-flight"]
         aws-knowledge:
-          cluster: orange-mcp-aws-knowledge
-          endpoint: https://knowledge-mcp.global.api.aws
-          tools:
-            include: ["aws____read_documentation", "aws____search_documentation"]
+          include: ["read_documentation", "search_documentation"]
+          optional: true  # session succeeds even if aws-knowledge is unreachable
         github:
-          cluster: orange-mcp-github
-          endpoint: https://api.githubcopilot.com/mcp/
-          credential_ref: env://GITHUB_TOKEN
-          tools:
-            include: ["search_repositories", "get_file_contents"]
+          include: ["search_repositories"]
+          optional: true  # session succeeds even if github is unreachable
+      auth:
+        github:
+          type: bearer
+          secret_ref: env://GITHUB_TOKEN
+    kiwi-only:
+      tools:
+        kiwi: {}
+  servers:
+    kiwi:
+      endpoint: https://mcp.kiwi.com
+      namespace: kiwi
+      tools:
+        include: ["search-flight"]
+    aws-knowledge:
+      endpoint: https://knowledge-mcp.global.api.aws
+      namespace: aws
+      tools:
+        include: ["read_documentation", "search_documentation"]
+    github:
+      endpoint: https://api.githubcopilot.com/mcp/
+      namespace: github
+      auth:
+        type: bearer
+        secret_ref: env://GITHUB_TOKEN # This to be used as default, but profile's secret_ref can override it.
+      tools:
+        include: ["search_repositories", "get_file_contents"]

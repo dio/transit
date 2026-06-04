@@ -77,33 +77,58 @@ static_resources:
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
                 access_log:
+                  # LLM request log — skips /mcp/* paths.
                   - name: envoy.access_loggers.file
+                    filter:
+                      not_filter:
+                        filter:
+                          header_filter:
+                            header:
+                              name: ":path"
+                              string_match: { prefix: "/mcp" }
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.access_loggers.file.v3.FileAccessLog
                       path: /dev/stdout
                       log_format:
                         json_format:
-                          # standard stream fields
                           start_time:    "%START_TIME%"
                           method:        "%REQ(:METHOD)%"
                           path:          "%REQ(:PATH)%"
                           response_code: "%RESPONSE_CODE%"
                           duration_ms:   "%DURATION%"
                           request_id:    "%REQ(x-request-id)%"
-                          # failure diagnostics — non-empty only on error paths
                           response_flags:                "%RESPONSE_FLAGS%"
                           upstream_failure:              "%UPSTREAM_TRANSPORT_FAILURE_REASON%"
-                          # routing — written by the match filter (orange namespace)
+                          endpoint:      "%DYNAMIC_METADATA(orange:endpoint)%"
                           model:         "%DYNAMIC_METADATA(orange:model)%"
                           upstream:      "%DYNAMIC_METADATA(orange:upstream)%"
                           provider:      "%DYNAMIC_METADATA(orange:provider)%"
-                          # token usage — written by the meter filter (orange_meter namespace)
                           input_tokens:                  "%DYNAMIC_METADATA(orange_meter:input_tokens)%"
                           output_tokens:                 "%DYNAMIC_METADATA(orange_meter:output_tokens)%"
                           cached_input_tokens:           "%DYNAMIC_METADATA(orange_meter:cached_input_tokens)%"
                           reasoning_output_tokens:       "%DYNAMIC_METADATA(orange_meter:reasoning_output_tokens)%"
                           cache_creation_input_tokens:   "%DYNAMIC_METADATA(orange_meter:cache_creation_input_tokens)%"
                           cache_read_input_tokens:       "%DYNAMIC_METADATA(orange_meter:cache_read_input_tokens)%"
+                  # MCP request log — only /mcp/* paths, no LLM token fields.
+                  - name: envoy.access_loggers.file
+                    filter:
+                      header_filter:
+                        header:
+                          name: ":path"
+                          string_match: { prefix: "/mcp" }
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.access_loggers.file.v3.FileAccessLog
+                      path: /dev/stdout
+                      log_format:
+                        json_format:
+                          start_time:    "%START_TIME%"
+                          method:        "%REQ(:METHOD)%"
+                          path:          "%REQ(:PATH)%"
+                          response_code: "%RESPONSE_CODE%"
+                          duration_ms:   "%DURATION%"
+                          request_id:    "%REQ(x-request-id)%"
+                          response_flags:   "%RESPONSE_FLAGS%"
+                          upstream_failure: "%UPSTREAM_TRANSPORT_FAILURE_REASON%"
                 route_config:
                   name: orange
                   virtual_hosts:
@@ -208,24 +233,8 @@ static_resources:
                     - name: egress
                       domains: ["*"]
                       routes:
-                        - match:
-                            prefix: /_orange_mcp_egress/kiwi
-                          route:
-                            cluster: orange-mcp-kiwi
-                            prefix_rewrite: /
-                            timeout: 0s
-                        - match:
-                            prefix: /_orange_mcp_egress/aws-knowledge
-                          route:
-                            cluster: orange-mcp-aws-knowledge
-                            prefix_rewrite: /
-                            timeout: 0s
-                        - match:
-                            prefix: /_orange_mcp_egress/github
-                          route:
-                            cluster: orange-mcp-github
-                            prefix_rewrite: /mcp/
-                            timeout: 0s
+                        - match: { prefix: / }
+                          route: { cluster: orange-mcp-egress, timeout: 0s }
 
   clusters:
     - name: orange_default
@@ -335,86 +344,42 @@ static_resources:
             "@type": type.googleapis.com/google.protobuf.StringValue
             value: '{}'
 
-    - name: orange-mcp-kiwi
-      type: LOGICAL_DNS
+    # orange-mcp-egress: MCP backend egress uses the same dynamic host picker and TLS
+    # setup as orange_default. orange-mcp-egress-match sets match.StateUpstream to the
+    # backend name so pick.ChooseHost selects the correct DNS-resolved address.
+    # Path rewriting is done by egress.go (sets :path from MCPServer.Path()).
+    - name: orange-mcp-egress
       connect_timeout: 5s
-      dns_lookup_family: V4_ONLY
-      load_assignment:
-        cluster_name: orange-mcp-kiwi
-        endpoints:
-          - lb_endpoints:
-              - endpoint:
-                  address:
-                    socket_address:
-                      address: mcp.kiwi.com
-                      port_value: 443
+      lb_policy: CLUSTER_PROVIDED
       transport_socket:
         name: envoy.transport_sockets.tls
         typed_config:
           "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
-          sni: mcp.kiwi.com
+          auto_host_sni: true
+          auto_sni_san_validation: true
           common_tls_context:
             validation_context:
-              match_typed_subject_alt_names:
-                - san_type: DNS
-                  matcher:
-                    exact: mcp.kiwi.com
               trusted_ca:
                 filename: ${ORANGE_TRUSTED_CA}
-
-    - name: orange-mcp-aws-knowledge
-      type: LOGICAL_DNS
-      connect_timeout: 5s
-      dns_lookup_family: V4_ONLY
-      load_assignment:
-        cluster_name: orange-mcp-aws-knowledge
-        endpoints:
-          - lb_endpoints:
-              - endpoint:
-                  address:
-                    socket_address:
-                      address: knowledge-mcp.global.api.aws
-                      port_value: 443
-      transport_socket:
-        name: envoy.transport_sockets.tls
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http_protocol_options: {}
+          http_filters:
+            - name: envoy.filters.http.upstream_codec
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.upstream_codec.v3.UpstreamCodec
+      cluster_type:
+        name: envoy.clusters.dynamic_modules
         typed_config:
-          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
-          sni: knowledge-mcp.global.api.aws
-          common_tls_context:
-            validation_context:
-              match_typed_subject_alt_names:
-                - san_type: DNS
-                  matcher:
-                    exact: knowledge-mcp.global.api.aws
-              trusted_ca:
-                filename: ${ORANGE_TRUSTED_CA}
-
-    - name: orange-mcp-github
-      type: LOGICAL_DNS
-      connect_timeout: 5s
-      dns_lookup_family: V4_ONLY
-      load_assignment:
-        cluster_name: orange-mcp-github
-        endpoints:
-          - lb_endpoints:
-              - endpoint:
-                  address:
-                    socket_address:
-                      address: api.githubcopilot.com
-                      port_value: 443
-      transport_socket:
-        name: envoy.transport_sockets.tls
-        typed_config:
-          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
-          sni: api.githubcopilot.com
-          common_tls_context:
-            validation_context:
-              match_typed_subject_alt_names:
-                - san_type: DNS
-                  matcher:
-                    exact: api.githubcopilot.com
-              trusted_ca:
-                filename: ${ORANGE_TRUSTED_CA}
+          "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_modules.v3.ClusterConfig
+          dynamic_module_config:
+            name: orange
+          cluster_name: orange-pick
+          cluster_config:
+            "@type": type.googleapis.com/google.protobuf.StringValue
+            value: '{}'
 
 admin:
   address:
