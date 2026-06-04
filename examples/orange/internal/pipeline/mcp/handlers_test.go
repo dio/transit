@@ -15,7 +15,7 @@ import (
 	"github.com/dio/transit/examples/orange/internal/config"
 )
 
-func TestHandlerInitializePartialSuccess(t *testing.T) {
+func TestHandlerInitializeRequiresAllProfileBackends(t *testing.T) {
 	crypto := newSessionCrypto("test")
 	var records []record
 	var gotHeaders []http.Header
@@ -26,7 +26,8 @@ func TestHandlerInitializePartialSuccess(t *testing.T) {
 			w.Header().Set(sessionIDHeader, "aws-session")
 			writeBackendRPC(t, w, `1`, `{"capabilities":{"tools":{"listChanged":true}}}`)
 		case "github":
-			http.Error(w, "failed", http.StatusBadGateway)
+			w.Header().Set(sessionIDHeader, "github-session")
+			writeBackendRPC(t, w, `1`, `{"capabilities":{"tools":{"listChanged":false}}}`)
 		default:
 			t.Fatalf("unexpected backend %q", r.Header.Get(headerBackend))
 		}
@@ -49,11 +50,14 @@ func TestHandlerInitializePartialSuccess(t *testing.T) {
 	session, err := decodeSecureSessionID(crypto, publicSession, "")
 	require.NoError(t, err)
 	require.Equal(t, "default", session.Route)
-	require.Len(t, session.Backends, 1)
+	require.Len(t, session.Backends, 2)
 	assert.Equal(t, "aws-knowledge", session.Backends[0].Backend)
 	assert.Equal(t, "aws-session", session.Backends[0].SessionID)
 	assert.True(t, session.Backends[0].Capabilities.Tools)
 	assert.True(t, session.Backends[0].Capabilities.ToolsListChanged)
+	assert.Equal(t, "github", session.Backends[1].Backend)
+	assert.Equal(t, "github-session", session.Backends[1].SessionID)
+	assert.True(t, session.Backends[1].Capabilities.Tools)
 
 	require.Len(t, gotHeaders, 2)
 	for _, hdr := range gotHeaders {
@@ -64,7 +68,35 @@ func TestHandlerInitializePartialSuccess(t *testing.T) {
 	require.Len(t, records, 1)
 	assert.Equal(t, "success", records[0].Outcome)
 	assert.Equal(t, 2, records[0].LegCount)
-	assert.Equal(t, 1, records[0].FailedLegs)
+	assert.Equal(t, 0, records[0].FailedLegs)
+}
+
+func TestHandlerInitializeRejectsPartialProfile(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Header.Get(headerBackend) {
+		case "aws-knowledge":
+			w.Header().Set(sessionIDHeader, "aws-session")
+			writeBackendRPC(t, w, `1`, `{"capabilities":{"tools":{"listChanged":true}}}`)
+		case "github":
+			http.Error(w, "failed", http.StatusBadGateway)
+		default:
+			t.Fatalf("unexpected backend %q", r.Header.Get(headerBackend))
+		}
+	}))
+	t.Cleanup(backend.Close)
+
+	h := newHandler(handlerOptions{
+		egressURL: backend.URL,
+		config:    func() *config.Config { return testMCPConfig("aws-knowledge", "github") },
+		crypto:    newSessionCrypto("test"),
+	})
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)))
+
+	require.Equal(t, http.StatusBadGateway, rr.Code)
+	assert.Empty(t, rr.Header().Get(sessionIDHeader))
+	assert.Contains(t, rr.Body.String(), "MCP profile initialize failed")
 }
 
 func TestHandlerInitializeAllFailed(t *testing.T) {
@@ -83,7 +115,43 @@ func TestHandlerInitializeAllFailed(t *testing.T) {
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)))
 
 	require.Equal(t, http.StatusBadGateway, rr.Code)
-	assert.Contains(t, rr.Body.String(), "all MCP initialize backends failed")
+	assert.Contains(t, rr.Body.String(), "MCP profile initialize failed")
+}
+
+func TestHandlerInitializeRouteFromPath(t *testing.T) {
+	crypto := newSessionCrypto("test")
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "profile-1", r.Header.Get(headerRoute))
+		require.Equal(t, "aws-knowledge", r.Header.Get(headerBackend))
+		w.Header().Set(sessionIDHeader, "aws-session")
+		writeBackendRPC(t, w, `1`, `{"capabilities":{"tools":{"listChanged":true}}}`)
+	}))
+	t.Cleanup(backend.Close)
+
+	h := newHandler(handlerOptions{
+		egressURL: backend.URL,
+		config: func() *config.Config {
+			return &config.Config{MCP: &config.MCPConfig{
+				Profiles: map[string]config.MCPProfile{
+					"profile-1": {Tools: map[string]config.MCPProfileTools{"aws-knowledge": {}}},
+				},
+				Servers: map[string]config.MCPServer{
+					"aws-knowledge": {Endpoint: "https://knowledge-mcp.global.api.aws"},
+				},
+			}}
+		},
+		crypto: crypto,
+	})
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/mcp/profile-1", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)))
+
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+	publicSession := rr.Header().Get(sessionIDHeader)
+	require.NotEmpty(t, publicSession)
+	session, err := decodeSecureSessionID(crypto, publicSession, "")
+	require.NoError(t, err)
+	assert.Equal(t, "profile-1", session.Route)
 }
 
 func TestHandlerToolsListMerge(t *testing.T) {
@@ -229,12 +297,19 @@ func TestHandlerDELETEBestEffort(t *testing.T) {
 	assert.ElementsMatch(t, []string{"aws-knowledge", "github"}, deletes)
 }
 
-func testMCPConfig(backends ...string) *config.Config {
-	route := config.MCPRoute{Backends: map[string]config.MCPBackend{}}
-	for _, backend := range backends {
-		route.Backends[backend] = config.MCPBackend{Cluster: "orange-mcp-" + backend}
+func testMCPConfig(servers ...string) *config.Config {
+	serverMap := map[string]config.MCPServer{}
+	toolsMap := map[string]config.MCPProfileTools{}
+	for _, s := range servers {
+		serverMap[s] = config.MCPServer{Endpoint: "https://" + s + ".example.test"}
+		toolsMap[s] = config.MCPProfileTools{}
 	}
-	return &config.Config{MCP: &config.MCPConfig{Routes: map[string]config.MCPRoute{"default": route}}}
+	return &config.Config{MCP: &config.MCPConfig{
+		Profiles: map[string]config.MCPProfile{
+			"default": {Tools: toolsMap},
+		},
+		Servers: serverMap,
+	}}
 }
 
 func writeBackendRPC(t *testing.T, w http.ResponseWriter, id, result string) {

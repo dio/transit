@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -29,6 +30,28 @@ func TestResolveEnvOverrides(t *testing.T) {
 
 	assert.Equal(t, "127.0.0.1:19004", resolveListenAddr())
 	assert.Equal(t, "http://127.0.0.1:19005", resolveEgressURL())
+}
+
+func TestResolveSessionKeySpecsDefault(t *testing.T) {
+	primary, fallbacks := resolveSessionKeySpecs("")
+	assert.Equal(t, defaultSessionKey, primary)
+	assert.Empty(t, fallbacks)
+}
+
+func TestResolveSessionKeySpecsExplicitRotation(t *testing.T) {
+	primary, fallbacks := resolveSessionKeySpecs("new-key, old-key, older-key")
+	assert.Equal(t, "new-key", primary)
+	assert.Equal(t, []string{"old-key", "older-key"}, fallbacks)
+}
+
+func TestResolveSessionKeySpecsGenerated(t *testing.T) {
+	primary, fallbacks := resolveSessionKeySpecs(generatedKeySpec)
+	assert.NotEmpty(t, primary)
+	assert.NotEqual(t, generatedKeySpec, primary)
+	assert.Empty(t, fallbacks)
+	raw, err := base64.RawURLEncoding.DecodeString(primary)
+	require.NoError(t, err)
+	assert.Len(t, raw, generatedKeyBytes)
 }
 
 func TestSidecarReadyAndStop(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/dio/transit/examples/orange/internal/config"
+	"github.com/dio/transit/examples/orange/internal/pipeline/match"
 	"github.com/dio/transit/examples/orange/internal/send"
 	"github.com/dio/transit/up"
 )
@@ -71,7 +72,9 @@ func egressHandler(w *up.Writer, r *up.Request) {
 		return
 	}
 
+	w.SetFilterState(match.StateUpstream, backendName)
 	w.SetRequestHeader(up.HeaderAuthority, host)
+	w.SetRequestHeader(":path", backend.Path())
 	if credential := cfg.MCPCredential(routeName, backendName); credential != "" {
 		w.SetRequestHeader("authorization", bearerCredential(credential))
 	}

@@ -13,19 +13,23 @@ import (
 )
 
 const testMCPYAML = `
-providers: {}
-models: {}
+llm:
+  providers: {}
+  models: {}
 mcp:
-  routes:
+  profiles:
     default:
-      backends:
-        kiwi:
-          cluster: orange-mcp-kiwi
-          endpoint: https://mcp.kiwi.com
-        github:
-          cluster: orange-mcp-github
-          endpoint: https://api.githubcopilot.com/mcp/
-          credential_ref: env://ORANGE_MCP_TEST_GITHUB_TOKEN
+      tools:
+        kiwi: {}
+        github: {}
+  servers:
+    kiwi:
+      endpoint: https://mcp.kiwi.com
+    github:
+      endpoint: https://api.githubcopilot.com/mcp/
+      auth:
+        type: bearer
+        secret_ref: env://ORANGE_MCP_TEST_GITHUB_TOKEN
 `
 
 func setupEgressConfig(t *testing.T) {

@@ -2,14 +2,16 @@
 package mcp
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/dio/transit/examples/orange/internal/config"
+	"github.com/dio/transit/examples/orange/internal/observability"
 	"github.com/dio/transit/up"
 )
 
@@ -19,23 +21,29 @@ const (
 
 	defaultListenAddr = "127.0.0.1:10004"
 	defaultEgressURL  = "http://127.0.0.1:10005"
+	defaultSessionKey = "orange-mcp-dev-session-key"
+	generatedKeySpec  = "orange-generated"
+	generatedKeyBytes = 32
 
 	envListenAddr  = "ORANGE_MCP_LISTEN_ADDR"
 	envEgressURL   = "ORANGE_MCP_EGRESS_URL"
 	envSessionKeys = "ORANGE_MCP_SESSION_KEYS"
 
-	headerRoute       = "x-orange-mcp-route"
-	headerBackend     = "x-orange-mcp-backend"
-	headerMethod      = "x-orange-mcp-method"
-	headerRequestID   = "x-orange-mcp-request-id"
-	headerTool        = "x-orange-mcp-tool"
-	headerSession     = "x-orange-mcp-session"
-	headerLastEventID = "x-orange-mcp-last-event-id"
+	headerRoute          = "x-orange-mcp-route"
+	headerBackend        = "x-orange-mcp-backend"
+	headerMethod         = "x-orange-mcp-method"
+	headerRequestID      = "x-orange-mcp-request-id"
+	headerTool           = "x-orange-mcp-tool"
+	headerSession        = "x-orange-mcp-session"
+	headerLastEventID    = "x-orange-mcp-last-event-id"
+	headerBackendStatus  = "x-orange-mcp-backend-status"
 
 	sessionIDHeader   = "mcp-session-id"
 	lastEventIDHeader = "Last-Event-Id"
 	headerSubject     = "x-orange-subject"
 )
+
+var log = observability.Logger("orange/mcp")
 
 func init() {
 	handler := newHandler(handlerOptions{
@@ -74,7 +82,12 @@ func resolveEgressURL() string {
 }
 
 func resolveSessionCrypto() sessionCrypto {
-	keys := strings.Split(os.Getenv(envSessionKeys), ",")
+	primary, fallbacks := resolveSessionKeySpecs(os.Getenv(envSessionKeys))
+	return newSessionCrypto(primary, fallbacks...)
+}
+
+func resolveSessionKeySpecs(raw string) (string, []string) {
+	keys := strings.Split(raw, ",")
 	var primary string
 	var fallbacks []string
 	for _, key := range keys {
@@ -82,6 +95,7 @@ func resolveSessionCrypto() sessionCrypto {
 		if key == "" {
 			continue
 		}
+		key = expandSessionKeySpec(key)
 		if primary == "" {
 			primary = key
 			continue
@@ -89,10 +103,31 @@ func resolveSessionCrypto() sessionCrypto {
 		fallbacks = append(fallbacks, key)
 	}
 	if primary == "" {
-		primary = "orange-mcp-dev-session-key"
-		fmt.Fprintln(os.Stderr, "orange-mcp: WARNING: ORANGE_MCP_SESSION_KEYS unset; using development session key")
+		primary = defaultSessionKey
+		log.Warn("ORANGE_MCP_SESSION_KEYS unset; using development session key")
 	}
-	return newSessionCrypto(primary, fallbacks...)
+	return primary, fallbacks
+}
+
+func expandSessionKeySpec(spec string) string {
+	if spec != generatedKeySpec {
+		return spec
+	}
+	key, err := generateSessionKey()
+	if err != nil {
+		log.Error("failed to generate Orange MCP session key", "err", err)
+		panic("orange-mcp: failed to generate session key: " + err.Error())
+	}
+	log.Warn("using generated ephemeral Orange MCP session key; sessions will be invalid after restart")
+	return key
+}
+
+func generateSessionKey() (string, error) {
+	key := make([]byte, generatedKeyBytes)
+	if _, err := rand.Read(key); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(key), nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

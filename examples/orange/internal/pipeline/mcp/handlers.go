@@ -50,6 +50,11 @@ type handler struct {
 	options handlerOptions
 }
 
+type mcpRoute struct {
+	Backends         map[string]config.MCPServer
+	OptionalBackends map[string]bool
+}
+
 func newHandler(opts handlerOptions) *handler {
 	if opts.config == nil {
 		opts.config = config.Get
@@ -153,8 +158,12 @@ func (h *handler) handleInitialize(w http.ResponseWriter, r *http.Request, req r
 
 	entries := make([]backendSession, 0, len(results))
 	var first *backendResult
+	var requiredFailed bool
 	for i := range results {
 		if results[i].err != nil || results[i].status < 200 || results[i].status >= 300 {
+			if !route.OptionalBackends[results[i].backend] {
+				requiredFailed = true
+			}
 			continue
 		}
 		if first == nil {
@@ -166,10 +175,11 @@ func (h *handler) handleInitialize(w http.ResponseWriter, r *http.Request, req r
 			Capabilities: capabilitiesFromInitialize(results[i].body),
 		})
 	}
-	if len(entries) == 0 {
+	w.Header().Set(headerBackendStatus, buildBackendStatusHeader(results, route.OptionalBackends))
+	if requiredFailed || len(entries) == 0 {
 		rec.Outcome = "error"
-		rec.ErrorClass = "all_backends_failed"
-		writeJSON(w, http.StatusBadGateway, rpcErrorResponse(req.ID, -32002, "all MCP initialize backends failed"))
+		rec.ErrorClass = "profile_initialize_failed"
+		writeJSON(w, http.StatusBadGateway, rpcErrorResponse(req.ID, -32002, "MCP profile initialize failed"))
 		return
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Backend < entries[j].Backend })
@@ -402,7 +412,7 @@ func (h *handler) serveDELETE(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func (h *handler) fanOut(ctx context.Context, routeName string, route config.MCPRoute, body []byte, sessionID, lastEventID, method, tool, requestID string) []backendResult {
+func (h *handler) fanOut(ctx context.Context, routeName string, route mcpRoute, body []byte, sessionID, lastEventID, method, tool, requestID string) []backendResult {
 	backends := sortedConfigBackends(route)
 	results := make([]backendResult, len(backends))
 	var wg sync.WaitGroup
@@ -487,6 +497,9 @@ func backendEgressURL(baseURL, backendName string) (string, error) {
 }
 
 func (h *handler) routeForRequest(r *http.Request) string {
+	if route := routeFromPath(r.URL.Path); route != "" {
+		return route
+	}
 	if route := r.Header.Get(headerRoute); route != "" {
 		return route
 	}
@@ -494,6 +507,31 @@ func (h *handler) routeForRequest(r *http.Request) string {
 		return route
 	}
 	return defaultRouteName
+}
+
+func routeFromPath(path string) string {
+	const prefix = "/mcp/"
+	if !strings.HasPrefix(path, prefix) {
+		return ""
+	}
+	rest := strings.TrimPrefix(path, prefix)
+	if rest == "" {
+		return ""
+	}
+	if serverPath, ok := strings.CutPrefix(rest, "s/"); ok {
+		serverSegment, _, _ := strings.Cut(serverPath, "/")
+		server, err := url.PathUnescape(serverSegment)
+		if err != nil || server == "" {
+			return ""
+		}
+		return "s/" + server
+	}
+	segment, _, _ := strings.Cut(rest, "/")
+	route, err := url.PathUnescape(segment)
+	if err != nil {
+		return ""
+	}
+	return route
 }
 
 func (h *handler) subjectForRequest(r *http.Request) string {
@@ -514,15 +552,37 @@ type backendResult struct {
 	err       error
 }
 
-func lookupMCPRoute(cfg *config.Config, routeName string) (config.MCPRoute, bool) {
+func lookupMCPRoute(cfg *config.Config, routeName string) (mcpRoute, bool) {
 	if cfg == nil || cfg.MCP == nil {
-		return config.MCPRoute{}, false
+		return mcpRoute{}, false
 	}
-	route, ok := cfg.MCP.Routes[routeName]
-	return route, ok
+	if serverName, ok := strings.CutPrefix(routeName, "s/"); ok {
+		server, ok := cfg.MCP.Servers[serverName]
+		if !ok {
+			return mcpRoute{}, false
+		}
+		return mcpRoute{Backends: map[string]config.MCPServer{serverName: server}}, true
+	}
+	profile, ok := cfg.MCP.Profiles[routeName]
+	if !ok {
+		return mcpRoute{}, false
+	}
+	backends := make(map[string]config.MCPServer, len(profile.Tools))
+	optional := make(map[string]bool, len(profile.Tools))
+	for serverName, pt := range profile.Tools {
+		server, ok := cfg.MCP.Servers[serverName]
+		if !ok {
+			return mcpRoute{}, false
+		}
+		backends[serverName] = server
+		if pt.Optional {
+			optional[serverName] = true
+		}
+	}
+	return mcpRoute{Backends: backends, OptionalBackends: optional}, true
 }
 
-func sortedConfigBackends(route config.MCPRoute) []string {
+func sortedConfigBackends(route mcpRoute) []string {
 	names := make([]string, 0, len(route.Backends))
 	for name := range route.Backends {
 		names = append(names, name)
@@ -562,4 +622,20 @@ func hashPublicToken(token string) string {
 	}
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:8])
+}
+
+func buildBackendStatusHeader(results []backendResult, optional map[string]bool) string {
+	parts := make([]string, 0, len(results))
+	for _, r := range results {
+		status := "ok"
+		if r.err != nil || r.status < 200 || r.status >= 300 {
+			if optional[r.backend] {
+				status = "optional-failed"
+			} else {
+				status = "failed"
+			}
+		}
+		parts = append(parts, r.backend+"="+status)
+	}
+	return strings.Join(parts, ",")
 }
