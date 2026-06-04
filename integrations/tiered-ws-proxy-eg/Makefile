@@ -2,7 +2,12 @@ ROOT := $(abspath $(CURDIR)/../..)
 
 include $(ROOT)/scripts/zig.mk
 
-ENVOY_TAG ?= envoy-0d6e3c60
+_ENVOY_TAG_OVERRIDE   := $(shell grep '^ENVOY_TAG='          $(ROOT)/down/abi_impl/VERSION | cut -d= -f2)
+_ENVOY_ASSET_SUFFIX   := $(shell grep '^ENVOY_ASSET_SUFFIX=' $(ROOT)/down/abi_impl/VERSION | cut -d= -f2)
+
+ENVOY_TAG ?= $(if $(_ENVOY_TAG_OVERRIDE),$(_ENVOY_TAG_OVERRIDE),envoy-$(shell grep '^SDK_COMMIT=' $(ROOT)/down/abi_impl/VERSION | cut -d= -f2 | cut -c1-8))
+ENVOY_ASSET_SUFFIX ?= $(_ENVOY_ASSET_SUFFIX)
+
 ENVOY_GATEWAY_VERSION ?= v1.8.0
 K3S_TAG ?= v1.31.6-k3s1
 IMAGE_TAG := $(shell date +%s)
@@ -44,6 +49,7 @@ build-mock:
 l1-image: build-modules
 	docker build --platform $(PLATFORM) \
 	  --build-arg ENVOY_TAG=$(ENVOY_TAG) \
+	  --build-arg ENVOY_ASSET_SUFFIX=$(ENVOY_ASSET_SUFFIX) \
 	  --build-arg TARGETARCH=$(ARCH) \
 	  -f $(CURDIR)/Dockerfile.l1 \
 	  -t $(L1_IMAGE) $(ROOT)
@@ -51,6 +57,7 @@ l1-image: build-modules
 l2-image: build-modules
 	docker build --platform $(PLATFORM) \
 	  --build-arg ENVOY_TAG=$(ENVOY_TAG) \
+	  --build-arg ENVOY_ASSET_SUFFIX=$(ENVOY_ASSET_SUFFIX) \
 	  --build-arg TARGETARCH=$(ARCH) \
 	  -f $(CURDIR)/Dockerfile.l2 \
 	  -t $(L2_IMAGE) $(ROOT)

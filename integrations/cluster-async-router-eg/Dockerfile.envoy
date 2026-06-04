@@ -3,8 +3,12 @@ ARG TARGETARCH
 FROM debian:bookworm-slim
 
 ARG TARGETARCH
-ARG ENVOY_TAG=envoy-0d6e3c60-auto-host-sni
-ARG ENVOY_ASSET_SUFFIX=-auto-host-sni
+
+FROM debian:bookworm-slim
+
+ARG TARGETARCH
+ARG ENVOY_TAG=envoy-0d6e3c60
+ARG ENVOY_ASSET_SUFFIX
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl \

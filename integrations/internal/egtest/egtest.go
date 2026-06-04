@@ -582,6 +582,69 @@ func DoRequest(req *http.Request) ([]byte, int, error) {
 	return body, resp.StatusCode, nil
 }
 
+// WaitClusterDynamicModule polls adminURL/config_dump until the named cluster
+// has lb_policy=CLUSTER_PROVIDED and cluster_type=envoy.clusters.dynamic_modules,
+// confirming the EnvoyPatchPolicy replace has been accepted by the data plane
+// (not just by the Envoy Gateway control plane). Times out after 60 seconds.
+func WaitClusterDynamicModule(ctx context.Context, t *testing.T, adminURL, clusterName string) {
+	t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	var lastDump string
+	for time.Now().Before(deadline) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+			adminURL+"/config_dump?resource=dynamic_active_clusters", nil)
+		if err != nil {
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		body, status, err := DoRequest(req)
+		if err != nil || status != http.StatusOK {
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		lastDump = string(body)
+		if clusterHasDynamicModule(body, clusterName) {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			require.NoError(t, ctx.Err())
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	require.Failf(t, "cluster not patched with dynamic module",
+		"cluster %q did not show envoy.clusters.dynamic_modules in config_dump after 60s; last dump excerpt: %.500s",
+		clusterName, lastDump)
+}
+
+// clusterHasDynamicModule reports whether the named cluster in an Envoy
+// /config_dump response is using lb_policy=CLUSTER_PROVIDED with
+// cluster_type=envoy.clusters.dynamic_modules.
+func clusterHasDynamicModule(body []byte, clusterName string) bool {
+	var dump struct {
+		Configs []struct {
+			Cluster struct {
+				Name        string `json:"name"`
+				LbPolicy    string `json:"lb_policy"`
+				ClusterType struct {
+					Name string `json:"name"`
+				} `json:"cluster_type"`
+			} `json:"cluster"`
+		} `json:"configs"`
+	}
+	if err := json.Unmarshal(body, &dump); err != nil {
+		return false
+	}
+	for _, c := range dump.Configs {
+		if c.Cluster.Name != clusterName {
+			continue
+		}
+		return c.Cluster.LbPolicy == "CLUSTER_PROVIDED" &&
+			c.Cluster.ClusterType.Name == "envoy.clusters.dynamic_modules"
+	}
+	return false
+}
+
 // DiscoverBackendCluster polls adminURL/config_dump until a cluster whose name
 // begins with "httproute/<namespace>/<routeName>/rule/" appears, then returns
 // the name. Falls back to a substring match on routeName when the prefix is not

@@ -66,6 +66,11 @@ func eventually(ctx context.Context, t *testing.T, check func() error) {
 	egtest.Eventually(ctx, t, check)
 }
 
+func waitClusterDynamicModule(ctx context.Context, t *testing.T, adminURL, clusterName string) {
+	t.Helper()
+	egtest.WaitClusterDynamicModule(ctx, t, adminURL, clusterName)
+}
+
 func run(ctx context.Context, t *testing.T, stdin, name string, args ...string) {
 	t.Helper()
 	egtest.Run(ctx, t, stdin, name, args...)

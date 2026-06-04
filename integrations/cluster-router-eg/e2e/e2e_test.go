@@ -82,6 +82,8 @@ func (s *clusterRouterSuite) TestClusterRouterEnvoyGateway() {
 		"ClusterName": clusterName,
 	})
 	waitEnvoyPatchPolicyProgrammed(s.Ctx, s.T(), "cluster-router")
+	liveLogf(s.T(), "waiting for cluster patch to land in Envoy data plane")
+	waitClusterDynamicModule(s.Ctx, s.T(), adminURL, clusterName)
 
 	liveLogf(s.T(), "opening Gateway and control-plane port-forwards")
 	gatewayURL, stopGateway := portForward(s.Ctx, s.T(), "envoy-gateway-system", "service/"+envoyService(s.Ctx, s.T()), 80)
