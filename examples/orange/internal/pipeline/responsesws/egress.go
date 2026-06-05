@@ -80,11 +80,11 @@ func egressHandler(w *up.Writer, r *up.Request) {
 
 	// Write the same Decision filter state and dynamic metadata as the HTTP match path.
 	d := match.Decision{
-		Provider:     provider,
-		Kind:         kind,
-		Model:        model,
-		BackendModel: backendModel,
-		Endpoint:     match.EndpointResponses,
+		ProviderBackend: provider,
+		ProviderKind:    kind,
+		Model:           model,
+		BackendModel:    backendModel,
+		Endpoint:        match.EndpointResponses,
 	}
 	d.Apply(w)
 

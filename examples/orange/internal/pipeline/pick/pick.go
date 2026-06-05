@@ -194,7 +194,7 @@ func (c *cluster) lookupHost(d match.Decision) up.HostResult {
 		return up.HostResult{ErrDetail: d.Err}
 	}
 	if m := c.hosts.Load(); m != nil {
-		if r := (*m)[d.Provider]; r != nil && len(r.ptrs) > 0 {
+		if r := (*m)[d.ProviderBackend]; r != nil && len(r.ptrs) > 0 {
 			idx := r.rr.Add(1) % uint64(len(r.ptrs))
 			return up.HostResult{Host: r.ptrs[idx]}
 		}
@@ -397,7 +397,7 @@ type lb struct {
 func (l *lb) ChooseHost(h up.ClusterLBHandle, ctx up.ClusterLBContext) (up.HostPtr, *up.ClusterLBCompletion) {
 	if ctx != nil {
 		if provider, ok := ctx.GetFilterState(match.StateUpstream); ok && provider != "" {
-			res := l.lookup(match.Decision{Provider: provider})
+			res := l.lookup(match.Decision{ProviderBackend: provider})
 			if res.ErrDetail != "" {
 				if l.log != nil {
 					l.log.Warn("host selection failed", "err", res.ErrDetail, "provider", provider)

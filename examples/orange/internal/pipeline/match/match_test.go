@@ -100,8 +100,8 @@ func TestBody_knownModel_resolvesUpstream(t *testing.T) {
 	res, ok := p.Result()
 	require.True(t, ok, "promise not resolved")
 	require.Empty(t, res.Err)
-	require.Equal(t, "openai_direct", res.Provider)
-	require.Equal(t, "openai", res.Kind)
+	require.Equal(t, "openai_direct", res.ProviderBackend)
+	require.Equal(t, "openai", res.ProviderKind)
 	require.Equal(t, "gpt-4o-mini", res.Model)
 
 	v, ok := h.Metadata(MetadataNamespace, MetadataKeyUpstream)
@@ -343,8 +343,8 @@ func TestBody_anthropicKind(t *testing.T) {
 	res, ok := p.Result()
 	require.True(t, ok)
 	require.Empty(t, res.Err)
-	require.Equal(t, "anthropic_direct", res.Provider)
-	require.Equal(t, "anthropic", res.Kind)
+	require.Equal(t, "anthropic_direct", res.ProviderBackend)
+	require.Equal(t, "anthropic", res.ProviderKind)
 	require.Equal(t, "claude-3-5-sonnet-20241022", res.Model)
 
 	v, ok := h.Metadata(MetadataNamespace, MetadataKeyProvider)
@@ -366,7 +366,7 @@ func TestBody_modelWithNameOverride(t *testing.T) {
 	res, ok := p.Result()
 	require.True(t, ok)
 	require.Empty(t, res.Err)
-	require.Equal(t, "anthropic_direct", res.Provider)
+	require.Equal(t, "anthropic_direct", res.ProviderBackend)
 	require.Equal(t, "claude-sonnet", res.Model, "Decision.Model must be the client-facing name, not the backend alias")
 
 	down.DropStreamObjectBag(streamObjectNonce(h))
@@ -381,8 +381,8 @@ func TestBody_compoundModelName(t *testing.T) {
 	res, ok := p.Result()
 	require.True(t, ok)
 	require.Empty(t, res.Err)
-	require.Equal(t, "groq", res.Provider)
-	require.Equal(t, "openai", res.Kind)
+	require.Equal(t, "groq", res.ProviderBackend)
+	require.Equal(t, "openai", res.ProviderKind)
 	require.Equal(t, "groq/llama-3.1-8b-instant", res.Model)
 
 	down.DropStreamObjectBag(streamObjectNonce(h))
@@ -458,8 +458,8 @@ func TestResponses_knownModel_resolvesUpstreamWithEndpoint(t *testing.T) {
 	res, ok := p.Result()
 	require.True(t, ok, "promise not resolved")
 	require.Empty(t, res.Err)
-	require.Equal(t, "openai_direct", res.Provider)
-	require.Equal(t, "openai", res.Kind)
+	require.Equal(t, "openai_direct", res.ProviderBackend)
+	require.Equal(t, "openai", res.ProviderKind)
 	require.Equal(t, "gpt-4o-mini", res.Model)
 	require.Equal(t, EndpointResponses, res.Endpoint, "endpoint must be 'responses'")
 

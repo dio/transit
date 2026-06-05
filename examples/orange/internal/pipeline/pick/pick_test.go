@@ -228,7 +228,7 @@ func TestLookupHost_knownProvider(t *testing.T) {
 		"openai_direct": {addrs: []string{"1.2.3.4:443"}, ptrs: []up.HostPtr{ptr}},
 	}
 	c.hosts.Store(&m)
-	got := c.lookupHost(match.Decision{Provider: "openai_direct"})
+	got := c.lookupHost(match.Decision{ProviderBackend: "openai_direct"})
 	require.Equal(t, ptr, got.Host)
 	require.Empty(t, got.ErrDetail)
 }
@@ -239,7 +239,7 @@ func TestLookupHost_unknownProvider(t *testing.T) {
 		"openai_direct": {addrs: []string{"1.2.3.4:443"}, ptrs: []up.HostPtr{makeTestHostPtr()}},
 	}
 	c.hosts.Store(&m)
-	got := c.lookupHost(match.Decision{Provider: "anthropic_direct"})
+	got := c.lookupHost(match.Decision{ProviderBackend: "anthropic_direct"})
 	require.Equal(t, "orange.unknown_upstream", got.ErrDetail)
 	require.Nil(t, got.Host)
 }
@@ -247,7 +247,7 @@ func TestLookupHost_unknownProvider(t *testing.T) {
 func TestLookupHost_nilHosts(t *testing.T) {
 	c := &cluster{}
 	// hosts atomic pointer is nil — no map has been published yet.
-	got := c.lookupHost(match.Decision{Provider: "anything"})
+	got := c.lookupHost(match.Decision{ProviderBackend: "anything"})
 	require.Equal(t, "orange.unknown_upstream", got.ErrDetail)
 }
 
@@ -259,7 +259,7 @@ func TestLookupHost_errTakesPrecedenceOverHosts(t *testing.T) {
 	}
 	c.hosts.Store(&m)
 	// Even when a matching host exists, Err must win.
-	got := c.lookupHost(match.Decision{Provider: "p", Err: "orange.stream_terminated"})
+	got := c.lookupHost(match.Decision{ProviderBackend: "p", Err: "orange.stream_terminated"})
 	require.Equal(t, "orange.stream_terminated", got.ErrDetail)
 	require.Nil(t, got.Host)
 }
@@ -272,9 +272,9 @@ func TestLookupHost_roundRobins(t *testing.T) {
 	}
 	c.hosts.Store(&m)
 	// rr starts at 0; Add(1)%2: 1→ptr2, 2→ptr1, 3→ptr2 ...
-	require.Equal(t, ptr2, c.lookupHost(match.Decision{Provider: "openai"}).Host)
-	require.Equal(t, ptr1, c.lookupHost(match.Decision{Provider: "openai"}).Host)
-	require.Equal(t, ptr2, c.lookupHost(match.Decision{Provider: "openai"}).Host)
+	require.Equal(t, ptr2, c.lookupHost(match.Decision{ProviderBackend: "openai"}).Host)
+	require.Equal(t, ptr1, c.lookupHost(match.Decision{ProviderBackend: "openai"}).Host)
+	require.Equal(t, ptr2, c.lookupHost(match.Decision{ProviderBackend: "openai"}).Host)
 }
 
 func TestLBChooseHost_filterStateProvider(t *testing.T) {
@@ -293,10 +293,10 @@ func TestLBChooseHost_filterStateProvider(t *testing.T) {
 	handle := testutil.NewFilterHandle()
 	w := up.NewWriter(handle)
 	match.Decision{
-		Provider:     "openai",
-		Kind:         "openai",
-		Model:        "gpt-4o-mini",
-		BackendModel: "gpt-4o-mini",
+		ProviderBackend: "openai",
+		ProviderKind:    "openai",
+		Model:           "gpt-4o-mini",
+		BackendModel:    "gpt-4o-mini",
 	}.Apply(w)
 	ctx := testutil.NewFakeClusterLBContext(handle)
 

@@ -27,14 +27,38 @@ import (
 
 // Decision is the resolved value match publishes per request.
 //
+// The two identity fields have names that do not match what the access log
+// calls them — this is intentional and frozen by the log schema:
+//
+//   - ProviderBackend  is the config-level backend name (e.g. "gemini", "openai_direct").
+//     It is stored under MetadataKeyUpstream and appears in the access log as
+//     the "upstream" field.
+//
+//   - ProviderKind  is the API wire-format used by that backend (e.g. "openai",
+//     "anthropic"). It is stored under MetadataKeyProvider and appears in the
+//     access log as the "provider" field. Upstream HTTP filters (adapt, meter)
+//     use it to select the correct request/response codec — NOT to identify
+//     which company's API is on the other end. A Gemini backend translating
+//     to the OpenAI wire format will have ProviderKind == "openai".
+//
+// Concretely: for a request routed to a Gemini upstream via the OpenAI
+// compatibility shim the log shows  upstream=gemini  provider=openai.
+//
 // Err is the orange.* error code (e.g. "orange.model_required",
 // "orange.model_not_found"). When Err is set, Provider/Kind/Model are
 // undefined; pick will Complete the host selection with a nil host and
 // that string as errDetail, but match has already sent a local response so
 // the stream is on its way to closing anyway.
 type Decision struct {
-	Provider     string // selected provider name, e.g. "openai_direct"
-	Kind         string // provider kind, e.g. "openai"
+	// ProviderBackend is the config-level backend name (maps to MetadataKeyUpstream /
+	// log field "upstream"), e.g. "gemini", "openai_direct".
+	ProviderBackend string
+	// ProviderKind is the API wire-format used by that backend (maps to
+	// MetadataKeyProvider / log field "provider"), e.g. "openai", "anthropic".
+	// Used by the adapter and meter to pick the correct codec; unrelated to the
+	// upstream's brand identity. A Gemini backend has ProviderKind == "openai"
+	// when it speaks the OpenAI compatibility wire-format.
+	ProviderKind string
 	Model        string // client-facing model ID, kept for telemetry
 	BackendModel string // resolved backend model name (from models[].name, or == Model if unset)
 	Endpoint     string // endpoint discriminator, e.g. EndpointChatCompletions
@@ -42,14 +66,17 @@ type Decision struct {
 }
 
 // Apply writes the routing filter state and dynamic metadata for this Decision.
+//
+// Note the cross-mapping: ProviderBackend → MetadataKeyUpstream ("upstream"),
+// ProviderKind → MetadataKeyProvider ("provider"). See Decision for the rationale.
 func (d Decision) Apply(w *up.Writer) {
 	w.SetFilterState(StateModel, d.Model)
-	w.SetFilterState(StateUpstream, d.Provider)
-	w.SetFilterState(StateProvider, d.Kind)
+	w.SetFilterState(StateUpstream, d.ProviderBackend) // config backend name → "upstream"
+	w.SetFilterState(StateProvider, d.ProviderKind)    // API wire-format kind → "provider"
 	w.SetFilterState(StateEndpoint, d.Endpoint)
 	w.SetMetadata(MetadataNamespace, MetadataKeyModel, d.Model)
-	w.SetMetadata(MetadataNamespace, MetadataKeyUpstream, d.Provider)
-	w.SetMetadata(MetadataNamespace, MetadataKeyProvider, d.Kind)
+	w.SetMetadata(MetadataNamespace, MetadataKeyUpstream, d.ProviderBackend) // config backend name → "upstream"
+	w.SetMetadata(MetadataNamespace, MetadataKeyProvider, d.ProviderKind)    // API wire-format kind → "provider"
 	w.SetMetadata(MetadataNamespace, MetadataKeyBackendModel, d.BackendModel)
 	w.SetMetadata(MetadataNamespace, MetadataKeyEndpoint, d.Endpoint)
 }
@@ -67,15 +94,24 @@ const (
 	FilterName = "orange-match"
 
 	// Filter state — only the cluster LB can read this.
-	StateUpstream = "orange.upstream"
-	StateProvider = "orange.provider"
+	StateUpstream = "orange.provider_backend"
+	StateProvider = "orange.provider_kind"
 	StateModel    = "orange.model"
 	StateEndpoint = "orange.endpoint"
 
-	// Dynamic metadata — readable by upstream HTTP filters (adapt).
+	// Dynamic metadata — readable by upstream HTTP filters (adapt, meter).
+	//
+	// MetadataKeyUpstream stores Decision.ProviderBackend (config backend name, e.g. "gemini").
+	// MetadataKeyProvider stores Decision.ProviderKind    (API wire-format, e.g. "openai").
+	// These appear verbatim as the "provider_backend" and "provider_kind" fields in the access log.
+	//
+	// IMPORTANT: the string values of MetadataKeyUpstream and MetadataKeyProvider are
+	// referenced directly by the DYNAMIC_METADATA(...) expressions in every Envoy access
+	// log format (envoy.tmpl.yaml, envoy.yaml, e2e/testdata/envoy.tmpl.yaml). Both must
+	// be updated together whenever these strings change.
 	MetadataNamespace       = "orange"
-	MetadataKeyUpstream     = "upstream"
-	MetadataKeyProvider     = "provider"
+	MetadataKeyUpstream     = "provider_backend" // config backend name — NOT the API wire-format
+	MetadataKeyProvider     = "provider_kind"    // API wire-format kind — NOT the config backend name
 	MetadataKeyModel        = "model"
 	MetadataKeyBackendModel = "backend_model"
 	MetadataKeyEndpoint     = "endpoint"
