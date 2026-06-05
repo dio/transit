@@ -114,10 +114,25 @@ type ModelEntry struct {
 }
 
 // RoutingNode is a single node in a routing tree.
-// Exactly one of Chain or Target must be set.
+// Exactly one of Chain, Target, or Split must be set.
 type RoutingNode struct {
 	Chain  *ChainNode  `yaml:"chain,omitempty"`
 	Target *TargetLeaf `yaml:"target,omitempty"`
+	Split  *SplitNode  `yaml:"split,omitempty"`
+}
+
+// SplitNode is a routing node that samples one child by weight on
+// every request. Weights must be positive integers summing to 100.
+// Decision.Model is always the Models map key (the client-facing alias;
+// it can be any string and need not match a real provider model ID).
+type SplitNode struct {
+	Children []SplitChild `yaml:"children"`
+}
+
+// SplitChild is one weighted arm of a SplitNode.
+type SplitChild struct {
+	Weight      int `yaml:"weight"`
+	RoutingNode `yaml:",inline"`
 }
 
 // ChainRetryPolicy configures how Envoy retries for a fallback chain.
@@ -451,11 +466,26 @@ func (c *Config) ChainRetryPolicy() (retryOn string, perTryTimeoutMs int) {
 	return
 }
 
-// walkModelChains calls fn for every ChainNode in models.
+// walkModelChains calls fn for every ChainNode reachable from models.
 func walkModelChains(models map[string]ModelEntry, fn func(*ChainNode)) {
 	for _, e := range models {
-		if e.Routing != nil && e.Routing.Chain != nil {
-			fn(e.Routing.Chain)
+		if e.Routing != nil {
+			walkRoutingNode(*e.Routing, fn)
+		}
+	}
+}
+
+// walkRoutingNode recursively visits all ChainNodes in a routing tree.
+func walkRoutingNode(node RoutingNode, fn func(*ChainNode)) {
+	if node.Chain != nil {
+		fn(node.Chain)
+		for _, child := range node.Chain.Children {
+			walkRoutingNode(child, fn)
+		}
+	}
+	if node.Split != nil {
+		for _, child := range node.Split.Children {
+			walkRoutingNode(child.RoutingNode, fn)
 		}
 	}
 }
@@ -652,14 +682,31 @@ func validateModelEntry(providers map[string]Provider, path string, entry ModelE
 
 // validateRoutingNode recursively validates a routing tree node.
 func validateRoutingNode(providers map[string]Provider, path string, node RoutingNode) error {
+	return validateRoutingNodeInner(providers, path, node, false)
+}
+
+func validateRoutingNodeInner(providers map[string]Provider, path string, node RoutingNode, insideSplit bool) error {
 	hasChain := node.Chain != nil
 	hasTarget := node.Target != nil
-	if hasChain && hasTarget {
-		return fmt.Errorf("orange/config: %s: cannot set both chain and target", path)
+	hasSplit := node.Split != nil
+
+	count := 0
+	if hasChain {
+		count++
 	}
-	if !hasChain && !hasTarget {
-		return fmt.Errorf("orange/config: %s: must set either chain or target", path)
+	if hasTarget {
+		count++
 	}
+	if hasSplit {
+		count++
+	}
+	if count > 1 {
+		return fmt.Errorf("orange/config: %s: must set exactly one of chain, target, or split", path)
+	}
+	if count == 0 {
+		return fmt.Errorf("orange/config: %s: must set exactly one of chain, target, or split", path)
+	}
+
 	if hasChain {
 		if len(node.Chain.Children) < 1 {
 			return fmt.Errorf("orange/config: %s.chain: must have at least 1 child", path)
@@ -668,12 +715,38 @@ func validateRoutingNode(providers map[string]Provider, path string, node Routin
 			return fmt.Errorf("orange/config: %s.chain: must have at most 8 children", path)
 		}
 		for i, child := range node.Chain.Children {
-			if err := validateRoutingNode(providers, fmt.Sprintf("%s.chain.children[%d]", path, i), child); err != nil {
+			if err := validateRoutingNodeInner(providers, fmt.Sprintf("%s.chain.children[%d]", path, i), child, insideSplit); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
+
+	if hasSplit {
+		if insideSplit {
+			return fmt.Errorf("orange/config: %s: nested split (split inside split) is not supported", path)
+		}
+		if len(node.Split.Children) < 2 {
+			return fmt.Errorf("orange/config: %s.split: must have at least 2 children", path)
+		}
+		if len(node.Split.Children) > 8 {
+			return fmt.Errorf("orange/config: %s.split: must have at most 8 children", path)
+		}
+		total := 0
+		for _, c := range node.Split.Children {
+			total += c.Weight
+		}
+		if total != 100 {
+			return fmt.Errorf("orange/config: %s.split: weights must sum to 100 (got %d)", path, total)
+		}
+		for i, child := range node.Split.Children {
+			if err := validateRoutingNodeInner(providers, fmt.Sprintf("%s.split.children[%d]", path, i), child.RoutingNode, true); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
 	// Target leaf.
 	if node.Target.Provider == "" {
 		return fmt.Errorf("orange/config: %s.target.provider: must not be empty", path)

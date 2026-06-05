@@ -201,12 +201,44 @@
       }
     },
     "RoutingNode": {
-      "description": "A node in a routing tree. Exactly one of chain or target must be set.",
+      "description": "A node in a routing tree. Exactly one of chain, target, or split must be set.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "chain": { "$ref": "#/$defs/ChainNode" },
-        "target": { "$ref": "#/$defs/TargetLeaf" }
+        "target": { "$ref": "#/$defs/TargetLeaf" },
+        "split": { "$ref": "#/$defs/SplitNode" }
+      }
+    },
+    "SplitNode": {
+      "description": "A routing node that samples one child by weight on every request. Weights must sum to 100 (enforced semantically).",
+      "type": "object",
+      "required": ["children"],
+      "additionalProperties": false,
+      "properties": {
+        "children": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/SplitChild" }
+        }
+      }
+    },
+    "SplitChild": {
+      "description": "One weighted arm of a SplitNode. Contains a weight and exactly one of chain, target, or split.",
+      "type": "object",
+      "required": ["weight"],
+      "additionalProperties": false,
+      "properties": {
+        "weight": {
+          "description": "Sampling weight (positive integer, 1–100). All siblings' weights must sum to 100.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "chain": { "$ref": "#/$defs/ChainNode" },
+        "target": { "$ref": "#/$defs/TargetLeaf" },
+        "split": { "$ref": "#/$defs/SplitNode" }
       }
     },
     "ChainNode": {

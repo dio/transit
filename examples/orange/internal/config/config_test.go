@@ -803,6 +803,267 @@ llm:
 	assert.Contains(t, err.Error(), "not a binding of provider")
 }
 
+// --- split routing validation -------------------------------------------------
+
+// splitBase is a minimal valid config fragment with three providers for reuse.
+const splitBase = `
+llm:
+  providers:
+    p1:
+      kind: openai
+      endpoint: https://api1.example.com
+      auth:
+        type: bearer
+        secret_ref: env://TEST_OPENAI_KEY
+    p2:
+      kind: openai
+      endpoint: https://api2.example.com
+      auth:
+        type: bearer
+        secret_ref: env://TEST_OPENAI_KEY
+    p3:
+      kind: openai
+      endpoint: https://api3.example.com
+      auth:
+        type: bearer
+        secret_ref: env://TEST_OPENAI_KEY
+  models: {}
+`
+
+func splitConfig(t *testing.T, modelsBlock string) (string, func()) {
+	t.Helper()
+	full := splitBase + "  models:\n" + modelsBlock
+	// Replace the "  models: {}" line
+	full = splitBase[:len(splitBase)-len("  models: {}\n")] + "  models:\n" + modelsBlock
+	return full, func() {}
+}
+
+func loadSplitYAML(t *testing.T, yamlStr string) (*Config, error) {
+	t.Helper()
+	t.Setenv("TEST_OPENAI_KEY", "sk-test-key")
+	return Load([]byte(yamlStr))
+}
+
+func TestSplit_valid_twoArms(t *testing.T) {
+	y := splitBase + `
+keys:
+  test/user/sk-split:
+    workspace: test
+    user: user
+    llm:
+      models:
+        my-model:
+          routing:
+            split:
+              children:
+                - weight: 60
+                  target: { provider: p1 }
+                - weight: 40
+                  target: { provider: p2 }
+`
+	_, err := loadSplitYAML(t, y)
+	require.NoError(t, err)
+}
+
+func TestSplit_valid_threeArms(t *testing.T) {
+	y := splitBase + `
+keys:
+  test/user/sk-split:
+    workspace: test
+    user: user
+    llm:
+      models:
+        my-model:
+          routing:
+            split:
+              children:
+                - weight: 34
+                  target: { provider: p1 }
+                - weight: 33
+                  target: { provider: p2 }
+                - weight: 33
+                  target: { provider: p3 }
+`
+	_, err := loadSplitYAML(t, y)
+	require.NoError(t, err)
+}
+
+func TestSplit_invalid_weightsSumTo99(t *testing.T) {
+	y := splitBase + `
+keys:
+  test/user/sk-split:
+    workspace: test
+    user: user
+    llm:
+      models:
+        my-model:
+          routing:
+            split:
+              children:
+                - weight: 50
+                  target: { provider: p1 }
+                - weight: 49
+                  target: { provider: p2 }
+`
+	_, err := loadSplitYAML(t, y)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "weights must sum to 100")
+}
+
+func TestSplit_invalid_weightsSumTo101(t *testing.T) {
+	y := splitBase + `
+keys:
+  test/user/sk-split:
+    workspace: test
+    user: user
+    llm:
+      models:
+        my-model:
+          routing:
+            split:
+              children:
+                - weight: 51
+                  target: { provider: p1 }
+                - weight: 50
+                  target: { provider: p2 }
+`
+	_, err := loadSplitYAML(t, y)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "weights must sum to 100")
+}
+
+func TestSplit_invalid_oneChild(t *testing.T) {
+	y := splitBase + `
+keys:
+  test/user/sk-split:
+    workspace: test
+    user: user
+    llm:
+      models:
+        my-model:
+          routing:
+            split:
+              children:
+                - weight: 100
+                  target: { provider: p1 }
+`
+	_, err := loadSplitYAML(t, y)
+	require.Error(t, err) // caught by schema minItems:2 or semantic check
+}
+
+func TestSplit_invalid_nineChildren(t *testing.T) {
+	y := `
+llm:
+  providers:
+    p1: { kind: openai, endpoint: "https://a1.example.com", auth: { type: bearer, secret_ref: "env://TEST_OPENAI_KEY" } }
+    p2: { kind: openai, endpoint: "https://a2.example.com", auth: { type: bearer, secret_ref: "env://TEST_OPENAI_KEY" } }
+    p3: { kind: openai, endpoint: "https://a3.example.com", auth: { type: bearer, secret_ref: "env://TEST_OPENAI_KEY" } }
+    p4: { kind: openai, endpoint: "https://a4.example.com", auth: { type: bearer, secret_ref: "env://TEST_OPENAI_KEY" } }
+    p5: { kind: openai, endpoint: "https://a5.example.com", auth: { type: bearer, secret_ref: "env://TEST_OPENAI_KEY" } }
+    p6: { kind: openai, endpoint: "https://a6.example.com", auth: { type: bearer, secret_ref: "env://TEST_OPENAI_KEY" } }
+    p7: { kind: openai, endpoint: "https://a7.example.com", auth: { type: bearer, secret_ref: "env://TEST_OPENAI_KEY" } }
+    p8: { kind: openai, endpoint: "https://a8.example.com", auth: { type: bearer, secret_ref: "env://TEST_OPENAI_KEY" } }
+    p9: { kind: openai, endpoint: "https://a9.example.com", auth: { type: bearer, secret_ref: "env://TEST_OPENAI_KEY" } }
+  models: {}
+keys:
+  test/user/sk-split:
+    workspace: test
+    user: user
+    llm:
+      models:
+        my-model:
+          routing:
+            split:
+              children:
+                - { weight: 12, target: { provider: p1 } }
+                - { weight: 11, target: { provider: p2 } }
+                - { weight: 11, target: { provider: p3 } }
+                - { weight: 11, target: { provider: p4 } }
+                - { weight: 11, target: { provider: p5 } }
+                - { weight: 11, target: { provider: p6 } }
+                - { weight: 11, target: { provider: p7 } }
+                - { weight: 11, target: { provider: p8 } }
+                - { weight: 11, target: { provider: p9 } }
+`
+	_, err := loadSplitYAML(t, y)
+	require.Error(t, err) // caught by schema maxItems:8
+}
+
+func TestSplit_invalid_unknownProvider(t *testing.T) {
+	y := splitBase + `
+keys:
+  test/user/sk-split:
+    workspace: test
+    user: user
+    llm:
+      models:
+        my-model:
+          routing:
+            split:
+              children:
+                - weight: 50
+                  target: { provider: p1 }
+                - weight: 50
+                  target: { provider: nonexistent }
+`
+	_, err := loadSplitYAML(t, y)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not in providers")
+}
+
+func TestSplit_splitInsideChain_valid(t *testing.T) {
+	y := splitBase + `
+keys:
+  test/user/sk-split:
+    workspace: test
+    user: user
+    llm:
+      models:
+        my-model:
+          routing:
+            chain:
+              children:
+                - split:
+                    children:
+                      - weight: 50
+                        target: { provider: p1 }
+                      - weight: 50
+                        target: { provider: p2 }
+                - target: { provider: p3 }
+`
+	cfg, err := loadSplitYAML(t, y)
+	require.NoError(t, err)
+	// No chains inside this split, so MaxChainRetries is derived from the outer chain.
+	assert.Equal(t, 1, cfg.MaxChainRetries())
+}
+
+func TestSplit_chainInsideSplitArm_valid_maxRetries(t *testing.T) {
+	y := splitBase + `
+keys:
+  test/user/sk-split:
+    workspace: test
+    user: user
+    llm:
+      models:
+        my-model:
+          routing:
+            split:
+              children:
+                - weight: 50
+                  chain:
+                    children:
+                      - target: { provider: p1 }
+                      - target: { provider: p2 }
+                      - target: { provider: p3 }
+                - weight: 50
+                  target: { provider: p1 }
+`
+	cfg, err := loadSplitYAML(t, y)
+	require.NoError(t, err)
+	// The inner chain has 3 children → MaxChainRetries = 2.
+	assert.Equal(t, 2, cfg.MaxChainRetries())
+}
+
 func TestLookupModel_withBinding(t *testing.T) {
 	cfg := &Config{
 		Providers: map[string]Provider{
