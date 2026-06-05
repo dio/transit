@@ -208,7 +208,6 @@ demo-fallback: build $(ENVOY_BIN)
 	 ORANGE_TRUSTED_CA=$(ORANGE_TRUSTED_CA) envsubst '$$ORANGE_TRUSTED_CA' \
 	   < $(CURDIR)/demos/fallback/envoy.tmpl.yaml > $$FALLBACK_ENVOY_YAML ; \
 	 ORANGE_CONFIG=$(CURDIR)/demos/fallback/orange.yaml \
-	 ORANGE_DNS_SERVERS=8.8.8.8,1.1.1.1 \
 	 ENVOY_DYNAMIC_MODULES_SEARCH_PATH=$(CURDIR) \
 	 GODEBUG=cgocheck=0 \
 	 $(ENVOY_BIN) -c $$FALLBACK_ENVOY_YAML --log-level info
@@ -240,7 +239,6 @@ demo-split: build $(ENVOY_BIN)
 	 ORANGE_TRUSTED_CA=$(ORANGE_TRUSTED_CA) envsubst '$$ORANGE_TRUSTED_CA' \
 	   < $(CURDIR)/demos/split/envoy.tmpl.yaml > $$SPLIT_ENVOY_YAML ; \
 	 ORANGE_CONFIG=$(CURDIR)/demos/split/orange.yaml \
-	 ORANGE_DNS_SERVERS=8.8.8.8,1.1.1.1 \
 	 ENVOY_DYNAMIC_MODULES_SEARCH_PATH=$(CURDIR) \
 	 GODEBUG=cgocheck=0 \
 	 $(ENVOY_BIN) -c $$SPLIT_ENVOY_YAML --log-level info

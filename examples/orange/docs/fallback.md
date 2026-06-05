@@ -94,27 +94,6 @@ Files:
 
 ---
 
-### Supporting change — `ORANGE_DNS_SERVERS` env var
-
-**Problem**: on macOS with Tailscale active, `/etc/resolv.conf` is set to
-`100.100.100.100` (Tailscale MagicDNS). While Tailscale returns the same
-public IPs as `8.8.8.8` for LLM provider endpoints, the private split-DNS
-can theoretically return different results or fail for unknown hostnames.
-
-**Fix**: `ORANGE_DNS_SERVERS=8.8.8.8,1.1.1.1` (or any comma-separated
-`ip[:port]` list) bypasses `/etc/resolv.conf` for all lookups in pick.
-The value is parsed once at startup into `staticDNSConfig` (a package-level
-var); `lookupWithTTL` uses it when non-nil, reads `/etc/resolv.conf` freshly
-otherwise (so VPN connect/disconnect is still picked up when no override is
-set).
-
-`make demo-fallback` passes `ORANGE_DNS_SERVERS=8.8.8.8,1.1.1.1`
-automatically.
-
-Files: `internal/pipeline/pick/pick.go` (`staticDNSConfig`, `lookupWithTTL`).
-
----
-
 ### Supporting change — TEST-NET-1 primaries
 
 Dead primaries were originally `127.0.0.1:19091–19093` (loopback, instant

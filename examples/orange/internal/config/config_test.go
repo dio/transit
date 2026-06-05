@@ -830,14 +830,6 @@ llm:
   models: {}
 `
 
-func splitConfig(t *testing.T, modelsBlock string) (string, func()) {
-	t.Helper()
-	full := splitBase + "  models:\n" + modelsBlock
-	// Replace the "  models: {}" line
-	full = splitBase[:len(splitBase)-len("  models: {}\n")] + "  models:\n" + modelsBlock
-	return full, func() {}
-}
-
 func loadSplitYAML(t *testing.T, yamlStr string) (*Config, error) {
 	t.Helper()
 	t.Setenv("TEST_OPENAI_KEY", "sk-test-key")
@@ -1310,8 +1302,8 @@ func TestLookupModel_withBinding(t *testing.T) {
 			},
 		},
 		Models: map[string]ModelEntry{
-			"claude-east": {Provider: "anthropic", Binding: "us-east", Name: "claude-haiku-4-5-20251001"},
-			"claude-west": {Provider: "anthropic", Binding: "us-west", Name: "claude-haiku-4-5-20251001"},
+			"claude-east":      {Provider: "anthropic", Binding: "us-east", Name: "claude-haiku-4-5-20251001"},
+			"claude-west":      {Provider: "anthropic", Binding: "us-west", Name: "claude-haiku-4-5-20251001"},
 			"claude-noBinding": {Provider: "anthropic", Name: "claude-haiku-4-5-20251001"},
 		},
 	}

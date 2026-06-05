@@ -234,16 +234,16 @@ func finalizedHandler(ctx *any, info up.FinalizedInfo) {
 
 func buildRecord(st *reqState, info up.FinalizedInfo, c filterConfig) *Record {
 	r := &Record{
-		RequestID:       st.requestID,
-		TraceID:         st.traceID,
-		SpanID:          st.spanID,
-		Method:          st.method,
-		Path:            st.path,
-		Host:            st.host,
-		RequestHeaders:  st.requestHeaders,
-		RequestTruncated: st.reqBodyTrunc,
-		StatusCode:      st.statusCode,
-		ResponseHeaders: st.responseHeaders,
+		RequestID:         st.requestID,
+		TraceID:           st.traceID,
+		SpanID:            st.spanID,
+		Method:            st.method,
+		Path:              st.path,
+		Host:              st.host,
+		RequestHeaders:    st.requestHeaders,
+		RequestTruncated:  st.reqBodyTrunc,
+		StatusCode:        st.statusCode,
+		ResponseHeaders:   st.responseHeaders,
 		ResponseTruncated: st.respBodyTrunc,
 
 		Model:                    st.model,

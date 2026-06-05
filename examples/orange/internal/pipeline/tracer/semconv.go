@@ -61,20 +61,11 @@ const (
 	oiToolDescription = "tool.description"
 )
 
-// Session attribute.
-const oiSessionID = "session.id"
-
 // LLM system values.
 const (
 	oiLLMSystemOpenAI    = "openai"
 	oiLLMSystemAnthropic = "anthropic"
 )
-
-// inputMessageAttr returns the indexed attribute key for an input message field.
-// Format: llm.input_messages.{i}.message.{suffix}
-func inputMessageAttr(i int, suffix string) string {
-	return formatIndexed(oiLLMInputMessages, i, "message", suffix)
-}
 
 // outputMessageAttr returns the indexed attribute key for an output message field.
 func outputMessageAttr(i int, suffix string) string {

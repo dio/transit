@@ -61,9 +61,9 @@ var compiledSchema = func() *jsonschema.Schema {
 
 // Config is the fully validated, secret-resolved configuration.
 type Config struct {
-	LLM  LLMConfig             `yaml:"llm"`
-	MCP  *MCPConfig            `yaml:"mcp,omitempty"`
-	Keys map[string]*KeyBlob   `yaml:"keys,omitempty"`
+	LLM  LLMConfig           `yaml:"llm"`
+	MCP  *MCPConfig          `yaml:"mcp,omitempty"`
+	Keys map[string]*KeyBlob `yaml:"keys,omitempty"`
 
 	Providers map[string]Provider   `yaml:"-"`
 	Models    map[string]ModelEntry `yaml:"-"`

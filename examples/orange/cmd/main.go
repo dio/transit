@@ -8,14 +8,14 @@ import (
 	_ "github.com/dio/transit/examples/orange/internal/debug"
 	_ "github.com/dio/transit/examples/orange/internal/pipeline/adapt"
 	_ "github.com/dio/transit/examples/orange/internal/pipeline/match"
-	_ "github.com/dio/transit/examples/orange/internal/pipeline/reqlog"
 	_ "github.com/dio/transit/examples/orange/internal/pipeline/mcp"
 	_ "github.com/dio/transit/examples/orange/internal/pipeline/mcp/loopback"
 	_ "github.com/dio/transit/examples/orange/internal/pipeline/meter"
 	_ "github.com/dio/transit/examples/orange/internal/pipeline/pick"
-	_ "github.com/dio/transit/examples/orange/internal/pipeline/tracer"
+	_ "github.com/dio/transit/examples/orange/internal/pipeline/reqlog"
 	_ "github.com/dio/transit/examples/orange/internal/pipeline/responsesws"
 	_ "github.com/dio/transit/examples/orange/internal/pipeline/responsesws/loopback"
+	_ "github.com/dio/transit/examples/orange/internal/pipeline/tracer"
 	_ "github.com/dio/transit/examples/orange/internal/translator"
 )
 

@@ -269,11 +269,11 @@ const fakeChatResponse = `{
 }`
 
 var (
-	proxyURL    string
-	liveAHits   atomic.Int64
-	liveBHits   atomic.Int64
-	liveCHits   atomic.Int64
-	deadHits    atomic.Int64
+	proxyURL  string
+	liveAHits atomic.Int64
+	liveBHits atomic.Int64
+	liveCHits atomic.Int64
+	deadHits  atomic.Int64
 )
 
 func TestMain(m *testing.M) {

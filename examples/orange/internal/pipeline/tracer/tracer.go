@@ -274,9 +274,9 @@ func envOrDefault(key, def string) string {
 // requestHeaderCarrier adapts up.Request for OTel propagation extraction.
 type requestHeaderCarrier struct{ r *up.Request }
 
-func (c requestHeaderCarrier) Get(key string) string        { return c.r.Header(strings.ToLower(key)) }
-func (c requestHeaderCarrier) Set(string, string)           {}
-func (c requestHeaderCarrier) Keys() []string               { return nil }
+func (c requestHeaderCarrier) Get(key string) string { return c.r.Header(strings.ToLower(key)) }
+func (c requestHeaderCarrier) Set(string, string)    {}
+func (c requestHeaderCarrier) Keys() []string        { return nil }
 
 // writerHeaderCarrier adapts up.Writer for OTel propagation injection.
 type writerHeaderCarrier struct{ w *up.Writer }
