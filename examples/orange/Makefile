@@ -52,6 +52,9 @@ build-linux-arm64: $(ZIG_BIN)
 test:
 	cd $(ROOT)/examples && GOWORK=off go test ./$(EXAMPLE)/...
 
+trace-validate:
+	cd $(ROOT)/examples && GOWORK=off go test ./$(EXAMPLE)/internal/pipeline/tracer/... -v -count=1
+
 e2e: build
 	cd $(ROOT)/examples && \
 	  GITHUB_TOKEN=$${GITHUB_TOKEN:-$$(gh auth token 2>/dev/null)} \

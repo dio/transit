@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/dio/transit/examples/orange/internal/config"
+	"github.com/dio/transit/examples/orange/internal/pipeline/tracer"
 )
 
 const (
@@ -131,7 +132,9 @@ func (h *handler) servePOST(w http.ResponseWriter, r *http.Request) {
 	case methodInitialize:
 		h.handleInitialize(w, r, req, raw, route, requestID, &rec)
 	case methodToolsList, methodPromptsList, methodResourcesList:
+		_, span := tracer.StartMCPSpan(r.Context(), r, req.Method, "")
 		h.handleList(w, r, req, raw, session, requestID, &rec)
+		span.End()
 	case methodToolsCall:
 		h.handleToolsCall(w, r, req, session, requestID, &rec)
 	case "":
@@ -245,15 +248,23 @@ func (h *handler) handleToolsCall(w http.ResponseWriter, r *http.Request, req rp
 	rec.SelectedBackend = backend
 	rec.Tool = backend + toolSeparator + stripped
 	w.Header().Set(headerTool, rec.Tool)
-	result := h.doBackend(r.Context(), session.Route, backend, rewritten, entry.SessionID, "", req.Method, stripped, requestID, http.MethodPost)
+
+	spanCtx, span := tracer.StartMCPSpan(r.Context(), r, req.Method, stripped)
+	tracer.InjectMCPTrace(spanCtx, r.Header)
+
+	result := h.doBackend(spanCtx, session.Route, backend, rewritten, entry.SessionID, "", req.Method, stripped, requestID, http.MethodPost)
 	rec.LegCount = 1
 	if result.err != nil || result.status < 200 || result.status >= 300 {
 		rec.FailedLegs = 1
 		rec.Outcome = "error"
 		rec.ErrorClass = "backend_failed"
+		tracer.RecordMCPResult(span, result.status, nil, result.err)
+		span.End()
 		writeJSON(w, http.StatusBadGateway, rpcErrorResponse(req.ID, -32002, "MCP tool backend failed"))
 		return
 	}
+	tracer.RecordMCPResult(span, result.status, result.body, nil)
+	span.End()
 	if toolCallIsError(result.body) {
 		rec.Outcome = "application_error"
 		rec.ErrorClass = "tool_is_error"

@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# Validates that orange emits OpenInference-conformant spans.
+#
+# Unit mode (default): runs tracer package tests with an in-memory exporter.
+# Live mode (--live):  sends a real request to a running orange proxy and
+#                      checks that a span appears on stdout (requires
+#                      OTEL_TRACES_EXPORTER=console in the orange process).
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ORANGE_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+BASE_URL="${ORANGE_BASE_URL:-http://localhost:8080}"
+MODE="unit"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  ./validate            # run unit tests only (no Envoy required)
+  ./validate --live     # send a live request and check console span output
+
+Environment (live mode):
+  ORANGE_BASE_URL       Base URL (default: http://localhost:8080)
+EOF
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    --live) MODE="live" ;;
+    -h|--help) usage; exit 0 ;;
+  esac
+done
+
+# ── Unit mode ───────────────────────────────────────────────────────────────
+run_unit_tests() {
+  echo "Running tracer unit tests..."
+  cd "$ORANGE_DIR"
+  GOWORK=off go test ./orange/internal/pipeline/tracer/... -v -count=1 2>&1 | \
+    grep -E '(PASS|FAIL|---)'
+  echo "Unit tests passed."
+}
+
+# ── Live mode ───────────────────────────────────────────────────────────────
+run_live_check() {
+  echo "Sending live request to ${BASE_URL}/v1/chat/completions..."
+  echo "Orange must be running with OTEL_TRACES_EXPORTER=console"
+  echo
+
+  local tmpspan
+  tmpspan="$(mktemp)"
+  trap 'rm -f "$tmpspan"' EXIT
+
+  curl -sS "${BASE_URL}/v1/chat/completions" \
+    -H 'content-type: application/json' \
+    -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}' \
+    -o /dev/null
+
+  # Give the BatchSpanProcessor a moment to flush.
+  sleep 1
+
+  echo "Checking orange stdout/log for span output..."
+  echo "(pipe orange's stdout to a file and set SPAN_LOG=<path> to check it)"
+  if [[ -n "${SPAN_LOG:-}" ]]; then
+    check_span_log "$SPAN_LOG"
+  else
+    echo "SPAN_LOG not set; skipping log check."
+    echo "Set SPAN_LOG=/path/to/orange.log and re-run to validate span attributes."
+  fi
+}
+
+check_span_log() {
+  local log="$1"
+  local -a required=(
+    '"openinference.span.kind": "LLM"'
+    '"llm.model_name"'
+  )
+  local fail=0
+  for attr in "${required[@]}"; do
+    if grep -q "$attr" "$log"; then
+      echo "  ✓ found: $attr"
+    else
+      echo "  ✗ missing: $attr"
+      fail=1
+    fi
+  done
+  if [[ "$fail" -eq 1 ]]; then
+    echo "Validation FAILED: some expected span attributes are missing."
+    exit 1
+  fi
+  echo "All expected span attributes found."
+}
+
+case "$MODE" in
+  unit) run_unit_tests ;;
+  live) run_live_check ;;
+esac
