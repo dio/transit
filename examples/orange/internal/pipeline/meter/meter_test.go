@@ -276,3 +276,20 @@ func TestExtractAnthropicMessagesJSON_Invalid(t *testing.T) {
 	assert.Equal(t, uint32(0), u.Input)
 	assert.Equal(t, uint32(0), u.Output)
 }
+
+func TestExtractOpenAIEmbeddingsJSON(t *testing.T) {
+	body := `{"object":"list","data":[{"object":"embedding","embedding":[0.1,0.2],"index":0}],"model":"text-embedding-3-small","usage":{"prompt_tokens":8,"total_tokens":8}}`
+	u := meter.ExtractOpenAIEmbeddingsJSON([]byte(body))
+	assert.Equal(t, uint32(8), u.Input)
+	assert.Equal(t, uint32(0), u.Output)
+}
+
+func TestExtractOpenAIEmbeddingsJSON_NoUsage(t *testing.T) {
+	u := meter.ExtractOpenAIEmbeddingsJSON([]byte(`{"object":"list","data":[]}`))
+	assert.Equal(t, uint32(0), u.Input)
+}
+
+func TestExtractOpenAIEmbeddingsJSON_Invalid(t *testing.T) {
+	u := meter.ExtractOpenAIEmbeddingsJSON([]byte(`{not valid`))
+	assert.Equal(t, uint32(0), u.Input)
+}

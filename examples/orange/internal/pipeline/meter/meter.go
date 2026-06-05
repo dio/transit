@@ -161,6 +161,8 @@ func meterResponse(w *up.Writer, chunk *up.ResponseChunk) {
 		u = ExtractAnthropicMessagesJSON(s.buf)
 	case s.endpoint == match.EndpointResponses:
 		u = ExtractOpenAIResponsesJSON(s.buf)
+	case s.endpoint == match.EndpointEmbeddings:
+		u = ExtractOpenAIEmbeddingsJSON(s.buf)
 	default:
 		u = ExtractOpenAIChatCompletionsJSON(s.buf)
 	}

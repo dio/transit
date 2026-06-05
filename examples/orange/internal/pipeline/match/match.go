@@ -85,12 +85,14 @@ const (
 	EndpointMessages        = "messages"
 	EndpointCountTokens     = "count_tokens"
 	EndpointResponses       = "responses"
+	EndpointEmbeddings      = "embeddings"
 
 	pathV1ChatCompletions     = "/v1/chat/completions"
 	pathV1Messages            = "/v1/messages"
 	pathV1MessagesCountTokens = "/v1/messages/count_tokens"
 	pathV1Models              = "/v1/models"
 	pathV1Responses           = "/v1/responses"
+	pathV1Embeddings          = "/v1/embeddings"
 	pathMCP                   = "/mcp"
 
 	// ErrModelRequired and ErrUnknownModel are the orange.* codes published on
@@ -115,6 +117,7 @@ var router = up.NewRouter(func(w *up.Writer, r *up.Request) {
 	POST(pathV1MessagesCountTokens, tagRequestForEndpoint(EndpointCountTokens)).
 	POST(pathV1Messages, tagRequestForEndpoint(EndpointMessages)).
 	POST(pathV1Responses, tagRequestForEndpoint(EndpointResponses)).
+	POST(pathV1Embeddings, tagRequestForEndpoint(EndpointEmbeddings)).
 	GET(pathV1Responses, func(*up.Writer, *up.Request) {}). // passthrough for WS upgrades → orange-responsesws sidecar
 	GETPrefix(pathMCP, func(*up.Writer, *up.Request) {}).   // passthrough to orange-mcp sidecar
 	POSTPrefix(pathMCP, func(*up.Writer, *up.Request) {}).  // passthrough to orange-mcp sidecar

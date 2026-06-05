@@ -7,6 +7,21 @@ llm:
         chat_completions: anthropic_openai_compat
     claude-haiku-4-5-20251001:
       provider: anthropic
+    text-embedding-3-small:
+      provider: openai
+      metadata:
+        description: "OpenAI text-embedding-3-small (1536 dimensions)."
+        tags: ["embeddings"]
+    text-embedding-3-large:
+      provider: openai
+      metadata:
+        description: "OpenAI text-embedding-3-large (3072 dimensions)."
+        tags: ["embeddings"]
+    text-embedding-ada-002:
+      provider: openai
+      metadata:
+        description: "OpenAI text-embedding-ada-002 (1536 dimensions, legacy)."
+        tags: ["embeddings"]
     gpt-4o-mini:
       provider: openai
       metadata:
