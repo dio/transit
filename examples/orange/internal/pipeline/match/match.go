@@ -122,6 +122,7 @@ const (
 	EndpointCountTokens     = "count_tokens"
 	EndpointResponses       = "responses"
 	EndpointEmbeddings      = "embeddings"
+	EndpointImages          = "images"
 
 	pathV1ChatCompletions     = "/v1/chat/completions"
 	pathV1Messages            = "/v1/messages"
@@ -129,7 +130,12 @@ const (
 	pathV1Models              = "/v1/models"
 	pathV1Responses           = "/v1/responses"
 	pathV1Embeddings          = "/v1/embeddings"
+	pathV1ImageGenerations    = "/v1/images/generations"
 	pathMCP                   = "/mcp"
+
+	// Request-side image generation metadata forwarded to the meter.
+	MetadataKeyImageSize    = "image_size"
+	MetadataKeyImageQuality = "image_quality"
 
 	// ErrModelRequired and ErrUnknownModel are the orange.* codes published on
 	// Decision.Err. They mirror the error response codes.
@@ -154,6 +160,7 @@ var router = up.NewRouter(func(w *up.Writer, r *up.Request) {
 	POST(pathV1Messages, tagRequestForEndpoint(EndpointMessages)).
 	POST(pathV1Responses, tagRequestForEndpoint(EndpointResponses)).
 	POST(pathV1Embeddings, tagRequestForEndpoint(EndpointEmbeddings)).
+	POST(pathV1ImageGenerations, tagRequestForEndpoint(EndpointImages)).
 	GET(pathV1Responses, func(*up.Writer, *up.Request) {}). // passthrough for WS upgrades → orange-responsesws sidecar
 	GETPrefix(pathMCP, func(*up.Writer, *up.Request) {}).   // passthrough to orange-mcp sidecar
 	POSTPrefix(pathMCP, func(*up.Writer, *up.Request) {}).  // passthrough to orange-mcp sidecar
@@ -229,8 +236,17 @@ func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 	// Host header. SNI is driven by the selected host's configured hostname.
 	w.SetRequestHeader(up.HeaderAuthority, provider.Host())
 
-	d := Decision{Provider: upstream, Kind: provider.Kind, Model: model, BackendModel: backendModel, Endpoint: endpoint}
+	d := Decision{ProviderBackend: upstream, ProviderKind: provider.Kind, Model: model, BackendModel: backendModel, Endpoint: endpoint}
 	d.Apply(w)
+
+	if endpoint == EndpointImages {
+		if size := gjson.GetBytes(chunk.Data, "size").String(); size != "" {
+			w.SetMetadata(MetadataNamespace, MetadataKeyImageSize, size)
+		}
+		if quality := gjson.GetBytes(chunk.Data, "quality").String(); quality != "" {
+			w.SetMetadata(MetadataNamespace, MetadataKeyImageQuality, quality)
+		}
+	}
 
 	w.Slog().Info("Received body resolved", "model", model, "backend_model", backendModel, "provider", upstream, "host", provider.Host(), "kind", provider.Kind, "endpoint", endpoint)
 	p.Resolve(d)

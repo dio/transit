@@ -2,8 +2,10 @@ package meter
 
 import "bytes"
 
-// TokenUsage holds token counts extracted from an LLM response.
-// Provider-specific fields are zero when the provider does not report them.
+// TokenUsage holds usage counts extracted from an LLM response. Despite the
+// name, not all fields are strictly "tokens" — image generation models report
+// image-input counts in the same structure. Provider-specific fields are zero
+// when the provider does not report them.
 type TokenUsage struct {
 	// Common
 	Input  uint32
@@ -12,6 +14,7 @@ type TokenUsage struct {
 	// OpenAI: prompt_tokens_details
 	CachedInput uint32 // prompt_tokens_details.cached_tokens
 	AudioInput  uint32 // prompt_tokens_details.audio_tokens
+	ImageInput  uint32 // input_tokens_details.image_tokens (image generation)
 
 	// OpenAI: completion_tokens_details
 	ReasoningOutput          uint32 // completion_tokens_details.reasoning_tokens

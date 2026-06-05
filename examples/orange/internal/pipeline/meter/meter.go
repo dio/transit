@@ -39,10 +39,12 @@ const ExtensionName = "orange-meter"
 var (
 	inputTokensID  up.MetricID
 	outputTokensID up.MetricID
+	imageCountID   up.MetricID
 
 	// OpenAI-specific
 	cachedInputID              up.MetricID
 	audioInputID               up.MetricID
+	imageInputID               up.MetricID
 	reasoningOutputID          up.MetricID
 	audioOutputID              up.MetricID
 	acceptedPredictionOutputID up.MetricID
@@ -67,9 +69,11 @@ func init() {
 			}{
 				{&inputTokensID, "orange_input_tokens"},
 				{&outputTokensID, "orange_output_tokens"},
+				{&imageCountID, "orange_image_count"},
 				// OpenAI detail counters
 				{&cachedInputID, "orange_cached_input_tokens"},
 				{&audioInputID, "orange_audio_input_tokens"},
+				{&imageInputID, "orange_image_input_tokens"},
 				{&reasoningOutputID, "orange_reasoning_output_tokens"},
 				{&audioOutputID, "orange_audio_output_tokens"},
 				{&acceptedPredictionOutputID, "orange_accepted_prediction_output_tokens"},
@@ -90,12 +94,18 @@ func init() {
 	)
 }
 
-// providerKind classifies the extraction strategy to use.
+// providerKind is the API wire-format of the upstream response body. It is
+// derived from match.MetadataKeyProvider (log field "provider"), which stores
+// Decision.ProviderKind — the codec kind, not the upstream's brand identity. A
+// Gemini backend using the OpenAI compatibility shim has providerKind ==
+// kindOpenAI because the adapter translates its response into OpenAI JSON before
+// the meter sees it. Do not confuse with the "upstream" log field, which is the
+// config backend name (Decision.ProviderBackend).
 type providerKind uint8
 
 const (
-	kindOpenAI    providerKind = iota // default / OpenAI-compatible
-	kindAnthropic                     // Anthropic Messages API (direct or passthrough)
+	kindOpenAI    providerKind = iota // OpenAI wire-format (default; also used for OpenAI-compatible upstreams like Gemini)
+	kindAnthropic                     // Anthropic Messages API wire-format (direct or passthrough)
 )
 
 // streamState is per-request state stored in chunk.Context across callbacks.
@@ -163,6 +173,9 @@ func meterResponse(w *up.Writer, chunk *up.ResponseChunk) {
 		u = ExtractOpenAIResponsesJSON(s.buf)
 	case s.endpoint == match.EndpointEmbeddings:
 		u = ExtractOpenAIEmbeddingsJSON(s.buf)
+	case s.endpoint == match.EndpointImages:
+		emitImageGeneration(w, s.buf)
+		return
 	default:
 		u = ExtractOpenAIChatCompletionsJSON(s.buf)
 	}
@@ -182,6 +195,7 @@ func EmitUsage(w *up.Writer, u TokenUsage) {
 		{outputTokensID, u.Output},
 		{cachedInputID, u.CachedInput},
 		{audioInputID, u.AudioInput},
+		{imageInputID, u.ImageInput},
 		{reasoningOutputID, u.ReasoningOutput},
 		{audioOutputID, u.AudioOutput},
 		{acceptedPredictionOutputID, u.AcceptedPredictionOutput},
@@ -200,6 +214,9 @@ func EmitUsage(w *up.Writer, u TokenUsage) {
 	if u.CachedInput > 0 {
 		w.SetMetadata("orange_meter", "cached_input_tokens", u.CachedInput)
 	}
+	if u.ImageInput > 0 {
+		w.SetMetadata("orange_meter", "image_input_tokens", u.ImageInput)
+	}
 	if u.ReasoningOutput > 0 {
 		w.SetMetadata("orange_meter", "reasoning_output_tokens", u.ReasoningOutput)
 	}
@@ -211,8 +228,11 @@ func EmitUsage(w *up.Writer, u TokenUsage) {
 	}
 }
 
-// resolveKind reads the provider kind from the orange dynamic metadata
-// namespace (written by the match filter) and maps it to a providerKind.
+// resolveKind reads Decision.ProviderKind from the orange dynamic metadata
+// (match.MetadataKeyProvider, log field "provider") and maps it to a
+// providerKind. This tells the meter which JSON shape the response body has
+// after the adapter has run. It is NOT the config backend name — for that see
+// Decision.ProviderBackend / match.MetadataKeyUpstream (log field "upstream").
 func resolveKind(w *up.Writer) providerKind {
 	v, ok := w.GetMetadataString(up.MetadataSourceDynamic, match.MetadataNamespace, match.MetadataKeyProvider)
 	if !ok {
@@ -234,4 +254,38 @@ func resolveEndpoint(w *up.Writer) string {
 		return ""
 	}
 	return v.String()
+}
+
+// emitImageGeneration extracts image generation metrics from the response body,
+// supplements size/quality from request-side metadata when the response omits
+// them (DALL-E 2/3), and emits all observable data as counters and metadata.
+func emitImageGeneration(w *up.Writer, body []byte) {
+	r := ExtractOpenAIImageGenerationsJSON(body)
+
+	// Fall back to request-side metadata for size/quality (absent on DALL-E responses).
+	if r.Size == "" {
+		if v, ok := w.GetMetadataString(up.MetadataSourceDynamic, match.MetadataNamespace, match.MetadataKeyImageSize); ok {
+			r.Size = v.String()
+		}
+	}
+	if r.Quality == "" {
+		if v, ok := w.GetMetadataString(up.MetadataSourceDynamic, match.MetadataNamespace, match.MetadataKeyImageQuality); ok {
+			r.Quality = v.String()
+		}
+	}
+
+	if r.Count > 0 {
+		w.IncrementCounter(imageCountID, uint64(r.Count))
+		w.SetMetadata("orange_meter", "response_modalities", "image")
+		w.SetMetadata("orange_meter", "image_count", r.Count)
+	}
+	if r.Size != "" {
+		w.SetMetadata("orange_meter", "image_size", r.Size)
+	}
+	if r.Quality != "" {
+		w.SetMetadata("orange_meter", "image_quality", r.Quality)
+	}
+
+	// Emit token usage for models that provide it (e.g. gpt-image-1).
+	EmitUsage(w, r.Tokens)
 }

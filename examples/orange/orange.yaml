@@ -22,6 +22,26 @@ llm:
       metadata:
         description: "OpenAI text-embedding-ada-002 (1536 dimensions, legacy)."
         tags: ["embeddings"]
+    dall-e-2:
+      provider: openai
+      metadata:
+        description: "DALL-E 2 image generation via OpenAI."
+        tags: ["images"]
+    dall-e-3:
+      provider: openai
+      metadata:
+        description: "DALL-E 3 image generation via OpenAI."
+        tags: ["images"]
+    gpt-image-1:
+      provider: openai
+      metadata:
+        description: "GPT Image 1 image generation via OpenAI (token-based pricing)."
+        tags: ["images"]
+    gemini-2.5-flash-image:
+      provider: gemini
+      metadata:
+        description: "Gemini 2.5 Flash image generation via Google AI Studio."
+        tags: ["images"]
     gpt-4o-mini:
       provider: openai
       metadata:
