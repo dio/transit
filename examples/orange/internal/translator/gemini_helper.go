@@ -334,6 +334,9 @@ func assistantMsgToGeminiParts(msg *openai.ChatCompletionAssistantMessageParam) 
 		return nil, nil, fmt.Errorf("%w: message 'content' must be a string or an array", ErrInvalidRequestBody)
 	}
 
+	if len(parts) == 0 {
+		return nil, knownToolCalls, nil
+	}
 	return parts, knownToolCalls, nil
 }
 
