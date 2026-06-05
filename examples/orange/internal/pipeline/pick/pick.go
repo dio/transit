@@ -326,7 +326,6 @@ func (c *cluster) applyResolved(h up.ClusterHandle, resolved map[string]dnsResul
 				added := h.AddHosts([]up.HostSpec{{
 					Address:  addr,
 					Hostname: r.hostname,
-					Metadata: map[string]string{"sni": r.hostname},
 				}})
 				if len(added) == 0 {
 					c.logger.Warn("skipping addr: AddHosts returned no ptrs", "upstream", name, "addr", addr)
@@ -451,16 +450,28 @@ func resolveUpstream(ctx context.Context, endpoint string) (addrs []string, ttl 
 	return result, ttl, nil
 }
 
-// pickAddrs sorts addrs by byte value so DNS round-robin rotation yields a
-// stable result, then returns all addresses as "ip:port" strings. Sorting
-// ensures applyResolved detects IP-set changes by slice equality rather than
-// permutation. Since lookupWithTTL only queries TypeA, all addresses are IPv4.
+// pickAddrs prefers IPv4 addresses: if any IPv4 address is present only those
+// are returned. Otherwise all IPv6 addresses are returned as fallback. The
+// result is sorted by byte value so DNS round-robin rotation yields a stable
+// slice regardless of the order DNS returns addresses.
 func pickAddrs(addrs []net.IPAddr, port string) []string {
-	sort.Slice(addrs, func(i, j int) bool {
-		return bytes.Compare(addrs[i].IP, addrs[j].IP) < 0
+	var v4, v6 []net.IPAddr
+	for _, a := range addrs {
+		if a.IP.To4() != nil {
+			v4 = append(v4, a)
+		} else {
+			v6 = append(v6, a)
+		}
+	}
+	selected := v4
+	if len(selected) == 0 {
+		selected = v6
+	}
+	sort.Slice(selected, func(i, j int) bool {
+		return bytes.Compare(selected[i].IP, selected[j].IP) < 0
 	})
-	out := make([]string, len(addrs))
-	for i, a := range addrs {
+	out := make([]string, len(selected))
+	for i, a := range selected {
 		out[i] = net.JoinHostPort(a.IP.String(), port)
 	}
 	return out

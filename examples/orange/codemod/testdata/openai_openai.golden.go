@@ -22,16 +22,16 @@ import (
 )
 
 // NewChatCompletionOpenAIToOpenAITranslator implements [Factory] for OpenAI to OpenAI translation.
-// CODEMOD-TODO: original params were: prefix string, modelNameOverride string
+// CODEMOD-TODO: original params were: prefix string, backendModel string
 func NewChatCompletionOpenAIToOpenAITranslator(cfg ProviderConfig) Translator {
-	return &openAIToOpenAITranslatorV1ChatCompletion{modelNameOverride: cfg.BackendModel, path: path.Join("/", cfg.PathPrefix, "chat/completions")}
+	return &openAIToOpenAITranslatorV1ChatCompletion{backendModel: cfg.BackendModel, path: path.Join("/", cfg.PathPrefix, "chat/completions")}
 }
 
 // openAIToOpenAITranslatorV1ChatCompletion is a passthrough translator for OpenAI Chat Completions API.
 // May apply model overrides but otherwise preserves the OpenAI format:
 // https://platform.openai.com/docs/api-reference/chat/create
 type openAIToOpenAITranslatorV1ChatCompletion struct {
-	modelNameOverride string
+	backendModel string
 	// requestModel serves as fallback for non-compliant OpenAI backends that
 	// don't return model in responses, ensuring metrics/tracing always have a model.
 	requestModel string
@@ -56,14 +56,14 @@ func (o *openAIToOpenAITranslatorV1ChatCompletion) RequestBody(raw []byte) (newH
 	}
 	// Store the request model to use as fallback for response model
 	o.requestModel = req.Model
-	if o.modelNameOverride != "" {
+	if o.backendModel != "" {
 		// If modelName is set we override the model to be used for the request.
-		newBody, err = sjson.SetBytesOptions(raw, "model", o.modelNameOverride, sjsonOptions)
+		newBody, err = sjson.SetBytesOptions(raw, "model", o.backendModel, sjsonOptions)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to set model name: %w", err)
 		}
 		// Make everything coherent.
-		o.requestModel = o.modelNameOverride
+		o.requestModel = o.backendModel
 	}
 
 	// Always set the path header to the chat completions endpoint so that the request is routed correctly.

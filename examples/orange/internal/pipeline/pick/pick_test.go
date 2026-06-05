@@ -433,13 +433,16 @@ func TestResolveAll_resolveFailKeepsOld(t *testing.T) {
 	require.Equal(t, 2, h.addCount(), "no new AddHosts on DNS failure")
 	require.Equal(t, 0, h.removeCount(), "no RemoveHosts on DNS failure — keep healthy host")
 
-	// The preserved entry must have nextRefresh reset to ~now+minTTLFloor.
+	// The preserved entry must have nextRefresh reset to retryDelay() = minTTLFloor + rand[0, minTTLFloor).
+	now := time.Now()
 	m := c.hosts.Load()
 	require.NotNil(t, m)
 	entry := (*m)["provider_a"]
 	require.Equal(t, ptrA, entry.ptrs[0], "HostPtr must be preserved after DNS failure")
-	require.WithinDuration(t, time.Now().Add(minTTLFloor), entry.nextRefresh, 2*time.Second,
-		"nextRefresh must be set to ~now+minTTLFloor after DNS failure")
+	require.True(t, !entry.nextRefresh.Before(now.Add(minTTLFloor-time.Second)),
+		"nextRefresh must be at least ~now+minTTLFloor after DNS failure, got %v", entry.nextRefresh)
+	require.True(t, entry.nextRefresh.Before(now.Add(2*minTTLFloor+time.Second)),
+		"nextRefresh must be less than ~now+2*minTTLFloor after DNS failure, got %v", entry.nextRefresh)
 }
 
 // TestResolveAll_providerDeleted verifies that a provider removed from config is
