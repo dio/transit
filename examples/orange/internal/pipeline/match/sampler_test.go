@@ -42,6 +42,26 @@ func makeChildren(weights ...int) []config.SplitChild {
 	return children
 }
 
+// --- Degenerate / safety tests ---
+
+func TestSampleSplitFrom_emptyChildren_returnsZero(t *testing.T) {
+	// Should never happen after config validation, but must not panic.
+	got := sampleSplitFrom(nil, func(int) int { return 0 })
+	assert.Equal(t, 0, got)
+}
+
+func TestSampleSplitFrom_allZeroWeights_uniformFallback(t *testing.T) {
+	// Should never happen after config validation, but must not panic.
+	children := makeChildren(0, 0, 0)
+	calls := 0
+	sampleSplitFrom(children, func(n int) int {
+		calls++
+		assert.Equal(t, 3, n, "fallback must draw from len(children)")
+		return 1
+	})
+	assert.Equal(t, 1, calls)
+}
+
 // --- Boundary tests (deterministic mock randN) ---
 
 func TestSampleSplitFrom_boundary_zero(t *testing.T) {
