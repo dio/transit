@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# demos/codex — run Codex CLI against Orange.
+#
+# Interactive:
+#   ./demos/codex
+#
+# One-shot (mirrors claude -p):
+#   ./demos/codex -p "write a hello-world in Go"
+#
+# One-shot over WebSocket:
+#   ./demos/codex --ws -p "write a hello-world in Go"
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ORANGE_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+CODEX_HOME="${ORANGE_CODEX_HOME:-${TMPDIR:-/tmp}/orange-codex-home}"
+
+EXTRA_ARGS=()
+if [[ "${1:-}" == "--ws" ]]; then
+  EXTRA_ARGS+=(--enable responses_websockets)
+  EXTRA_ARGS+=(-c 'model_providers.orange.supports_websockets=true')
+  shift
+fi
+
+mkdir -p "$CODEX_HOME"
+
+export CODEX_HOME
+if [[ "${ORANGE_CODEX_TRACE:-}" == "1" ]]; then
+  export RUST_LOG="${RUST_LOG:-codex_api::endpoint::responses_websocket=trace,codex_core=debug}"
+fi
+CODEX_ARGS=(
+  --disable shell_snapshot
+  --disable plugins
+  "${EXTRA_ARGS[@]}"
+  -c 'model="gpt-4o-mini"'
+  -c model_provider=orange
+  -c "model_catalog_json=\"$ORANGE_DIR/codex-model-catalog.json\""
+  -c 'model_providers.orange.name="Orange"'
+  -c 'model_providers.orange.base_url="http://localhost:8080/v1"'
+  -c 'model_providers.orange.wire_api="responses"'
+  -c 'model_providers.orange.requires_openai_auth=false'
+)
+
+if [[ "${1:-}" == "-p" ]]; then
+  shift
+  exec codex "${CODEX_ARGS[@]}" exec "$*"
+else
+  exec codex "${CODEX_ARGS[@]}" "$@"
+fi

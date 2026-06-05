@@ -95,9 +95,10 @@ type Auth struct {
 
 // ModelEntry maps a client-facing model ID to a provider and optional backend name.
 type ModelEntry struct {
-	Provider string         `yaml:"provider"`
-	Name     string         `yaml:"name,omitempty"`
-	Metadata map[string]any `yaml:"metadata,omitempty"`
+	Provider  string            `yaml:"provider"`
+	Name      string            `yaml:"name,omitempty"`
+	Metadata  map[string]any    `yaml:"metadata,omitempty"`
+	Endpoints map[string]string `yaml:"endpoints,omitempty"`
 }
 
 // MCPConfig describes Orange-managed MCP server profiles.
@@ -221,23 +222,32 @@ func (p Provider) Host() string {
 }
 
 // LookupModel returns the provider name and effective backend model name for
-// the given client model ID. Both return values are empty when there is no
-// match. When ModelEntry.Name is unset the map key is used as the backend name.
-func (c *Config) LookupModel(model string) (provider, backendModel string) {
+// the given client model ID and endpoint discriminator. Both return values are
+// empty when there is no match. When ModelEntry.Name is unset the map key is
+// used as the backend name. If endpoint is non-empty and the model entry has a
+// matching key in Endpoints, that provider overrides the default provider.
+func (c *Config) LookupModel(model, endpoint string) (provider, backendModel string) {
 	e, ok := c.Models[model]
 	if !ok {
 		return "", ""
 	}
-	if e.Name != "" {
-		return e.Provider, e.Name
+	prov := e.Provider
+	if endpoint != "" {
+		if override, has := e.Endpoints[endpoint]; has {
+			prov = override
+		}
 	}
-	return e.Provider, model
+	if e.Name != "" {
+		return prov, e.Name
+	}
+	return prov, model
 }
 
 // LookupModelProvider returns the upstream name and Provider for the given
-// client model ID. ok is false when the model is not configured.
-func (c *Config) LookupModelProvider(model string) (upstream string, provider Provider, ok bool) {
-	upstream, _ = c.LookupModel(model)
+// client model ID and endpoint discriminator. ok is false when the model is
+// not configured.
+func (c *Config) LookupModelProvider(model, endpoint string) (upstream string, provider Provider, ok bool) {
+	upstream, _ = c.LookupModel(model, endpoint)
 	if upstream == "" {
 		return "", Provider{}, false
 	}
@@ -316,6 +326,11 @@ func Load(data []byte) (*Config, error) {
 	for id, entry := range cfg.Models {
 		if _, ok := cfg.Providers[entry.Provider]; !ok {
 			return nil, fmt.Errorf("orange/config: models[%q].provider %q: not in providers", id, entry.Provider)
+		}
+		for epKey, epProvider := range entry.Endpoints {
+			if _, ok := cfg.Providers[epProvider]; !ok {
+				return nil, fmt.Errorf("orange/config: models[%q].endpoints[%q] provider %q: not in providers", id, epKey, epProvider)
+			}
 		}
 	}
 	if cfg.MCP != nil {

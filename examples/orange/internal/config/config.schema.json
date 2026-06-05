@@ -157,6 +157,11 @@
               "additionalProperties": true
             }
           }
+        },
+        "endpoints": {
+          "description": "Per-endpoint provider overrides. Keys are endpoint discriminators (chat_completions, messages, responses); values are provider names that must exist in providers.",
+          "type": "object",
+          "additionalProperties": { "type": "string" }
         }
       }
     },

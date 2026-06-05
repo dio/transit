@@ -20,6 +20,7 @@ import (
 
 	"github.com/dio/transit/examples/orange/internal/config"
 	"github.com/dio/transit/examples/orange/internal/observability"
+	"github.com/dio/transit/examples/orange/internal/pipeline/match"
 	"github.com/dio/transit/up"
 )
 
@@ -427,7 +428,7 @@ func (h *responseswsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"session_id", sessionID,
 		"model", model,
 	)
-	providerName, provider, ok = cfg.LookupModelProvider(model)
+	providerName, provider, ok = cfg.LookupModelProvider(model, match.EndpointResponses)
 	if !ok {
 		closeReason = closeReasonLookupErr
 		errClass = "unknown_model"
@@ -435,7 +436,7 @@ func (h *responseswsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		clientConn.Close(websocket.StatusPolicyViolation, "unknown model") //nolint:errcheck
 		return
 	}
-	_, backendModel = cfg.LookupModel(model)
+	_, backendModel = cfg.LookupModel(model, match.EndpointResponses)
 	providerKind = provider.Kind
 	log.Info("orange-responsesws: model provider resolved",
 		"session_id", sessionID,

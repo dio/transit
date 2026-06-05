@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# demos/goose — run Goose AI agent against Orange.
+#
+# Orange serves an OpenAI-compatible Chat Completions endpoint at
+# /v1/chat/completions and routes by model field.  Goose's openai
+# provider reads OPENAI_HOST + OPENAI_BASE_PATH and OPENAI_API_KEY;
+# Orange ignores the client key on inbound requests.
+#
+# Interactive:
+#   ./demos/goose
+#
+# One-shot (mirrors claude -p):
+#   ./demos/goose -p "write a hello-world in Go"
+
+ORANGE_BASE_URL="${ORANGE_GOOSE_BASE_URL:-http://localhost:8080}"
+MODEL="${ORANGE_GOOSE_MODEL:-gpt-4o-mini}"
+
+export GOOSE_PROVIDER=openai
+export GOOSE_MODEL="$MODEL"
+export OPENAI_HOST="${ORANGE_BASE_URL}"
+export OPENAI_BASE_PATH="v1/chat/completions"
+
+# Orange ignores the inbound client key; set a placeholder so Goose
+# doesn't reject the missing value and doesn't hit the real OpenAI API.
+if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+  export OPENAI_API_KEY="orange-demo"
+fi
+
+if [[ $# -eq 0 ]]; then
+  exec goose session
+elif [[ "$1" == "-p" ]]; then
+  shift
+  exec goose run --no-session --text "$*"
+else
+  exec goose "$@"
+fi

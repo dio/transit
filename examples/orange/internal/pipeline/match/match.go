@@ -175,7 +175,7 @@ func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 	}
 
 	cfg := config.Get()
-	upstream, backendModel := cfg.LookupModel(model)
+	upstream, backendModel := cfg.LookupModel(model, endpoint)
 	if upstream == "" {
 		w.Slog().Warn("Received body unknown model", "model", model)
 		p.Resolve(Decision{Endpoint: endpoint, Err: ErrUnknownModel})

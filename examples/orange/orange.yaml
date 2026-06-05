@@ -2,6 +2,11 @@ llm:
   models:
     claude-haiku-4-5:
       provider: anthropic
+      name: claude-haiku-4-5-20251001
+      endpoints:
+        chat_completions: anthropic_openai_compat
+    claude-haiku-4-5-20251001:
+      provider: anthropic
     gpt-4o-mini:
       provider: openai
       metadata:
@@ -49,6 +54,13 @@ llm:
         anthropic_version: "2023-06-01"
       auth:
         type: anthropic
+        secret_ref: env://ANTHROPIC_API_KEY
+
+    anthropic_openai_compat:
+      kind: openai
+      endpoint: https://api.anthropic.com
+      auth:
+        type: bearer
         secret_ref: env://ANTHROPIC_API_KEY
 
     openai:

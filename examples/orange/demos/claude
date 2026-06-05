@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# demos/claude — run Claude Code CLI against Orange.
+#
+# Orange serves the Anthropic Messages API at /v1/messages and routes
+# requests to the configured Anthropic (or Vertex Anthropic) backend
+# based on the model field in the body.  In --bare mode Claude Code
+# reads ANTHROPIC_BASE_URL to locate the API and ANTHROPIC_API_KEY for
+# auth; Orange ignores the client key on inbound requests.
+
+ORANGE_BASE_URL="${ORANGE_CLAUDE_BASE_URL:-http://localhost:8080}"
+MODEL="${ORANGE_CLAUDE_MODEL:-haiku}"
+
+export ANTHROPIC_BASE_URL="$ORANGE_BASE_URL"
+
+# Orange does not validate the inbound key; supply a placeholder so
+# Claude Code's --bare auth path does not bail out before connecting.
+if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+  export ANTHROPIC_API_KEY="orange-demo"
+fi
+
+exec claude \
+  --bare \
+  --model "$MODEL" \
+  "$@"

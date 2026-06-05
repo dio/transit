@@ -1,0 +1,228 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BASE_URL="${ORANGE_LLM_BASE_URL:-http://localhost:8080}"
+SHOW_HEADERS="${ORANGE_LLM_SHOW_HEADERS:-0}"
+API="chat"
+MODEL=""
+MESSAGE="hi"
+MAX_TOKENS=64
+STREAM=0
+
+usage() {
+  cat <<'EOF'
+Usage:
+  ./llm [options] [<message>]
+  ./llm [options] models
+
+Options:
+  -p <message>                     Send a one-shot message (mirrors claude/goose/codex -p)
+  --api <chat|responses|messages>  API path (default: chat)
+  --model <name>                   Model name (default depends on --api)
+  --stream                         Enable SSE streaming
+  --max-tokens <n>                 Max tokens (default: 64; messages only)
+  -H, --headers                    Print request/response headers
+
+Environment:
+  ORANGE_LLM_BASE_URL      Base URL. Default: http://localhost:8080
+  ORANGE_LLM_SHOW_HEADERS  Set to 1 to print headers (or --headers)
+
+Default models per API:
+  chat       /v1/chat/completions   gpt-4o-mini
+  responses  /v1/responses          gpt-4o-mini
+  messages   /v1/messages           claude-haiku-4-5
+
+Examples:
+  ./llm
+  ./llm "count 1 to 5"
+  ./llm --stream "count 1 to 5"
+  ./llm --api messages "hi"
+  ./llm --api messages --stream "count 1 to 5"
+  ./llm --api responses "hi"
+  ./llm --api responses --stream "count 1 to 5"
+  ./llm --model amazon.nova-lite-v1:0 "hi"
+  ./llm --api chat --model claude-haiku-4-5 "hi"
+  ./llm --api chat --model claude-haiku-4-5 --stream "count 1 to 5"
+  ./llm models
+EOF
+}
+
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "missing required command: $1" >&2
+    exit 127
+  fi
+}
+
+parse_args() {
+  local positional=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -p)
+        MESSAGE="$2"; CMD="send"; shift 2 ;;
+      --api)
+        API="$2"; shift 2 ;;
+      --model)
+        MODEL="$2"; shift 2 ;;
+      --stream)
+        STREAM=1; shift ;;
+      --max-tokens)
+        MAX_TOKENS="$2"; shift 2 ;;
+      -H|--headers)
+        SHOW_HEADERS=1; shift ;;
+      -h|--help|help)
+        usage; exit 0 ;;
+      --)
+        shift; positional+=("$@"); break ;;
+      -*)
+        echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
+      *)
+        positional+=("$1"); shift ;;
+    esac
+  done
+  CMD="${positional[0]:-send}"
+  if [[ "${#positional[@]}" -gt 1 ]]; then
+    MESSAGE="${positional[1]}"
+  elif [[ "${#positional[@]}" -eq 1 && "$CMD" != "send" && "$CMD" != "models" ]]; then
+    MESSAGE="$CMD"
+    CMD="send"
+  fi
+}
+
+default_model() {
+  case "$API" in
+    messages) echo "claude-haiku-4-5" ;;
+    *)        echo "gpt-4o-mini" ;;
+  esac
+}
+
+api_path() {
+  case "$API" in
+    chat)      echo "/v1/chat/completions" ;;
+    responses) echo "/v1/responses" ;;
+    messages)  echo "/v1/messages" ;;
+    *)
+      echo "unknown --api '$API'; choose chat, responses, or messages" >&2
+      exit 2 ;;
+  esac
+}
+
+tmpdir="$(mktemp -d)"
+cleanup() { rm -rf "$tmpdir"; }
+trap cleanup EXIT
+
+print_request_headers() {
+  [[ "$SHOW_HEADERS" == "1" ]] || return 0
+  local url="${BASE_URL}$(api_path)"
+  echo "--- request ---" >&2
+  echo "> POST $url" >&2
+  echo "> content-type: application/json" >&2
+  echo "---------------" >&2
+}
+
+print_response_headers() {
+  [[ "$SHOW_HEADERS" == "1" ]] || return 0
+  local file="$1"
+  echo "--- response --" >&2
+  while IFS= read -r line; do
+    printf '< %s\n' "$line" >&2
+  done < "$file"
+  echo "---------------" >&2
+}
+
+build_payload() {
+  require_cmd jq
+  local model="$1"
+  local msg="$2"
+  local stream="$3"
+
+  case "$API" in
+    chat)
+      jq -nc \
+        --arg model "$model" \
+        --arg content "$msg" \
+        --argjson stream "$stream" \
+        '{model:$model, stream:$stream, messages:[{role:"user",content:$content}]}'
+      ;;
+    responses)
+      jq -nc \
+        --arg model "$model" \
+        --arg input "$msg" \
+        --argjson stream "$stream" \
+        '{model:$model, stream:$stream, input:$input}'
+      ;;
+    messages)
+      jq -nc \
+        --arg model "$model" \
+        --arg content "$msg" \
+        --argjson stream "$stream" \
+        --argjson max_tokens "$MAX_TOKENS" \
+        '{model:$model, stream:$stream, max_tokens:$max_tokens, messages:[{role:"user",content:$content}]}'
+      ;;
+  esac
+}
+
+do_send() {
+  local model="${MODEL:-$(default_model)}"
+  local url="${BASE_URL}$(api_path)"
+  local stream_flag
+  stream_flag="$([ "$STREAM" -eq 1 ] && echo true || echo false)"
+  local payload
+  payload="$(build_payload "$model" "$MESSAGE" "$stream_flag")"
+  local headers="$tmpdir/headers"
+  local curl_flags=(-sS -H 'content-type: application/json' --data-binary "$payload")
+  if [[ "$STREAM" -eq 1 ]]; then
+    curl_flags+=(-N)
+  fi
+  print_request_headers
+  if [[ "$STREAM" -eq 1 ]]; then
+    curl "${curl_flags[@]}" -D "$headers" "$url" &
+    local pid=$!
+    wait "$pid" || true
+    print_response_headers "$headers"
+  else
+    local body="$tmpdir/body"
+    local code
+    code="$(curl "${curl_flags[@]}" -D "$headers" -o "$body" -w '%{http_code}' "$url")"
+    print_response_headers "$headers"
+    if [[ "$code" == 404 || "$code" == 503 ]]; then
+      echo "HTTP $code from $url" >&2
+      echo "Orange LLM Envoy route may not be wired yet." >&2
+    fi
+    cat "$body"
+    echo
+  fi
+}
+
+do_models() {
+  local url="${BASE_URL}/v1/models"
+  if [[ "$SHOW_HEADERS" == "1" ]]; then
+    echo "--- request ---" >&2
+    echo "> GET $url" >&2
+    echo "---------------" >&2
+  fi
+  local headers="$tmpdir/headers"
+  local body="$tmpdir/body"
+  local code
+  code="$(curl -sS -D "$headers" -o "$body" -w '%{http_code}' "$url")"
+  print_response_headers "$headers"
+  if [[ "$code" == 404 || "$code" == 503 ]]; then
+    echo "HTTP $code from $url" >&2
+    echo "Orange LLM Envoy route may not be wired yet." >&2
+  fi
+  cat "$body"
+  echo
+}
+
+parse_args "$@"
+require_cmd curl
+
+case "$CMD" in
+  send)   do_send ;;
+  models) do_models ;;
+  *)
+    echo "unknown command: $CMD" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

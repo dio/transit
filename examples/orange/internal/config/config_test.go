@@ -211,7 +211,7 @@ func TestLookupModel_exactMatch(t *testing.T) {
 			"gpt-4o": {Provider: "openai"},
 		},
 	}
-	prov, backend := cfg.LookupModel("gpt-4o")
+	prov, backend := cfg.LookupModel("gpt-4o", "")
 	assert.Equal(t, "openai", prov)
 	assert.Equal(t, "gpt-4o", backend, "backend defaults to the map key")
 }
@@ -223,7 +223,7 @@ func TestLookupModel_nameOverride(t *testing.T) {
 			"claude-sonnet": {Provider: "anthropic", Name: "claude-3-5-sonnet-20241022"},
 		},
 	}
-	prov, backend := cfg.LookupModel("claude-sonnet")
+	prov, backend := cfg.LookupModel("claude-sonnet", "")
 	assert.Equal(t, "anthropic", prov)
 	assert.Equal(t, "claude-3-5-sonnet-20241022", backend)
 }
@@ -235,23 +235,64 @@ func TestLookupModel_compoundName(t *testing.T) {
 			"deepinfra/microsoft/phi-4": {Provider: "deepinfra", Name: "microsoft/phi-4"},
 		},
 	}
-	prov, backend := cfg.LookupModel("deepinfra/microsoft/phi-4")
+	prov, backend := cfg.LookupModel("deepinfra/microsoft/phi-4", "")
 	assert.Equal(t, "deepinfra", prov)
 	assert.Equal(t, "microsoft/phi-4", backend)
 }
 
 func TestLookupModel_miss(t *testing.T) {
 	cfg := &Config{Models: map[string]ModelEntry{}}
-	prov, backend := cfg.LookupModel("unknown-model")
+	prov, backend := cfg.LookupModel("unknown-model", "")
 	assert.Empty(t, prov)
 	assert.Empty(t, backend)
 }
 
 func TestLookupModel_emptyID(t *testing.T) {
 	cfg := &Config{Models: map[string]ModelEntry{}}
-	prov, backend := cfg.LookupModel("")
+	prov, backend := cfg.LookupModel("", "")
 	assert.Empty(t, prov)
 	assert.Empty(t, backend)
+}
+
+func TestLookupModel_endpointOverride(t *testing.T) {
+	cfg := &Config{
+		Providers: map[string]Provider{
+			"anthropic":              {Kind: "anthropic", Endpoint: "https://api.anthropic.com"},
+			"anthropic_openai_compat": {Kind: "openai", Endpoint: "https://api.anthropic.com"},
+		},
+		Models: map[string]ModelEntry{
+			"m": {
+				Provider:  "anthropic",
+				Endpoints: map[string]string{"chat_completions": "anthropic_openai_compat"},
+			},
+		},
+	}
+	prov, _ := cfg.LookupModel("m", "chat_completions")
+	assert.Equal(t, "anthropic_openai_compat", prov, "chat_completions should use the endpoint override")
+
+	prov, _ = cfg.LookupModel("m", "messages")
+	assert.Equal(t, "anthropic", prov, "messages should use the default provider")
+}
+
+func TestLookupModel_endpointOverride_inheritName(t *testing.T) {
+	cfg := &Config{
+		Providers: map[string]Provider{
+			"anthropic":              {Kind: "anthropic", Endpoint: "https://api.anthropic.com"},
+			"anthropic_openai_compat": {Kind: "openai", Endpoint: "https://api.anthropic.com"},
+		},
+		Models: map[string]ModelEntry{
+			"m": {
+				Provider:  "anthropic",
+				Name:      "claude-haiku-4-5-20251001",
+				Endpoints: map[string]string{"chat_completions": "anthropic_openai_compat"},
+			},
+		},
+	}
+	_, backendName := cfg.LookupModel("m", "chat_completions")
+	assert.Equal(t, "claude-haiku-4-5-20251001", backendName, "backend name should be inherited for chat_completions")
+
+	_, backendName = cfg.LookupModel("m", "messages")
+	assert.Equal(t, "claude-haiku-4-5-20251001", backendName, "backend name should be inherited for messages")
 }
 
 // --- OpenAIV1Models ----------------------------------------------------------
