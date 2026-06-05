@@ -13,6 +13,7 @@ import (
 	_ "github.com/dio/transit/examples/orange/internal/pipeline/meter"
 	_ "github.com/dio/transit/examples/orange/internal/pipeline/pick"
 	_ "github.com/dio/transit/examples/orange/internal/pipeline/responsesws"
+	_ "github.com/dio/transit/examples/orange/internal/pipeline/responsesws/loopback"
 	_ "github.com/dio/transit/examples/orange/internal/translator"
 )
 

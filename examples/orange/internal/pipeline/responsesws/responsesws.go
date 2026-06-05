@@ -24,7 +24,6 @@ import (
 )
 
 const (
-	FilterName      = "orange-responsesws"
 	MeterFilterName = "orange-responsesws-meter"
 
 	// maxSessionDuration is the OpenAI-documented 60-minute connection limit.
@@ -65,33 +64,6 @@ const (
 )
 
 func init() {
-	log := observability.Logger("orange/responsesws")
-	handler := &responseswsHandler{
-		egressURL:         resolveEgressURL(),
-		firstFrameTimeout: resolveFirstFrameTimeout(),
-		log:               log,
-		onSummary:         publishSummary,
-	}
-
-	sc, err := newResponsesWSSidecar(handler, responsesWSSidecarOptions{
-		listenAddr:      resolveListenAddr(),
-		shutdownTimeout: 5 * time.Second,
-		egressURL:       handler.egressURL,
-		log:             log,
-	})
-	if err != nil {
-		// If we fail to create the sidecar struct, log and bail. The filter still
-		// registers so Envoy does not crash; sessions will fail at accept time.
-		fmt.Fprintf(os.Stderr, "orange-responsesws: sidecar init error: %v\n", err)
-	}
-
-	g := up.NewGroup()
-	name := FilterName
-	g.Add(
-		func() error { return sc.execute(name) },
-		sc.stop,
-	)
-	up.Register(FilterName, func(*up.Writer, *up.Request) {}, up.WithGroup(g))
 	up.Register(MeterFilterName, requestHandler, up.WithResponse(responseHandler))
 }
 
@@ -99,7 +71,7 @@ func resolveListenAddr() string {
 	if v := os.Getenv("ORANGE_RESPONSESWS_LISTEN_ADDR"); v != "" {
 		return v
 	}
-	return "127.0.0.1:10002"
+	return "127.0.0.1:0"
 }
 
 func resolveEgressURL() string {
@@ -155,33 +127,35 @@ func dialOptionsForEgress(egressURL string) (wsURL string, opts *websocket.DialO
 	return egressURL, &websocket.DialOptions{}
 }
 
-// responsesWSSidecarOptions configures a responsesWSSidecar.
-type responsesWSSidecarOptions struct {
+// sidecarOptions configures a Sidecar.
+type sidecarOptions struct {
 	listenAddr      string
 	shutdownTimeout time.Duration
 	egressURL       string // non-empty means egress-via-Envoy (required for orange-responsesws)
 	log             *slog.Logger
 }
 
-// responsesWSSidecar manages the embedded HTTP server lifecycle for orange-responsesws.
-// It mirrors up.Sidecar but calls listenForSidecar so that UDS is supported.
-type responsesWSSidecar struct {
-	handler  http.Handler
-	opts     responsesWSSidecarOptions
-	ready    chan struct{} // closed after net.Listen, before Serve
-	started  chan struct{} // closed when execute sets srv+ln, or returns with error
-	mu       sync.Mutex
-	srv      *http.Server
-	ln       net.Listener
-	stopOnce sync.Once
-	resolved string
+// Sidecar manages the embedded HTTP server lifecycle for orange-responsesws.
+// Create with NewSidecar or newSidecar, then call Listen to bind the socket,
+// Serve to start accepting connections, and Stop to shut down gracefully.
+type Sidecar struct {
+	handler        http.Handler
+	opts           sidecarOptions
+	ready          chan struct{} // closed after net.Listen succeeds
+	started        chan struct{} // closed after Listen (success or failure)
+	mu             sync.Mutex
+	srv            *http.Server
+	ln             net.Listener
+	resolved       string
+	unixSocketPath string // non-empty when ln is a Unix socket; removed in Stop
+	stopOnce       sync.Once
 }
 
-func newResponsesWSSidecar(h http.Handler, opts responsesWSSidecarOptions) (*responsesWSSidecar, error) {
+func newSidecar(h http.Handler, opts sidecarOptions) (*Sidecar, error) {
 	if opts.shutdownTimeout == 0 {
 		opts.shutdownTimeout = 5 * time.Second
 	}
-	return &responsesWSSidecar{
+	return &Sidecar{
 		handler: h,
 		opts:    opts,
 		ready:   make(chan struct{}),
@@ -189,60 +163,106 @@ func newResponsesWSSidecar(h http.Handler, opts responsesWSSidecarOptions) (*res
 	}, nil
 }
 
+// NewSidecar constructs the responsesws handler and sidecar. listenAddr
+// overrides ORANGE_RESPONSESWS_LISTEN_ADDR and the compiled-in default;
+// pass "" to use the env var / default. Supports TCP ("127.0.0.1:0") and
+// Unix sockets ("unix:///tmp/orange-responsesws.sock"). The sidecar is not
+// yet bound; call Listen then Serve to start it.
+func NewSidecar(listenAddr string) (*Sidecar, error) {
+	if listenAddr == "" {
+		listenAddr = resolveListenAddr()
+	}
+	log := observability.Logger("orange/responsesws")
+	handler := &responseswsHandler{
+		egressURL:         resolveEgressURL(),
+		firstFrameTimeout: resolveFirstFrameTimeout(),
+		log:               log,
+		onSummary:         publishSummary,
+	}
+	return newSidecar(handler, sidecarOptions{
+		listenAddr:      listenAddr,
+		shutdownTimeout: 5 * time.Second,
+		egressURL:       handler.egressURL,
+		log:             log,
+	})
+}
+
 // Ready returns a channel closed after net.Listen succeeds. ListenAddr() is
 // valid after Ready() closes.
-func (s *responsesWSSidecar) Ready() <-chan struct{} { return s.ready }
+func (s *Sidecar) Ready() <-chan struct{} { return s.ready }
 
 // ListenAddr returns the resolved bind address. Empty before Ready() closes.
-func (s *responsesWSSidecar) ListenAddr() string {
+func (s *Sidecar) ListenAddr() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.resolved
 }
 
-func (s *responsesWSSidecar) execute(name string) error {
-	log := s.opts.log
-	if log == nil {
-		log = observability.Logger("orange/responsesws")
-	}
+// Listen binds the listener synchronously. Supports TCP (default) and Unix
+// domain sockets (addr prefixed with "unix://"). On success Ready() is closed
+// and ListenAddr() returns the actual bound address.
+func (s *Sidecar) Listen() error {
 	ln, err := listenForSidecar(s.opts.listenAddr)
 	if err != nil {
-		log.Error("orange-responsesws listen failed", "addr", s.opts.listenAddr, "err", err)
 		close(s.started)
 		return err
+	}
+
+	var unixPath string
+	if ln.Addr().Network() == "unix" {
+		unixPath = ln.Addr().String()
 	}
 
 	s.mu.Lock()
 	s.ln = ln
 	s.resolved = ln.Addr().String()
 	s.srv = &http.Server{Handler: s.handler}
+	s.unixSocketPath = unixPath
 	s.mu.Unlock()
 
 	close(s.ready)
 	close(s.started)
+	return nil
+}
 
+// Serve accepts connections on the already-bound listener. Must be called after
+// a successful Listen. Returns http.ErrServerClosed when Stop is called.
+func (s *Sidecar) Serve() error {
+	log := s.opts.log
+	if log == nil {
+		log = observability.Logger("orange/responsesws")
+	}
+	log.Info("orange-responsesws sidecar listening", "addr", s.resolved)
 	if s.opts.egressURL == "" {
 		log.Warn("orange-responsesws egress URL missing; sidecar will dial providers directly")
 	}
-	log.Info("orange-responsesws sidecar listening", "name", name, "addr", s.resolved)
-
-	return s.srv.Serve(ln)
+	s.mu.Lock()
+	ln := s.ln
+	srv := s.srv
+	s.mu.Unlock()
+	return srv.Serve(ln)
 }
 
-func (s *responsesWSSidecar) stop() {
+// Stop shuts down the sidecar gracefully and removes the Unix socket file if
+// applicable.
+func (s *Sidecar) Stop() {
 	s.stopOnce.Do(func() {
 		<-s.started
 		s.mu.Lock()
 		srv := s.srv
 		ln := s.ln
+		unixPath := s.unixSocketPath
 		s.mu.Unlock()
 		if srv != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), s.opts.shutdownTimeout)
 			defer cancel()
-			srv.Shutdown(ctx) //nolint:errcheck
+			_ = srv.Shutdown(ctx)
 		}
 		if ln != nil {
-			ln.Close() //nolint:errcheck
+			_ = ln.Close()
+		}
+		if unixPath != "" {
+			_ = os.Remove(unixPath)
 		}
 	})
 }

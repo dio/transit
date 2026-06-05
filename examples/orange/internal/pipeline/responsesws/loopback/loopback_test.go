@@ -106,7 +106,7 @@ func TestInitBindSuccess(t *testing.T) {
 }
 
 func TestInitBindSuccessUDS(t *testing.T) {
-	sockPath := t.TempDir() + "/orange-mcp.sock"
+	sockPath := t.TempDir() + "/rws.sock"
 	h := &recordingHandle{}
 	c := newCluster("unix://" + sockPath)
 	c.Init(h)

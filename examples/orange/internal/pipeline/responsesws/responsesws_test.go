@@ -198,16 +198,15 @@ func TestResolveFirstFrameTimeout_invalidFallsBack(t *testing.T) {
 	assert.Equal(t, defaultFirstFrameTimeout, resolveFirstFrameTimeout())
 }
 
-// ---- responsesWSSidecar lifecycle -------------------------------------------------------
+// ---- Sidecar lifecycle -------------------------------------------------------
 
 func TestResponsesWSSidecar_ReadyAfterListen(t *testing.T) {
-	sc, err := newResponsesWSSidecar(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}),
-		responsesWSSidecarOptions{listenAddr: "127.0.0.1:0", shutdownTimeout: time.Second})
+	sc, err := newSidecar(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}),
+		sidecarOptions{listenAddr: "127.0.0.1:0", shutdownTimeout: time.Second})
 	require.NoError(t, err)
 
-	go func() {
-		_ = sc.execute("test-sidecar")
-	}()
+	require.NoError(t, sc.Listen())
+	go func() { _ = sc.Serve() }()
 
 	// Ready channel must close without timing out.
 	select {
@@ -219,19 +218,20 @@ func TestResponsesWSSidecar_ReadyAfterListen(t *testing.T) {
 	addr := sc.ListenAddr()
 	assert.NotEmpty(t, addr, "ListenAddr must be non-empty after Ready")
 
-	sc.stop()
+	sc.Stop()
 }
 
 func TestResponsesWSSidecar_StopGraceful(t *testing.T) {
-	sc, err := newResponsesWSSidecar(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}),
-		responsesWSSidecarOptions{listenAddr: "127.0.0.1:0", shutdownTimeout: time.Second})
+	sc, err := newSidecar(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}),
+		sidecarOptions{listenAddr: "127.0.0.1:0", shutdownTimeout: time.Second})
 	require.NoError(t, err)
 
+	require.NoError(t, sc.Listen())
 	done := make(chan error, 1)
-	go func() { done <- sc.execute("test") }()
+	go func() { done <- sc.Serve() }()
 
 	<-sc.Ready()
-	sc.stop()
+	sc.Stop()
 
 	select {
 	case <-done:
@@ -241,8 +241,8 @@ func TestResponsesWSSidecar_StopGraceful(t *testing.T) {
 }
 
 func TestResponsesWSSidecar_ListenAddrEmptyBeforeReady(t *testing.T) {
-	sc, err := newResponsesWSSidecar(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}),
-		responsesWSSidecarOptions{listenAddr: "127.0.0.1:0"})
+	sc, err := newSidecar(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}),
+		sidecarOptions{listenAddr: "127.0.0.1:0"})
 	require.NoError(t, err)
 	assert.Empty(t, sc.ListenAddr(), "ListenAddr must be empty before Ready")
 }
@@ -644,9 +644,8 @@ func TestNewSessionID_unique(t *testing.T) {
 	assert.Len(t, ids, 100, "session IDs must be unique")
 }
 
-// ---- up package — check FilterName constant ------------------------------------
+// ---- up package — check MeterFilterName constant ------------------------------
 
 func TestInit_registersFilterName(t *testing.T) {
-	assert.Equal(t, "orange-responsesws", FilterName)
 	assert.Equal(t, "orange-responsesws-meter", MeterFilterName)
 }

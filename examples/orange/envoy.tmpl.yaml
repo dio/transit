@@ -51,18 +51,6 @@ static_resources:
                       filter_config:
                         "@type": type.googleapis.com/google.protobuf.StringValue
                         value: '{}'
-                  # orange-responsesws: no-op for HTTP; its WithGroup starts the Responses WS sidecar.
-                  # Keep it out of upgrade_configs to avoid starting the same
-                  # sidecar Group twice.
-                  - name: orange-responsesws
-                    typed_config:
-                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
-                      dynamic_module_config:
-                        name: orange
-                      filter_name: orange-responsesws
-                      filter_config:
-                        "@type": type.googleapis.com/google.protobuf.StringValue
-                        value: '{}'
                   - name: envoy.filters.http.router
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
@@ -281,18 +269,46 @@ static_resources:
             "@type": type.googleapis.com/google.protobuf.StringValue
             value: '{}'
 
-    # orange-responsesws-loopback: static cluster pointing at the orange-responsesws sidecar.
-    # Port must match ORANGE_RESPONSESWS_LISTEN_ADDR (default 127.0.0.1:10002).
+    # orange-responsesws-loopback: dynamic-modules cluster. The cluster extension
+    # owns the orange-responsesws sidecar's lifecycle: it starts the sidecar at
+    # Init, registers sc.ListenAddr() as its single host, and stops the
+    # sidecar at Shutdown.
+    #
+    # cluster_config JSON fields (all optional):
+    #   listen_addr: sidecar bind address. Supports ephemeral TCP
+    #     ("127.0.0.1:0"), fixed TCP ("127.0.0.1:10002"), and Unix domain
+    #     sockets ("unix:///tmp/orange-responsesws.sock"). When omitted, falls back
+    #     to ORANGE_RESPONSESWS_LISTEN_ADDR, then the compiled-in default (127.0.0.1:0).
+    #
+    # Kubernetes / UDS note:
+    #   The socket file is created at runtime by the Envoy process, so the
+    #   socket directory must be read-write. With readOnlyRootFilesystem: true,
+    #   mount a dedicated emptyDir volume (rw) at the socket directory:
+    #
+    #     volumes:
+    #       - name: orange-sockets
+    #         emptyDir: {}
+    #     containers:
+    #       - name: envoy
+    #         volumeMounts:
+    #           - name: orange-sockets
+    #             mountPath: /run/orange
+    #
+    #   Then set listen_addr: "unix:///run/orange/responsesws.sock" here.
+    #   /tmp works for unrestricted pods (no readOnlyRootFilesystem).
     - name: orange-responsesws-loopback
-      type: STATIC
       connect_timeout: 5s
-      load_assignment:
-        cluster_name: orange-responsesws-loopback
-        endpoints:
-          - lb_endpoints:
-              - endpoint:
-                  address:
-                    socket_address: { address: 127.0.0.1, port_value: 10002 }
+      lb_policy: CLUSTER_PROVIDED
+      cluster_type:
+        name: envoy.clusters.dynamic_modules
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_modules.v3.ClusterConfig
+          dynamic_module_config:
+            name: orange
+          cluster_name: orange-responsesws-loopback
+          cluster_config:
+            "@type": type.googleapis.com/google.protobuf.StringValue
+            value: '{}'
 
     # orange-mcp-loopback: dynamic-modules cluster. The cluster extension
     # owns the orange-mcp sidecar's lifecycle: it starts the sidecar at
