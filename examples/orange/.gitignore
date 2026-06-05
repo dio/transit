@@ -2,3 +2,5 @@ liborange.so
 liborange.h
 envoy.yaml
 .env
+
+/examples/orange/demos/fallback/stub

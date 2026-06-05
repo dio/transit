@@ -29,7 +29,7 @@ else
 ORANGE_TRUSTED_CA ?= $(firstword $(wildcard /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/cert.pem))
 endif
 
-.PHONY: build build-linux-amd64 build-linux-arm64 test e2e run demo clean download-envoy
+.PHONY: build build-linux-amd64 build-linux-arm64 test e2e run demo demo-fallback clean download-envoy
 
 build: $(ZIG_BIN)
 	cd $(ROOT)/examples && $(ZIG_BUILD_ENV) \
@@ -181,6 +181,37 @@ $(CURDIR)/envoy.yaml: $(CURDIR)/envoy.tmpl.yaml
 	  exit 1; \
 	fi
 	ORANGE_TRUSTED_CA=$(ORANGE_TRUSTED_CA) envsubst '$$ORANGE_TRUSTED_CA' < $< > $@
+
+# demo-fallback: primary points to a dead port (127.0.0.1:19001, nothing listening),
+# which produces ECONNREFUSED → Envoy connect-failure → retry → vertex_anthropic fallback.
+# No stubs required; the real Vertex AI endpoint serves the fallback attempt.
+demo-fallback: build $(ENVOY_BIN)
+	@if [ -z "$${GCP_PROJECT}" ]; then \
+	  echo "GCP_PROJECT is unset — set it in examples/orange/.env or on the command line"; exit 1; fi
+	@if [ -z "$${GCP_SERVICE_ACCOUNT_JSON}" ]; then \
+	  echo "GCP_SERVICE_ACCOUNT_JSON is unset — set it in examples/orange/.env or on the command line"; exit 1; fi
+	@echo "=== orange fallback demo ==="
+	@echo ""
+	@echo "  Primary  : https://192.0.2.1 (TEST-NET-1, connect-timeout)"
+	@echo "  Primary2 : https://192.0.2.2 (TEST-NET-1, connect-timeout)"
+	@echo "  Primary3 : https://192.0.2.3 (TEST-NET-1, connect-timeout)"
+	@echo "  Fallback : https://us-east5-aiplatform.googleapis.com (Vertex AI)"
+	@echo ""
+	@echo "  Run from another shell:"
+	@echo "  curl -s localhost:8080/v1/messages \\"
+	@echo "    -H 'content-type: application/json' \\"
+	@echo "    -H 'authorization: Bearer demo/maya/sk-fallback' \\"
+	@echo "    -d '{\"model\":\"claude-haiku-4-5\",\"max_tokens\":32,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'"
+	@echo ""
+	@FALLBACK_ENVOY_YAML=$$(mktemp /tmp/orange-fallback-envoy.XXXXXX.yaml) ; \
+	 trap "rm -f $$FALLBACK_ENVOY_YAML" EXIT INT TERM ; \
+	 ORANGE_TRUSTED_CA=$(ORANGE_TRUSTED_CA) envsubst '$$ORANGE_TRUSTED_CA' \
+	   < $(CURDIR)/demos/fallback/envoy.tmpl.yaml > $$FALLBACK_ENVOY_YAML ; \
+	 ORANGE_CONFIG=$(CURDIR)/demos/fallback/orange.yaml \
+	 ORANGE_DNS_SERVERS=8.8.8.8,1.1.1.1 \
+	 ENVOY_DYNAMIC_MODULES_SEARCH_PATH=$(CURDIR) \
+	 GODEBUG=cgocheck=0 \
+	 $(ENVOY_BIN) -c $$FALLBACK_ENVOY_YAML --log-level info
 
 clean:
 	rm -f $(OUTPUT) $(OUTPUT:.so=.h) \
