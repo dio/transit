@@ -14,7 +14,7 @@ include $(ROOT)/scripts/zig.mk
 # Load .env if present (e.g. API keys). Variables in .env use KEY=value format
 # and override nothing already set on the command line.
 -include $(CURDIR)/.env
-export ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY GCP_PROJECT GCP_SERVICE_ACCOUNT_JSON GITHUB_TOKEN ORANGE_MCP_SESSION_KEYS
+export ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY GCP_PROJECT GCP_SERVICE_ACCOUNT_JSON AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN GITHUB_TOKEN ORANGE_MCP_SESSION_KEYS
 
 # Config file: override with `make run ORANGE_CONFIG=/path/to/orange.yaml` or
 # set ORANGE_CONFIG in .env. Defaults to orange.yaml in this directory.
