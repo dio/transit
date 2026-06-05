@@ -805,6 +805,67 @@ make build    # cgo c-shared build of liborange.so
 make e2e      # end-to-end tests against live providers (requires API keys)
 ```
 
+## Envoy Gateway (EG) deployment
+
+When running orange behind [Envoy Gateway](https://gateway.envoyproxy.io/) instead of a
+hand-rolled `envoy.yaml`, the timeout and buffer settings above must be expressed
+through EG's policy CRDs. The raw Envoy equivalents are:
+
+| Envoy field | Raw value | EG CRD |
+|---|---|---|
+| route `timeout` (default `"/"` route) | `900s` (Envoy proto requires `s` suffix) | `BackendTrafficPolicy` → `timeout.http.requestTimeout` |
+| listener `per_connection_buffer_limit_bytes` | `104857600` (100 MiB) | `ClientTrafficPolicy` → `connection.bufferLimit` |
+| cluster `per_connection_buffer_limit_bytes` | `104857600` (100 MiB) | `BackendTrafficPolicy` → `connection.bufferLimit` |
+
+### BackendTrafficPolicy — timeout + upstream buffer
+
+Apply once per `HTTPRoute` that carries LLM traffic (the catch-all `"/"` route in
+`envoy.tmpl.yaml`). WS and MCP routes already use `timeout: 0s` and are unaffected.
+
+```yaml
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: orange-llm
+  namespace: <your-namespace>
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: orange-llm          # adjust to your HTTPRoute name
+  timeout:
+    http:
+      requestTimeout: 15m       # EG accepts Go duration strings; raw Envoy uses 900s
+  connection:
+    bufferLimit: 100Mi          # matches per_connection_buffer_limit_bytes on clusters
+```
+
+### ClientTrafficPolicy — downstream buffer
+
+Apply once per `Gateway` listener to raise the per-connection downstream buffer from
+Envoy's 1 MiB default to 100 MiB (needed for large image-generation responses and
+long streaming completions).
+
+```yaml
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: ClientTrafficPolicy
+metadata:
+  name: orange
+  namespace: <your-namespace>
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: orange              # adjust to your Gateway name
+  connection:
+    bufferLimit: 100Mi          # matches per_connection_buffer_limit_bytes on listeners
+```
+
+> **Why these defaults aren't in EG out of the box** — Envoy's built-in route timeout
+> is 15 seconds and its per-connection buffer is 1 MiB. Both are too small for LLM
+> workloads: a single gpt-image-1 response can exceed 5 MiB, and reasoning models
+> regularly take longer than 15 s to produce a first token.
+
 ## Layout
 
 ```

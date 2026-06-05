@@ -14,6 +14,7 @@
 static_resources:
   listeners:
     - name: orange
+      per_connection_buffer_limit_bytes: 104857600
       address:
         socket_address: { address: 0.0.0.0, port_value: 8080 }
       filter_chains:
@@ -138,12 +139,13 @@ static_resources:
                             cluster: orange-mcp-loopback
                             timeout: 0s
                         - match: { prefix: "/" }
-                          route: { cluster: orange_default }
+                          route: { cluster: orange_default, timeout: 900s }
 
     # orange-responsesws egress listener: receives WebSocket dials from the orange-responsesws sidecar.
     # orange-responsesws-egress-match validates/strips internal headers and writes Orange
     # decision state before routing through orange_default (pick + adapt + meter).
     - name: orange-responsesws-egress
+      per_connection_buffer_limit_bytes: 104857600
       address:
         socket_address: { address: 127.0.0.1, port_value: 10003 }
       filter_chains:
@@ -181,12 +183,13 @@ static_resources:
                             upgrade_configs:
                               - upgrade_type: websocket
                         - match: { prefix: "/" }
-                          route: { cluster: orange_default }
+                          route: { cluster: orange_default, timeout: 900s }
 
     # orange-mcp egress listener: receives HTTP/SSE calls from the orange-mcp sidecar.
     # The egress-match filter validates/strips x-orange-mcp-* headers, injects
     # backend auth, and then Envoy routes by the sidecar's internal URL path.
     - name: orange-mcp-egress
+      per_connection_buffer_limit_bytes: 104857600
       address:
         socket_address: { address: 127.0.0.1, port_value: 10005 }
       filter_chains:
@@ -219,6 +222,7 @@ static_resources:
 
   clusters:
     - name: orange_default
+      per_connection_buffer_limit_bytes: 104857600
       connect_timeout: 5s
       lb_policy: CLUSTER_PROVIDED
       # Single static socket; auto_host_sni derives SNI from HostSpec.Hostname set
@@ -299,6 +303,7 @@ static_resources:
     #   Then set listen_addr: "unix:///run/orange/responsesws.sock" here.
     #   /tmp works for unrestricted pods (no readOnlyRootFilesystem).
     - name: orange-responsesws-loopback
+      per_connection_buffer_limit_bytes: 104857600
       connect_timeout: 5s
       lb_policy: CLUSTER_PROVIDED
       cluster_type:
@@ -340,6 +345,7 @@ static_resources:
     #   Then set listen_addr: "unix:///run/orange/mcp.sock" here.
     #   /tmp works for unrestricted pods (no readOnlyRootFilesystem).
     - name: orange-mcp-loopback
+      per_connection_buffer_limit_bytes: 104857600
       connect_timeout: 5s
       lb_policy: CLUSTER_PROVIDED
       cluster_type:
@@ -358,6 +364,7 @@ static_resources:
     # orange-adapt and orange-meter use body callbacks for normal HTTP requests;
     # after a WebSocket 101, tunnel frames do not have terminal body events.
     - name: orange-responsesws-default
+      per_connection_buffer_limit_bytes: 104857600
       connect_timeout: 5s
       lb_policy: CLUSTER_PROVIDED
       transport_socket:
@@ -386,6 +393,7 @@ static_resources:
     # backend name so pick.ChooseHost selects the correct DNS-resolved address.
     # Path rewriting is done by egress.go (sets :path from MCPServer.Path()).
     - name: orange-mcp-egress
+      per_connection_buffer_limit_bytes: 104857600
       connect_timeout: 5s
       lb_policy: CLUSTER_PROVIDED
       transport_socket:
