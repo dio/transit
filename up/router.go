@@ -83,6 +83,9 @@ func pathHasPrefix(path, prefix string) bool {
 // Dispatch is the request handler func for [Register]. Exact routes take
 // priority over prefix routes; among each group, first registration wins.
 func (r *Router) Dispatch(w *Writer, req *Request) {
+	// Strip the query string before matching so that paths like
+	// /v1/messages?beta=true route the same as /v1/messages.
+	path, _, _ := strings.Cut(req.Path, "?")
 	var prefixMatch *routeEntry
 	for i := range r.routes {
 		rt := &r.routes[i]
@@ -90,11 +93,11 @@ func (r *Router) Dispatch(w *Writer, req *Request) {
 			continue
 		}
 		if !rt.prefix {
-			if req.Path == rt.path {
+			if path == rt.path {
 				rt.handler(w, req)
 				return
 			}
-		} else if prefixMatch == nil && pathHasPrefix(req.Path, rt.path) {
+		} else if prefixMatch == nil && pathHasPrefix(path, rt.path) {
 			prefixMatch = rt
 		}
 	}
