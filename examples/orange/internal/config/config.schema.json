@@ -142,13 +142,12 @@
       }
     },
     "ModelEntry": {
-      "description": "Routing entry for a single client-facing model ID.",
+      "description": "Routing entry for a single client-facing model ID. Set either provider (sugar path) or routing (chain/fallback path); not both.",
       "type": "object",
-      "required": ["provider"],
       "additionalProperties": false,
       "properties": {
         "provider": {
-          "description": "Provider name. Must exist in providers.",
+          "description": "Provider name. Must exist in providers. Mutually exclusive with routing.",
           "type": "string"
         },
         "binding": {
@@ -194,6 +193,69 @@
           "description": "Per-endpoint provider overrides. Keys are endpoint discriminators (chat_completions, messages, responses); values are provider names that must exist in providers.",
           "type": "object",
           "additionalProperties": { "type": "string" }
+        },
+        "routing": {
+          "description": "Routing tree for this model entry. Mutually exclusive with provider.",
+          "$ref": "#/$defs/RoutingNode"
+        }
+      }
+    },
+    "RoutingNode": {
+      "description": "A node in a routing tree. Exactly one of chain or target must be set.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chain": { "$ref": "#/$defs/ChainNode" },
+        "target": { "$ref": "#/$defs/TargetLeaf" }
+      }
+    },
+    "ChainNode": {
+      "description": "A routing node that tries children in order using retry-count to select the active child.",
+      "type": "object",
+      "required": ["children"],
+      "additionalProperties": false,
+      "properties": {
+        "retry": {
+          "description": "Per-chain retry policy. orange injects the derived x-envoy-* headers in the request headers phase so Envoy's RetryStateImpl picks them up. max_retries is auto-derived from len(children)-1 and must not be set here.",
+          "$ref": "#/$defs/ChainRetryPolicy"
+        },
+        "children": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/RoutingNode" }
+        }
+      }
+    },
+    "ChainRetryPolicy": {
+      "description": "Retry policy for a fallback chain. Fields map to Envoy per-request retry override headers injected before routing.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "retry_on": {
+          "description": "Comma-separated Envoy retry trigger conditions (e.g. connect-failure,5xx,reset). Injected as x-envoy-retry-on, which is additive OR onto the route's retry_on. The route must have retry_on configured for retries to be active.",
+          "type": "string"
+        },
+        "per_try_timeout_ms": {
+          "description": "Per-attempt timeout in milliseconds. Injected as x-envoy-upstream-rq-per-try-timeout-ms. When multiple chains declare different values, the maximum is used.",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "TargetLeaf": {
+      "description": "A leaf node naming a concrete provider and optional backend model.",
+      "type": "object",
+      "required": ["provider"],
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "description": "Provider name. Must exist in providers.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Backend model name override. Defaults to the parent model map key when omitted.",
+          "type": "string"
         }
       }
     },

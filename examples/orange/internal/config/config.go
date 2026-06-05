@@ -105,11 +105,44 @@ type Auth struct {
 
 // ModelEntry maps a client-facing model ID to a provider and optional backend name.
 type ModelEntry struct {
-	Provider  string            `yaml:"provider"`
+	Provider  string            `yaml:"provider,omitempty"`
 	Binding   string            `yaml:"binding,omitempty"` // optional named binding within the provider
 	Name      string            `yaml:"name,omitempty"`
 	Metadata  map[string]any    `yaml:"metadata,omitempty"`
 	Endpoints map[string]string `yaml:"endpoints,omitempty"`
+	Routing   *RoutingNode      `yaml:"routing,omitempty"`
+}
+
+// RoutingNode is a single node in a routing tree.
+// Exactly one of Chain or Target must be set.
+type RoutingNode struct {
+	Chain  *ChainNode  `yaml:"chain,omitempty"`
+	Target *TargetLeaf `yaml:"target,omitempty"`
+}
+
+// ChainRetryPolicy configures how Envoy retries for a fallback chain.
+// These values are injected as per-request x-envoy-* headers in match's
+// headers phase so that Envoy's RetryStateImpl picks them up.
+//
+//   - RetryOn maps to x-envoy-retry-on (additive OR onto the route's retry_on).
+//   - PerTryTimeoutMs maps to x-envoy-upstream-rq-per-try-timeout-ms.
+//   - MaxRetries is auto-derived from len(children)-1; do not set manually.
+type ChainRetryPolicy struct {
+	RetryOn         string `yaml:"retry_on,omitempty"`
+	PerTryTimeoutMs int    `yaml:"per_try_timeout_ms,omitempty"`
+}
+
+// ChainNode is a routing node that tries children in order,
+// using retry-count to select the active child.
+type ChainNode struct {
+	Retry    *ChainRetryPolicy `yaml:"retry,omitempty"`
+	Children []RoutingNode     `yaml:"children"`
+}
+
+// TargetLeaf is a leaf node that names a concrete provider and optional model.
+type TargetLeaf struct {
+	Provider string `yaml:"provider"`
+	Name     string `yaml:"name,omitempty"`
 }
 
 // KeyBlob is the materialized per-key policy blob loaded from keys[].
@@ -256,6 +289,19 @@ func (p Provider) AllBindings() []Binding {
 	return []Binding{{Name: "default", Endpoint: p.Endpoint}}
 }
 
+// BindingEndpoint returns the endpoint URL for the named binding.
+// Falls back to Provider.Endpoint when binding is empty, "default", or not found.
+func (p Provider) BindingEndpoint(binding string) string {
+	if binding != "" && binding != "default" {
+		for _, b := range p.Bindings {
+			if b.Name == binding {
+				return b.Endpoint
+			}
+		}
+	}
+	return p.Endpoint
+}
+
 // BindingHost returns the hostname for the named binding.
 // Falls back to the provider's top-level Host() when binding is empty,
 // "default", or not found in Bindings.
@@ -351,6 +397,69 @@ func (c *Config) LookupModelProviderForKey(keyBlob *KeyBlob, model, endpoint str
 	return upstream, c.Providers[upstream], binding, true
 }
 
+// MaxChainRetries returns the maximum number of retries needed to exhaust
+// the deepest fallback chain configured across all models and key blobs.
+// It equals max(len(chain.children)-1) over all chains; 0 means no chains.
+// Used by match's headers phase to inject x-envoy-max-retries so that
+// Envoy's RetryStateImpl allows enough attempts before chain traversal stalls.
+func (c *Config) MaxChainRetries() int {
+	max := 0
+	walkModelChains(c.Models, func(cn *ChainNode) {
+		if n := len(cn.Children) - 1; n > max {
+			max = n
+		}
+	})
+	for _, kb := range c.Keys {
+		walkModelChains(kb.LLM.Models, func(cn *ChainNode) {
+			if n := len(cn.Children) - 1; n > max {
+				max = n
+			}
+		})
+	}
+	return max
+}
+
+// ChainRetryPolicy returns the union of retry_on conditions and the maximum
+// per_try_timeout_ms across all configured chains. The result is used by
+// match's headers phase to inject x-envoy-retry-on and
+// x-envoy-upstream-rq-per-try-timeout-ms before RetryStateImpl is created.
+// Returns ("", 0) when no chain carries a retry config.
+func (c *Config) ChainRetryPolicy() (retryOn string, perTryTimeoutMs int) {
+	seen := map[string]bool{}
+	var conditions []string
+	walk := func(cn *ChainNode) {
+		if cn.Retry == nil {
+			return
+		}
+		if cn.Retry.PerTryTimeoutMs > perTryTimeoutMs {
+			perTryTimeoutMs = cn.Retry.PerTryTimeoutMs
+		}
+		for _, cond := range strings.Split(cn.Retry.RetryOn, ",") {
+			cond = strings.TrimSpace(cond)
+			if cond != "" && !seen[cond] {
+				seen[cond] = true
+				conditions = append(conditions, cond)
+			}
+		}
+	}
+	walkModelChains(c.Models, walk)
+	for _, kb := range c.Keys {
+		walkModelChains(kb.LLM.Models, walk)
+	}
+	sort.Strings(conditions)
+	retryOn = strings.Join(conditions, ",")
+	return
+}
+
+// walkModelChains calls fn for every ChainNode in models.
+func walkModelChains(models map[string]ModelEntry, fn func(*ChainNode)) {
+	for _, e := range models {
+		if e.Routing != nil && e.Routing.Chain != nil {
+			fn(e.Routing.Chain)
+		}
+	}
+}
+
 // ProviderSecret returns the resolved credential for the named provider.
 // Empty if the provider is unknown or carries no auth secret.
 func (c *Config) ProviderSecret(name string) string {
@@ -440,26 +549,8 @@ func Load(data []byte) (*Config, error) {
 	// Semantic: every models[].provider must exist in providers; binding (when
 	// set) must name a binding of that provider.
 	for id, entry := range cfg.Models {
-		p, ok := cfg.Providers[entry.Provider]
-		if !ok {
-			return nil, fmt.Errorf("orange/config: models[%q].provider %q: not in providers", id, entry.Provider)
-		}
-		if entry.Binding != "" {
-			validBinding := false
-			for _, b := range p.AllBindings() {
-				if b.Name == entry.Binding {
-					validBinding = true
-					break
-				}
-			}
-			if !validBinding {
-				return nil, fmt.Errorf("orange/config: models[%q].binding %q: not a binding of provider %q", id, entry.Binding, entry.Provider)
-			}
-		}
-		for epKey, epProvider := range entry.Endpoints {
-			if _, ok := cfg.Providers[epProvider]; !ok {
-				return nil, fmt.Errorf("orange/config: models[%q].endpoints[%q] provider %q: not in providers", id, epKey, epProvider)
-			}
+		if err := validateModelEntry(cfg.Providers, "models["+id+"]", entry); err != nil {
+			return nil, err
 		}
 	}
 	if cfg.MCP != nil {
@@ -508,26 +599,8 @@ func Load(data []byte) (*Config, error) {
 			return nil, fmt.Errorf("orange/config: keys[%q]: id must start with %q (workspace=%q user=%q)", keyID, expectedPrefix, kb.Workspace, kb.User)
 		}
 		for modelID, entry := range kb.LLM.Models {
-			p, ok := cfg.Providers[entry.Provider]
-			if !ok {
-				return nil, fmt.Errorf("orange/config: keys[%q].llm.models[%q].provider %q: not in providers", keyID, modelID, entry.Provider)
-			}
-			if entry.Binding != "" {
-				validBinding := false
-				for _, b := range p.AllBindings() {
-					if b.Name == entry.Binding {
-						validBinding = true
-						break
-					}
-				}
-				if !validBinding {
-					return nil, fmt.Errorf("orange/config: keys[%q].llm.models[%q].binding %q: not a binding of provider %q", keyID, modelID, entry.Binding, entry.Provider)
-				}
-			}
-			for epKey, epProvider := range entry.Endpoints {
-				if _, ok := cfg.Providers[epProvider]; !ok {
-					return nil, fmt.Errorf("orange/config: keys[%q].llm.models[%q].endpoints[%q] provider %q: not in providers", keyID, modelID, epKey, epProvider)
-				}
+			if err := validateModelEntry(cfg.Providers, "keys["+keyID+"].llm.models["+modelID+"]", entry); err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -536,6 +609,79 @@ func Load(data []byte) (*Config, error) {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// validateModelEntry validates a single ModelEntry for semantic correctness.
+// path is used in error messages (e.g. "models[\"claude-3\"]" or "keys[...].llm.models[...]").
+func validateModelEntry(providers map[string]Provider, path string, entry ModelEntry) error {
+	hasProvider := entry.Provider != ""
+	hasRouting := entry.Routing != nil
+	if hasProvider && hasRouting {
+		return fmt.Errorf("orange/config: %s: cannot set both provider and routing", path)
+	}
+	if !hasProvider && !hasRouting {
+		return fmt.Errorf("orange/config: %s: must set either provider or routing", path)
+	}
+	if hasRouting {
+		return validateRoutingNode(providers, path+".routing", *entry.Routing)
+	}
+	// Sugar path: validate provider + binding.
+	p, ok := providers[entry.Provider]
+	if !ok {
+		return fmt.Errorf("orange/config: %s.provider %q: not in providers", path, entry.Provider)
+	}
+	if entry.Binding != "" {
+		validBinding := false
+		for _, b := range p.AllBindings() {
+			if b.Name == entry.Binding {
+				validBinding = true
+				break
+			}
+		}
+		if !validBinding {
+			return fmt.Errorf("orange/config: %s.binding %q: not a binding of provider %q", path, entry.Binding, entry.Provider)
+		}
+	}
+	for epKey, epProvider := range entry.Endpoints {
+		if _, ok := providers[epProvider]; !ok {
+			return fmt.Errorf("orange/config: %s.endpoints[%q] provider %q: not in providers", path, epKey, epProvider)
+		}
+	}
+	return nil
+}
+
+// validateRoutingNode recursively validates a routing tree node.
+func validateRoutingNode(providers map[string]Provider, path string, node RoutingNode) error {
+	hasChain := node.Chain != nil
+	hasTarget := node.Target != nil
+	if hasChain && hasTarget {
+		return fmt.Errorf("orange/config: %s: cannot set both chain and target", path)
+	}
+	if !hasChain && !hasTarget {
+		return fmt.Errorf("orange/config: %s: must set either chain or target", path)
+	}
+	if hasChain {
+		if len(node.Chain.Children) < 1 {
+			return fmt.Errorf("orange/config: %s.chain: must have at least 1 child", path)
+		}
+		if len(node.Chain.Children) > 8 {
+			return fmt.Errorf("orange/config: %s.chain: must have at most 8 children", path)
+		}
+		for i, child := range node.Chain.Children {
+			if err := validateRoutingNode(providers, fmt.Sprintf("%s.chain.children[%d]", path, i), child); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	// Target leaf.
+	if node.Target.Provider == "" {
+		return fmt.Errorf("orange/config: %s.target.provider: must not be empty", path)
+	}
+	if _, ok := providers[node.Target.Provider]; !ok {
+		return fmt.Errorf("orange/config: %s.target.provider %q: not in providers", path, node.Target.Provider)
+	}
+	return nil
 }
 
 // Decoder returns a [up.ConfigDecoder] that validates and decodes orange config YAML.

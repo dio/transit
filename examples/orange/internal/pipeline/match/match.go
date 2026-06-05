@@ -16,7 +16,9 @@
 package match
 
 import (
+	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/tidwall/gjson"
@@ -25,6 +27,15 @@ import (
 	"github.com/dio/transit/examples/orange/internal/send"
 	"github.com/dio/transit/up"
 )
+
+// Target is one hop in a fallback chain.
+// ProviderBackend is the config-level backend name; BackendModel is the
+// model name to send to that backend; ProviderKind is the API wire-format.
+type Target struct {
+	ProviderBackend string `json:"pb"`
+	BackendModel    string `json:"bm"`
+	ProviderKind    string `json:"pk"`
+}
 
 // Decision is the resolved value match publishes per request.
 //
@@ -64,6 +75,7 @@ type Decision struct {
 	BackendModel string // resolved backend model name (from models[].name, or == Model if unset)
 	Endpoint     string // endpoint discriminator, e.g. EndpointChatCompletions
 	Binding      string // named binding within the provider; empty means "default"
+	Fallbacks    []Target
 	Err          string
 }
 
@@ -83,6 +95,11 @@ func (d Decision) Apply(w *up.Writer) {
 	w.SetMetadata(MetadataNamespace, MetadataKeyBackendModel, d.BackendModel)
 	w.SetMetadata(MetadataNamespace, MetadataKeyEndpoint, d.Endpoint)
 	w.SetMetadata(MetadataNamespace, MetadataKeyBinding, d.Binding)
+	if len(d.Fallbacks) > 0 {
+		if b, err := json.Marshal(d.Fallbacks); err == nil {
+			w.SetFilterState(StateFallbacks, string(b))
+		}
+	}
 }
 
 // DecisionKey is the typed stream-object key match uses to store the
@@ -105,11 +122,18 @@ const (
 	FilterName = "orange-match"
 
 	// Filter state — only the cluster LB can read this.
-	StateUpstream = "orange.provider_backend"
-	StateProvider = "orange.provider_kind"
-	StateModel    = "orange.model"
-	StateEndpoint = "orange.endpoint"
-	StateBinding  = "orange.provider_binding"
+	StateUpstream  = "orange.provider_backend"
+	StateProvider  = "orange.provider_kind"
+	StateModel     = "orange.model"
+	StateEndpoint  = "orange.endpoint"
+	StateBinding   = "orange.provider_binding"
+	StateFallbacks = "orange.fallbacks"
+	// StateAttempt is written by the adapt upstream filter after each HTTP
+	// attempt (value is the 1-based attempt number as a decimal string). Pick's
+	// ChooseHost reads this to select the correct fallback chain target on retries.
+	// GetHostSelectionRetryCount() cannot be used because it counts within-attempt
+	// host-selection retries and resets to 0 at the start of each new HTTP attempt.
+	StateAttempt = "orange.adapt.attempt"
 
 	// Dynamic metadata — readable by upstream HTTP filters (adapt, meter).
 	//
@@ -214,6 +238,28 @@ func tagRequestForEndpoint(endpoint string) func(*up.Writer, *up.Request) {
 		EndpointKey.Set(w, endpoint)
 
 		cfg := config.Get()
+		// Inject per-request Envoy retry headers derived from the chain config.
+		// This must happen in the headers phase so that RetryStateImpl (created
+		// in the router's decodeHeaders, which runs after this filter returns
+		// Continue) picks up the values. The body phase is too late.
+		//
+		// x-envoy-max-retries: set to the deepest chain depth minus one so
+		// Envoy allows exactly as many attempts as the chain has providers.
+		// x-envoy-retry-on: union of all chains' conditions (additive OR onto
+		// the route's retry_on; the route must have retry_on for retries to fire).
+		// x-envoy-upstream-rq-per-try-timeout-ms: maximum per_try_timeout_ms
+		// declared across all chains (conservative ceiling).
+		if maxRetries := cfg.MaxChainRetries(); maxRetries > 0 {
+			w.SetRequestHeader("x-envoy-max-retries", strconv.Itoa(maxRetries))
+		}
+		if retryOn, perTryMs := cfg.ChainRetryPolicy(); retryOn != "" || perTryMs > 0 {
+			if retryOn != "" {
+				w.SetRequestHeader("x-envoy-retry-on", retryOn)
+			}
+			if perTryMs > 0 {
+				w.SetRequestHeader("x-envoy-upstream-rq-per-try-timeout-ms", strconv.Itoa(perTryMs))
+			}
+		}
 		if cfg.HasKeys() {
 			kb, keyID, ok := resolveKey(r.Header("authorization"), cfg)
 			if !ok {
@@ -267,16 +313,75 @@ func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 	}
 
 	cfg := config.Get()
-	var upstream, backendModel, binding string
+
+	// Resolve the model entry: prefer per-key blob, fall back to global models.
+	var entry *config.ModelEntry
 	if kb, ok := KeyBlobKey.Get(w); ok {
-		var found bool
-		upstream, backendModel, binding, found = cfg.LookupModelForKey(kb, model, endpoint)
-		if !found {
-			upstream = ""
+		if e, found := kb.LLM.Models[model]; found {
+			entry = &e
+		}
+	}
+	if entry == nil {
+		if e, ok := cfg.Models[model]; ok {
+			entry = &e
+		}
+	}
+	if entry == nil {
+		w.Slog().Warn("Received body unknown model", "model", model)
+		p.Resolve(Decision{Endpoint: endpoint, Err: ErrUnknownModel})
+		send.Errorf(w, http.StatusNotFound, send.InvalidRequestError, ErrUnknownModel, "no upstream configured for model %s", model)
+		return
+	}
+
+	var upstream, backendModel, binding string
+	var fallbacks []Target
+
+	if entry.Routing != nil && entry.Routing.Chain != nil {
+		// Chain routing: first child is the primary; the rest become fallbacks.
+		children := entry.Routing.Chain.Children
+		if len(children) > 0 && children[0].Target != nil {
+			t := children[0].Target
+			upstream = t.Provider
+			backendModel = t.Name
+			if backendModel == "" {
+				backendModel = model
+			}
+		}
+		for _, child := range children[1:] {
+			if child.Target == nil {
+				continue
+			}
+			t := child.Target
+			bm := t.Name
+			if bm == "" {
+				bm = model
+			}
+			pk := ""
+			if prov, ok := cfg.Providers[t.Provider]; ok {
+				pk = prov.Kind
+			}
+			fallbacks = append(fallbacks, Target{
+				ProviderBackend: t.Provider,
+				BackendModel:    bm,
+				ProviderKind:    pk,
+			})
 		}
 	} else {
-		upstream, backendModel, binding = cfg.LookupModel(model, endpoint)
+		// Sugar path: direct provider reference.
+		upstream = entry.Provider
+		backendModel = entry.Name
+		if backendModel == "" {
+			backendModel = model
+		}
+		binding = entry.Binding
+		// Apply endpoint discriminator override.
+		if endpoint != "" {
+			if override, has := entry.Endpoints[endpoint]; has {
+				upstream = override
+			}
+		}
 	}
+
 	if upstream == "" {
 		w.Slog().Warn("Received body unknown model", "model", model)
 		p.Resolve(Decision{Endpoint: endpoint, Err: ErrUnknownModel})
@@ -289,7 +394,7 @@ func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 	// hostname. BindingHost falls back to Provider.Host() when binding is empty.
 	w.SetRequestHeader(up.HeaderAuthority, provider.BindingHost(binding))
 
-	d := Decision{ProviderBackend: upstream, ProviderKind: provider.Kind, Model: model, BackendModel: backendModel, Endpoint: endpoint, Binding: binding}
+	d := Decision{ProviderBackend: upstream, ProviderKind: provider.Kind, Model: model, BackendModel: backendModel, Endpoint: endpoint, Binding: binding, Fallbacks: fallbacks}
 	d.Apply(w)
 
 	if endpoint == EndpointImages {
