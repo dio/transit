@@ -45,6 +45,8 @@ import (
 	"github.com/dio/transit/up/compress"
 )
 
+const stateAttempt = match.StateAttempt
+
 const (
 	FilterName = "orange-adapt"
 
@@ -82,22 +84,72 @@ func handler(w *up.Writer, r *up.Request) {
 	if upstream == "" {
 		return
 	}
-	cfg := config.Get()
-	prov, ok := cfg.Providers[upstream]
-	if !ok {
-		return
+
+	// Determine attempt number. Filter state persists across retries; we write
+	// attempt+1 back each time handler is called so the next retry sees it.
+	attempt := 0
+	if v, ok := w.GetFilterState(stateAttempt); ok && v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			attempt = n
+		}
 	}
-	w.Slog().Info("Adapting request", "provider", upstream, "authority", r.Host, "kind", prov.Kind, "accept-encoding", r.Header("accept-encoding"))
+	w.SetFilterState(stateAttempt, strconv.Itoa(attempt+1))
 
 	backendModel := ""
 	if bm, ok := w.GetMetadataString(up.MetadataSourceDynamic, match.MetadataNamespace, match.MetadataKeyBackendModel); ok {
 		backendModel = bm.String()
 	}
 
-	endpoint := ""
-	if ep, ok := w.GetMetadataString(up.MetadataSourceDynamic, match.MetadataNamespace, match.MetadataKeyEndpoint); ok {
-		endpoint = ep.String()
+	// On retry, advance to the next chain target: update upstream + backendModel
+	// from the fallbacks list written by match.Apply, and update the access-log
+	// metadata so provider_backend reflects the provider that actually handled the request.
+	// Index is clamped to the last fallback so extra Envoy retries beyond the chain
+	// length keep routing to the last provider instead of silently reverting to primary.
+	if attempt > 0 {
+		if fbJSON, ok := w.GetFilterState(match.StateFallbacks); ok && fbJSON != "" {
+			var fallbacks []match.Target
+			if err := json.Unmarshal([]byte(fbJSON), &fallbacks); err == nil && len(fallbacks) > 0 {
+				idx := attempt - 1
+				if idx >= len(fallbacks) {
+					idx = len(fallbacks) - 1
+				}
+				t := fallbacks[idx]
+				upstream = t.ProviderBackend
+				backendModel = t.BackendModel
+				w.SetMetadata(match.MetadataNamespace, match.MetadataKeyUpstream, upstream)
+				if backendModel != "" {
+					w.SetMetadata(match.MetadataNamespace, match.MetadataKeyBackendModel, backendModel)
+				}
+			}
+		}
 	}
+
+	// Read the binding set by match for the primary. Fallback targets always use
+	// the "default" binding (chain targets name only a provider + model).
+	binding := ""
+	if attempt == 0 {
+		binding, _ = w.GetFilterState(match.StateBinding)
+	}
+
+	cfg := config.Get()
+	prov, ok := cfg.Providers[upstream]
+	if !ok {
+		return
+	}
+
+	// Rewrite :authority to the current attempt's provider host. Use the
+	// binding-aware host so providers with named bindings (no top-level
+	// endpoint) get the correct Host header. Falls back to prov.Host() when
+	// binding is empty or "default".
+	host := prov.BindingHost(binding)
+	w.SetRequestHeader(up.HeaderAuthority, host)
+
+	w.Slog().Info("Adapting request", "provider", upstream, "attempt", attempt, "authority", host, "kind", prov.Kind, "accept-encoding", r.Header("accept-encoding"))
+
+	// Use the resolved provider's own endpoint — MetadataKeyEndpoint is set once
+	// by match for the primary and is stale on fallback retries. Use the
+	// binding's endpoint when a named binding is active.
+	endpoint := prov.BindingEndpoint(binding)
 
 	schema := prov.EffectiveBackendSchema()
 	t, err := translator.NewForRoute(schema, endpoint, translatorCfg(prov, backendModel))
@@ -124,7 +176,7 @@ func handler(w *up.Writer, r *up.Request) {
 	sc := &streamContext{
 		translator:      t,
 		auth:            authHandler,
-		upstreamHost:    prov.Host(),
+		upstreamHost:    host,
 		rawQuery:        rawQuery,
 		passthroughMode: passthroughMode,
 	}

@@ -19,6 +19,7 @@ package pick
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math/rand"
@@ -26,6 +27,8 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -212,20 +215,36 @@ func (c *cluster) resolve(ctx context.Context, endpoint string) ([]string, time.
 	return resolveUpstream(ctx, endpoint)
 }
 
-// lookupHost maps a match.Decision to a HostPtr for the selected
-// (provider, binding) pair, distributing requests across all registered IPs
-// via round-robin. Empty binding is treated as "default".
-// It is the only orange-specific logic in the cluster LB hot path; all
-// completion lifecycle concerns are owned by up.AsyncHostSelector.
-func (c *cluster) lookupHost(d match.Decision) up.HostResult {
+// lookupHostN maps a match.Decision and an attempt number to a HostPtr.
+// attempt == 0 selects the primary (d.ProviderBackend / d.Binding).
+// attempt > 0 selects d.Fallbacks[attempt-1], clamped to the last entry so
+// that extra Envoy retries beyond the chain length keep hitting the last
+// fallback rather than returning nil and causing Envoy to reuse a stale host.
+// For chain targets the binding is always "default".
+func (c *cluster) lookupHostN(d match.Decision, attempt uint32) up.HostResult {
 	if d.Err != "" {
 		return up.HostResult{ErrDetail: d.Err}
 	}
-	binding := d.Binding
+	var providerBackend, binding string
+	if attempt == 0 {
+		providerBackend = d.ProviderBackend
+		binding = d.Binding
+	} else {
+		if len(d.Fallbacks) == 0 {
+			return up.HostResult{ErrDetail: "orange.fallback_exhausted"}
+		}
+		idx := int(attempt) - 1
+		if idx >= len(d.Fallbacks) {
+			idx = len(d.Fallbacks) - 1
+		}
+		fb := d.Fallbacks[idx]
+		providerBackend = fb.ProviderBackend
+		binding = "default"
+	}
 	if binding == "" {
 		binding = "default"
 	}
-	key := provBindingKey{d.ProviderBackend, binding}
+	key := provBindingKey{providerBackend, binding}
 	if m := c.hosts.Load(); m != nil {
 		if r := (*m)[key]; r != nil && len(r.ptrs) > 0 {
 			idx := r.rr.Add(1) % uint64(len(r.ptrs))
@@ -233,6 +252,12 @@ func (c *cluster) lookupHost(d match.Decision) up.HostResult {
 		}
 	}
 	return up.HostResult{ErrDetail: "orange.unknown_upstream"}
+}
+
+// lookupHost is a convenience wrapper for attempt 0 (primary host).
+// Used by the AsyncHostSelector callback which always starts at attempt 0.
+func (c *cluster) lookupHost(d match.Decision) up.HostResult {
+	return c.lookupHostN(d, 0)
 }
 
 // dnsResult holds the outcome of one DNS resolution attempt, plus the
@@ -416,9 +441,9 @@ func (c *cluster) NewClusterLB() up.ClusterLB {
 		},
 	)
 	return &lb{
-		sel:    sel,
-		lookup: c.lookupHost,
-		log:    log,
+		sel:        sel,
+		lookupHostN: c.lookupHostN,
+		log:        log,
 	}
 }
 
@@ -439,19 +464,42 @@ func (c *cluster) Close() {} // required by up.Cluster; Shutdown handles teardow
 
 type lb struct {
 	up.EmptyClusterLB
-	sel    *up.AsyncHostSelector[match.Decision]
-	lookup func(match.Decision) up.HostResult
-	log    *slog.Logger
+	sel         *up.AsyncHostSelector[match.Decision]
+	lookupHostN func(match.Decision, uint32) up.HostResult
+	log         *slog.Logger
 }
 
 func (l *lb) ChooseHost(h up.ClusterLBHandle, ctx up.ClusterLBContext) (up.HostPtr, *up.ClusterLBCompletion) {
 	if ctx != nil {
 		if provider, ok := ctx.GetFilterState(match.StateUpstream); ok && provider != "" {
+			// Read the HTTP-attempt counter written by adapt (1-based; absent on
+			// the first attempt). GetHostSelectionRetryCount() cannot be used here
+			// because it counts within-attempt host-selection retries and resets to
+			// 0 at the start of every new HTTP retry — it does not reflect which
+			// HTTP attempt number we are on.
+			var attempt uint32
+			if v, ok := ctx.GetFilterState(match.StateAttempt); ok && v != "" {
+				if n, err := strconv.Atoi(v); err == nil && n > 0 {
+					attempt = uint32(n)
+				}
+			}
 			binding, _ := ctx.GetFilterState(match.StateBinding)
-			res := l.lookup(match.Decision{ProviderBackend: provider, Binding: binding})
+
+			// Build a Decision with fallbacks decoded from filter state on retries.
+			d := match.Decision{ProviderBackend: provider, Binding: binding}
+			if attempt > 0 {
+				if fbJSON, ok := ctx.GetFilterState(match.StateFallbacks); ok && fbJSON != "" {
+					var fallbacks []match.Target
+					if err := json.Unmarshal([]byte(fbJSON), &fallbacks); err == nil {
+						d.Fallbacks = fallbacks
+					}
+				}
+			}
+
+			res := l.lookupHostN(d, attempt)
 			if res.ErrDetail != "" {
 				if l.log != nil {
-					l.log.Warn("host selection failed", "err", res.ErrDetail, "provider", provider, "binding", binding)
+					l.log.Warn("host selection failed", "err", res.ErrDetail, "provider", provider, "binding", binding, "attempt", attempt)
 				}
 				completion := ctx.NewCompletion()
 				if completion != nil {
@@ -461,7 +509,7 @@ func (l *lb) ChooseHost(h up.ClusterLBHandle, ctx up.ClusterLBContext) (up.HostP
 				return nil, nil
 			}
 			if l.log != nil {
-				l.log.Debug("host selected", "host", res.Host, "provider", provider, "binding", binding)
+				l.log.Debug("host selected", "host", res.Host, "provider", provider, "binding", binding, "attempt", attempt)
 			}
 			return res.Host, nil
 		}
@@ -528,6 +576,42 @@ var fallbackDNSConfig = &dns.ClientConfig{
 	Port:    "53",
 }
 
+// dnsEnvVar is the environment variable that overrides the resolver used by
+// lookupWithTTL. Set to a comma-separated list of IP addresses (optionally
+// with :port) to bypass /etc/resolv.conf — useful when the system resolver
+// (e.g. a VPN's split-DNS) returns different IPs than the public authoritative
+// servers for LLM provider endpoints. Example:
+//
+//	ORANGE_DNS_SERVERS=8.8.8.8,1.1.1.1
+const dnsEnvVar = "ORANGE_DNS_SERVERS"
+
+// staticDNSConfig is parsed once at startup from ORANGE_DNS_SERVERS. Nil means
+// the env var was absent or contained no valid IPs; lookupWithTTL then reads
+// /etc/resolv.conf fresh on each call so VPN connect/disconnect is picked up.
+var staticDNSConfig = func() *dns.ClientConfig {
+	v := os.Getenv(dnsEnvVar)
+	if v == "" {
+		return nil
+	}
+	var servers []string
+	for _, s := range strings.Split(v, ",") {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		// Accept plain IPs; leave host:port as-is.
+		if net.ParseIP(s) != nil {
+			servers = append(servers, s)
+		} else if h, _, err := net.SplitHostPort(s); err == nil && net.ParseIP(h) != nil {
+			servers = append(servers, s)
+		}
+	}
+	if len(servers) == 0 {
+		return nil
+	}
+	return &dns.ClientConfig{Servers: servers, Port: "53"}
+}()
+
 // lookupWithTTL queries A records for host using the system resolver config
 // and returns the resolved addresses together with the minimum TTL from the
 // answer section. The TTL is used to schedule the next re-resolve.
@@ -540,10 +624,14 @@ func lookupWithTTL(ctx context.Context, host string) ([]net.IPAddr, time.Duratio
 	if ip := net.ParseIP(host); ip != nil {
 		return []net.IPAddr{{IP: ip}}, 24 * time.Hour, nil
 	}
-	conf, err := dns.ClientConfigFromFile("/etc/resolv.conf")
-	if err != nil {
-		slog.Warn("orange/pick: /etc/resolv.conf unavailable, falling back to public resolvers", "err", err)
-		conf = fallbackDNSConfig
+	conf := staticDNSConfig
+	if conf == nil {
+		var err error
+		conf, err = dns.ClientConfigFromFile("/etc/resolv.conf")
+		if err != nil {
+			slog.Warn("orange/pick: /etc/resolv.conf unavailable, falling back to public resolvers", "err", err)
+			conf = fallbackDNSConfig
+		}
 	}
 
 	c := &dns.Client{}

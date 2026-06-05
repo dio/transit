@@ -344,6 +344,16 @@ func (w *Writer) SetFilterState(key, value string) {
 	w.f.handle.SetFilterState(key, []byte(value))
 }
 
+// GetFilterState reads a string filter state value previously written by SetFilterState.
+// Returns the empty string and false if the key is absent.
+func (w *Writer) GetFilterState(key string) (string, bool) {
+	buf, ok := w.f.handle.GetFilterState(key)
+	if !ok {
+		return "", false
+	}
+	return buf.ToString(), true
+}
+
 // SetStreamObject stores v under key in the per-stream typed-value bag
 // (Primitive A). Must be called on the worker thread — same constraint as
 // SetFilterState.

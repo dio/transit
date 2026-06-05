@@ -286,9 +286,9 @@ func TestLBChooseHost_filterStateProvider(t *testing.T) {
 	c.hosts.Store(&m)
 
 	l := &lb{
-		sel:    nil,
-		lookup: c.lookupHost,
-		log:    slog.Default(),
+		sel:         nil,
+		lookupHostN: c.lookupHostN,
+		log:         slog.Default(),
 	}
 	handle := testutil.NewFilterHandle()
 	w := up.NewWriter(handle)
