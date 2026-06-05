@@ -29,7 +29,7 @@ else
 ORANGE_TRUSTED_CA ?= $(firstword $(wildcard /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/cert.pem))
 endif
 
-.PHONY: build build-linux-amd64 build-linux-arm64 test e2e run demo demo-fallback clean download-envoy
+.PHONY: build build-linux-amd64 build-linux-arm64 test e2e run demo demo-fallback demo-split clean download-envoy
 
 build: $(ZIG_BIN)
 	cd $(ROOT)/examples && $(ZIG_BUILD_ENV) \
@@ -212,6 +212,38 @@ demo-fallback: build $(ENVOY_BIN)
 	 ENVOY_DYNAMIC_MODULES_SEARCH_PATH=$(CURDIR) \
 	 GODEBUG=cgocheck=0 \
 	 $(ENVOY_BIN) -c $$FALLBACK_ENVOY_YAML --log-level info
+
+demo-split: build $(ENVOY_BIN)
+	@if [ -z "$${GCP_PROJECT}" ]; then \
+	  echo "GCP_PROJECT is unset — set it in examples/orange/.env or on the command line"; exit 1; fi
+	@if [ -z "$${GCP_SERVICE_ACCOUNT_JSON}" ]; then \
+	  echo "GCP_SERVICE_ACCOUNT_JSON is unset — set it in examples/orange/.env or on the command line"; exit 1; fi
+	@echo "=== orange split demo ==="
+	@echo ""
+	@echo "  Split   : claude-haiku-4-5 across primary / primary2 / primary3"
+	@echo "            all pointing to Vertex AI us-east5 — every arm succeeds"
+	@echo "  Weights : 34 / 33 / 33"
+	@echo ""
+	@echo "  Run from another shell (10-20 times, watch provider_backend distribution):"
+	@echo "  for i in \$$(seq 1 20); do \\"
+	@echo "    curl -s localhost:8080/v1/messages \\"
+	@echo "      -H 'content-type: application/json' \\"
+	@echo "      -H 'authorization: Bearer demo/maya/sk-split' \\"
+	@echo "      -d '{\"model\":\"claude-haiku-4-5\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}' \\"
+	@echo "      > /dev/null; done"
+	@echo ""
+	@echo "  Then pipe the access log through jq to see the distribution:"
+	@echo "  # (in the terminal running envoy) | jq -r '.provider_backend'"
+	@echo ""
+	@SPLIT_ENVOY_YAML=$$(mktemp /tmp/orange-split-envoy.XXXXXX.yaml) ; \
+	 trap "rm -f $$SPLIT_ENVOY_YAML" EXIT INT TERM ; \
+	 ORANGE_TRUSTED_CA=$(ORANGE_TRUSTED_CA) envsubst '$$ORANGE_TRUSTED_CA' \
+	   < $(CURDIR)/demos/split/envoy.tmpl.yaml > $$SPLIT_ENVOY_YAML ; \
+	 ORANGE_CONFIG=$(CURDIR)/demos/split/orange.yaml \
+	 ORANGE_DNS_SERVERS=8.8.8.8,1.1.1.1 \
+	 ENVOY_DYNAMIC_MODULES_SEARCH_PATH=$(CURDIR) \
+	 GODEBUG=cgocheck=0 \
+	 $(ENVOY_BIN) -c $$SPLIT_ENVOY_YAML --log-level info
 
 clean:
 	rm -f $(OUTPUT) $(OUTPUT:.so=.h) \
