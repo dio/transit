@@ -1,25 +1,17 @@
 package match
 
 import (
-	"crypto/rand"
-	"math/big"
+	"math/rand/v2"
 
 	"github.com/dio/transit/examples/orange/internal/config"
 )
 
-// sampleSplit picks a child index from s.Children using crypto/rand
-// and the configured weight distribution. Panics if weights do not
-// sum to a positive integer (caller must guarantee valid config).
+// sampleSplit picks a child index from s.Children using the global
+// math/rand/v2 source and the configured weight distribution. Panics
+// if weights do not sum to a positive integer (caller must guarantee
+// valid config).
 func sampleSplit(s *config.SplitNode) int {
-	return sampleSplitFrom(s.Children, cryptoIntn)
-}
-
-func cryptoIntn(n int) int {
-	v, err := rand.Int(rand.Reader, big.NewInt(int64(n)))
-	if err != nil {
-		panic("crypto/rand failure: " + err.Error())
-	}
-	return int(v.Int64())
+	return sampleSplitFrom(s.Children, rand.IntN)
 }
 
 // sampleSplitFrom is the testable core. randN(n) must return a

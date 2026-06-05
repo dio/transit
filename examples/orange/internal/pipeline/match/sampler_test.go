@@ -10,6 +10,18 @@ import (
 	"github.com/dio/transit/examples/orange/internal/config"
 )
 
+// TestSampleSplit_returnsValidIndex exercises sampleSplit itself (the
+// production entry point) to verify it returns an index within bounds
+// across many draws.
+func TestSampleSplit_returnsValidIndex(t *testing.T) {
+	s := &config.SplitNode{Children: makeChildren(34, 33, 33)}
+	for range 1000 {
+		idx := sampleSplit(s)
+		require.GreaterOrEqual(t, idx, 0)
+		require.Less(t, idx, len(s.Children))
+	}
+}
+
 // chiSquared computes the chi-squared statistic for the observed counts
 // against the expected proportions given by weights/100.
 func chiSquared(observed []int, weights []int, n int) float64 {
