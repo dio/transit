@@ -1064,6 +1064,240 @@ keys:
 	assert.Equal(t, 2, cfg.MaxChainRetries())
 }
 
+// --- routing composition: invalid cases --------------------------------------
+
+// TestRoutingNode_invalid_bothChainAndSplit verifies that setting both chain and
+// split on the same RoutingNode is rejected by the semantic validator.
+func TestRoutingNode_invalid_bothChainAndSplit(t *testing.T) {
+	y := splitBase + `
+keys:
+  test/user/sk:
+    workspace: test
+    user: user
+    llm:
+      models:
+        my-model:
+          routing:
+            chain:
+              children:
+                - target: { provider: p1 }
+                - target: { provider: p2 }
+            split:
+              children:
+                - weight: 50
+                  target: { provider: p1 }
+                - weight: 50
+                  target: { provider: p2 }
+`
+	_, err := loadSplitYAML(t, y)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must set exactly one of chain, target, or split")
+}
+
+// TestRoutingNode_invalid_bothChainAndTarget verifies the same mutual-exclusion
+// check for chain + target together.
+func TestRoutingNode_invalid_bothChainAndTarget(t *testing.T) {
+	y := splitBase + `
+keys:
+  test/user/sk:
+    workspace: test
+    user: user
+    llm:
+      models:
+        my-model:
+          routing:
+            chain:
+              children:
+                - target: { provider: p1 }
+            target: { provider: p2 }
+`
+	_, err := loadSplitYAML(t, y)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must set exactly one of chain, target, or split")
+}
+
+// TestRoutingNode_invalid_bothSplitAndTarget verifies split + target together.
+func TestRoutingNode_invalid_bothSplitAndTarget(t *testing.T) {
+	y := splitBase + `
+keys:
+  test/user/sk:
+    workspace: test
+    user: user
+    llm:
+      models:
+        my-model:
+          routing:
+            split:
+              children:
+                - weight: 50
+                  target: { provider: p1 }
+                - weight: 50
+                  target: { provider: p2 }
+            target: { provider: p3 }
+`
+	_, err := loadSplitYAML(t, y)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must set exactly one of chain, target, or split")
+}
+
+// TestRoutingNode_invalid_empty verifies that a routing node with no type set
+// is rejected.
+func TestRoutingNode_invalid_empty(t *testing.T) {
+	y := splitBase + `
+keys:
+  test/user/sk:
+    workspace: test
+    user: user
+    llm:
+      models:
+        my-model:
+          routing: {}
+`
+	_, err := loadSplitYAML(t, y)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must set exactly one of chain, target, or split")
+}
+
+// TestRoutingNode_invalid_splitInsideSplit verifies that a split node nested
+// inside another split's arm is rejected by the insideSplit guard.
+func TestRoutingNode_invalid_splitInsideSplit(t *testing.T) {
+	y := splitBase + `
+keys:
+  test/user/sk:
+    workspace: test
+    user: user
+    llm:
+      models:
+        my-model:
+          routing:
+            split:
+              children:
+                - weight: 50
+                  target: { provider: p1 }
+                - weight: 50
+                  split:
+                    children:
+                      - weight: 50
+                        target: { provider: p2 }
+                      - weight: 50
+                        target: { provider: p3 }
+`
+	_, err := loadSplitYAML(t, y)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nested split")
+}
+
+// TestChain_chainOfChain_configValid documents that a chain whose first child
+// is itself a chain passes config.Load (the validator does not block nested
+// chains). The runtime rejects it in resolveRouting with
+// "chain.children[0] is itself a chain (chain-of-chain not supported)".
+func TestChain_chainOfChain_configValid(t *testing.T) {
+	y := splitBase + `
+keys:
+  test/user/sk:
+    workspace: test
+    user: user
+    llm:
+      models:
+        my-model:
+          routing:
+            chain:
+              children:
+                - chain:
+                    children:
+                      - target: { provider: p1 }
+                      - target: { provider: p2 }
+                - target: { provider: p3 }
+`
+	cfg, err := loadSplitYAML(t, y)
+	require.NoError(t, err)
+	// walkRoutingNode visits both the outer and inner chain.
+	// Each has 2 children → len-1 = 1; max across both = 1.
+	assert.Equal(t, 1, cfg.MaxChainRetries())
+}
+
+// --- routing composition: valid cases (composition positive) -----------------
+
+// TestChain_withSplitChild_valid verifies that a chain whose first child is a
+// split and whose second child is a plain target passes validation and computes
+// the correct MaxChainRetries (the outer chain contributes, the split does not).
+func TestChain_withSplitChild_valid(t *testing.T) {
+	// Already covered by TestSplit_splitInsideChain_valid but this variant
+	// uses a named key to match the documented kitchen-sink pattern.
+	y := splitBase + `
+keys:
+  test/user/sk-chain-split:
+    workspace: test
+    user: user
+    llm:
+      models:
+        my-model:
+          routing:
+            chain:
+              retry:
+                retry_on: "connect-failure,reset,5xx"
+                per_try_timeout_ms: 5000
+              children:
+                - split:
+                    children:
+                      - weight: 50
+                        target: { provider: p1 }
+                      - weight: 50
+                        target: { provider: p2 }
+                - target: { provider: p3 }
+`
+	cfg, err := loadSplitYAML(t, y)
+	require.NoError(t, err)
+	// Outer chain has 2 children → MaxChainRetries = 1.
+	assert.Equal(t, 1, cfg.MaxChainRetries())
+	retryOn, perTryMs := cfg.ChainRetryPolicy()
+	assert.Equal(t, "5xx,connect-failure,reset", retryOn) // sorted
+	assert.Equal(t, 5000, perTryMs)
+}
+
+// TestSplit_withChainChildren_valid verifies that a split whose arms are chains
+// passes validation and that MaxChainRetries is the deepest chain depth.
+func TestSplit_withChainChildren_valid(t *testing.T) {
+	// Already covered by TestSplit_chainInsideSplitArm_valid_maxRetries but this
+	// uses the documented two-arm split-of-chains pattern.
+	y := splitBase + `
+keys:
+  test/user/sk-split-chain:
+    workspace: test
+    user: user
+    llm:
+      models:
+        my-model:
+          routing:
+            split:
+              children:
+                - weight: 60
+                  chain:
+                    retry:
+                      retry_on: "connect-failure,reset,5xx"
+                      per_try_timeout_ms: 10000
+                    children:
+                      - target: { provider: p1 }
+                      - target: { provider: p2 }
+                - weight: 40
+                  chain:
+                    retry:
+                      retry_on: "connect-failure,reset,5xx"
+                      per_try_timeout_ms: 8000
+                    children:
+                      - target: { provider: p2 }
+                      - target: { provider: p3 }
+`
+	cfg, err := loadSplitYAML(t, y)
+	require.NoError(t, err)
+	// Each chain arm has 2 children → MaxChainRetries = 1 for both.
+	assert.Equal(t, 1, cfg.MaxChainRetries())
+	// ChainRetryPolicy takes the maximum per_try_timeout_ms across all chains.
+	retryOn, perTryMs := cfg.ChainRetryPolicy()
+	assert.Equal(t, "5xx,connect-failure,reset", retryOn)
+	assert.Equal(t, 10000, perTryMs)
+}
+
 func TestLookupModel_withBinding(t *testing.T) {
 	cfg := &Config{
 		Providers: map[string]Provider{

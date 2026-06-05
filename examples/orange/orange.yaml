@@ -145,6 +145,103 @@ llm:
       auth:
         type: aws
 
+    # Fallback demo: RFC 5737 TEST-NET addresses — routed nowhere, time out cleanly.
+    fallback_p1:
+      kind: anthropic
+      endpoint: https://192.0.2.1
+      extra:
+        anthropic_version: "2023-06-01"
+      auth:
+        type: bearer
+        secret_ref: literal://fake
+    fallback_p2:
+      kind: anthropic
+      endpoint: https://192.0.2.2
+      extra:
+        anthropic_version: "2023-06-01"
+      auth:
+        type: bearer
+        secret_ref: literal://fake
+    fallback_p3:
+      kind: anthropic
+      endpoint: https://192.0.2.3
+      extra:
+        anthropic_version: "2023-06-01"
+      auth:
+        type: bearer
+        secret_ref: literal://fake
+
+    # Split demo: three identical Vertex AI endpoints for weight-based traffic splitting.
+    split_p1:
+      kind: anthropic
+      backend_schema: gcpanthropic
+      endpoint: https://us-east5-aiplatform.googleapis.com
+      extra:
+        anthropic_version: "vertex-2023-10-16"
+        gcp_project: env://GCP_PROJECT
+        gcp_location: us-east5
+      auth:
+        type: gcp
+        secret_ref: env://GCP_SERVICE_ACCOUNT_JSON
+    split_p2:
+      kind: anthropic
+      backend_schema: gcpanthropic
+      endpoint: https://us-east5-aiplatform.googleapis.com
+      extra:
+        anthropic_version: "vertex-2023-10-16"
+        gcp_project: env://GCP_PROJECT
+        gcp_location: us-east5
+      auth:
+        type: gcp
+        secret_ref: env://GCP_SERVICE_ACCOUNT_JSON
+    split_p3:
+      kind: anthropic
+      backend_schema: gcpanthropic
+      endpoint: https://us-east5-aiplatform.googleapis.com
+      extra:
+        anthropic_version: "vertex-2023-10-16"
+        gcp_project: env://GCP_PROJECT
+        gcp_location: us-east5
+      auth:
+        type: gcp
+        secret_ref: env://GCP_SERVICE_ACCOUNT_JSON
+
+keys:
+  # Fallback demo: three unreachable primaries → vertex_anthropic as real fallback.
+  demo/maya/sk-fallback:
+    workspace: demo
+    user: maya
+    llm:
+      models:
+        claude-haiku-4-5:
+          routing:
+            chain:
+              retry:
+                retry_on: "connect-failure,reset,5xx,retriable-status-codes"
+                per_try_timeout_ms: 10000
+              children:
+                - target: { provider: fallback_p1, name: claude-haiku-4-5 }
+                - target: { provider: fallback_p2, name: claude-haiku-4-5 }
+                - target: { provider: fallback_p3, name: claude-haiku-4-5 }
+                - target: { provider: vertex_anthropic, name: claude-opus-4@20250514 }
+
+  # Split demo: 34/33/33 weight split across three Vertex AI endpoints.
+  demo/maya/sk-split:
+    workspace: demo
+    user: maya
+    llm:
+      models:
+        claude-haiku-4-5:
+          routing:
+            split:
+              children:
+                - weight: 34
+                  target: { provider: split_p1, name: claude-haiku-4-5 }
+                - weight: 33
+                  target: { provider: split_p2, name: claude-haiku-4-5 }
+                - weight: 33
+                  target: { provider: split_p3, name: claude-haiku-4-5 }
+
 mcp:
   profiles:
     default:

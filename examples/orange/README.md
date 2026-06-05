@@ -476,6 +476,209 @@ signature to the right region.
 > (not `bedrock-runtime`); the hostname uses `bedrock-runtime` but the
 > credential scope must say `bedrock`.
 
+## Routing: fallback chains and traffic splits
+
+Beyond the flat `model → provider` mapping in `llm.models`, Orange supports
+per-key routing policies through the `keys:` block in `orange.yaml`. A key
+identifies a caller (workspace + user), and any model it references can carry
+a `routing:` override that replaces the global target.
+
+Two routing modes are available:
+
+### Fallback chain (`routing.chain`)
+
+Tries targets left-to-right, retrying on failure. The `chain.retry` block is
+translated by `orange-match` into `x-envoy-retry-on`,
+`x-envoy-max-retries`, and `x-envoy-upstream-rq-per-try-timeout-ms` headers
+before the request reaches Envoy's router. The route's `retry_policy` in
+`envoy.tmpl.yaml` (and in EG, `BackendTrafficPolicy`) acts as the **floor**
+that enables `RetryStateImpl`; orange drives the actual retry count and timeout
+per-request via those injected headers.
+
+```yaml
+keys:
+  demo/maya/sk-fallback:
+    workspace: demo
+    user: maya
+    llm:
+      models:
+        claude-haiku-4-5:
+          routing:
+            chain:
+              retry:
+                retry_on: "connect-failure,reset,5xx,retriable-status-codes"
+                per_try_timeout_ms: 10000
+              children:
+                - target: { provider: fallback_p1, name: claude-haiku-4-5 }
+                - target: { provider: fallback_p2, name: claude-haiku-4-5 }
+                - target: { provider: fallback_p3, name: claude-haiku-4-5 }
+                - target: { provider: vertex_anthropic, name: claude-opus-4@20250514 }
+```
+
+`fallback_p1/p2/p3` are RFC 5737 TEST-NET addresses that time out cleanly;
+every request rolls through them and lands on `vertex_anthropic`. In
+production, replace the dead addresses with real primaries (other providers,
+regions, or API key pools) and keep the last child as the proven fallback.
+
+> **Retry floor in Envoy Gateway** — Without a base `retry_on` on the route,
+> Envoy discards `x-envoy-retry-on` from the upstream filter even when the
+> header is present. The `envoy.tmpl.yaml` route already has:
+>
+> ```yaml
+> retry_policy:
+>   retry_on: "5xx,gateway-error,reset,connect-failure,refused-stream,retriable-status-codes"
+>   retriable_status_codes: [429]
+>   num_retries: 7
+>   per_try_timeout: 30s
+> ```
+>
+> In EG, express this through `BackendTrafficPolicy` — see
+> [Envoy Gateway deployment](#envoy-gateway-eg-deployment) below.
+
+### Traffic split (`routing.split`)
+
+Assigns each request to one child by weighted random selection. Weights are
+integers; Orange normalises them. A split with `34/33/33` directs roughly a
+third of traffic to each of three Vertex AI endpoints, useful for gradual
+roll-outs, A/B model comparisons, or spreading load across quota pools.
+
+```yaml
+keys:
+  demo/maya/sk-split:
+    workspace: demo
+    user: maya
+    llm:
+      models:
+        claude-haiku-4-5:
+          routing:
+            split:
+              children:
+                - weight: 34
+                  target: { provider: split_p1, name: claude-haiku-4-5 }
+                - weight: 33
+                  target: { provider: split_p2, name: claude-haiku-4-5 }
+                - weight: 33
+                  target: { provider: split_p3, name: claude-haiku-4-5 }
+```
+
+Split selection is stateless per-request — there is no session affinity and no
+retry interaction. If one `split_p*` returns an error the request fails; wrap
+a `chain` around the split (not shown here) if you need combined
+split-then-fallback semantics.
+
+### Composing chain and split
+
+Setting both `routing.chain` and `routing.split` on the **same node** is a
+config validation error — `Load` rejects it immediately with:
+
+```
+orange/config: keys[...].llm.models[claude-haiku-4-5].routing:
+    must set exactly one of chain, target, or split
+```
+
+`RoutingNode` is a union, not a struct with two optional sub-fields. Each
+node in the routing tree carries exactly one of the three. That invariant is
+enforced by `validateRoutingNodeInner` (`config.go`) before the config snapshot
+is accepted.
+
+The interesting cases are **compositions across tree levels**, and those are
+fully supported:
+
+#### Split whose children are chains (split-then-fallback)
+
+Each weighted arm is itself a fallback chain. The split fires first — it
+samples one arm for the request — and if that arm's primary fails, the chain's
+retry policy kicks in and walks down to the next target in that arm.
+
+```yaml
+claude-haiku-4-5:
+  routing:
+    split:
+      children:
+        - weight: 60
+          chain:
+            retry:
+              retry_on: "connect-failure,reset,5xx,retriable-status-codes"
+              per_try_timeout_ms: 10000
+            children:
+              - target: { provider: vertex_anthropic, name: claude-haiku-4-5-20251001 }
+              - target: { provider: anthropic,        name: claude-haiku-4-5-20251001 }
+        - weight: 40
+          chain:
+            retry:
+              retry_on: "connect-failure,reset,5xx,retriable-status-codes"
+              per_try_timeout_ms: 10000
+            children:
+              - target: { provider: split_p1, name: claude-haiku-4-5 }
+              - target: { provider: split_p2, name: claude-haiku-4-5 }
+```
+
+60 % of requests go to the `vertex_anthropic → anthropic` chain; 40 % go
+to the `split_p1 → split_p2` chain. Each chain can retry independently.
+
+> **Nested split is blocked.** A split child cannot itself be a `split` node —
+> `validateRoutingNodeInner` passes an `insideSplit=true` flag to child
+> validation and returns an error if it finds another split. This prevents
+> probabilistic trees whose depth and behaviour are hard to reason about.
+
+#### Chain whose children are splits (each fallback slot draws from a pool)
+
+Each position in the chain is a split. On the first attempt the split at
+position 0 samples one provider; on retry 1 Envoy advances the attempt counter,
+`pick` reads `orange.adapt.attempt`, and the split at position 1 samples one
+provider from the next pool.
+
+```yaml
+claude-haiku-4-5:
+  routing:
+    chain:
+      retry:
+        retry_on: "connect-failure,reset,5xx,retriable-status-codes"
+        per_try_timeout_ms: 10000
+      children:
+        - split:
+            children:
+              - weight: 50
+                target: { provider: vertex_anthropic, name: claude-haiku-4-5-20251001 }
+              - weight: 50
+                target: { provider: split_p1, name: claude-haiku-4-5 }
+        - split:
+            children:
+              - weight: 50
+                target: { provider: split_p2, name: claude-haiku-4-5 }
+              - weight: 50
+                target: { provider: split_p3, name: claude-haiku-4-5 }
+        - target: { provider: anthropic, name: claude-haiku-4-5-20251001 }
+```
+
+The first attempt draws from `{vertex_anthropic, split_p1}` with equal
+weight. If it fails, the retry draws from `{split_p2, split_p3}`. If that
+also fails, the last resort is `anthropic` directly. Each split selection is
+independent — there is no affinity between attempts.
+
+> **Chain-of-chain is blocked at runtime.** `resolveRouting` (`match.go`)
+> checks each chain child and returns an error if any child is itself a chain.
+> The validator does not catch this at load time (chain-inside-chain is a
+> structural gap, not a schema error), so the request gets a 404
+> `orange.model_not_found` at body-parse time. Don't nest chains; use a
+> flat chain with more children instead.
+
+### Using a key
+
+Pass the key as the `Authorization: Bearer` value:
+
+```bash
+curl -s localhost:8080/v1/messages \
+  -H 'content-type: application/json' \
+  -H 'authorization: Bearer demo/maya/sk-fallback' \
+  -d '{"model":"claude-haiku-4-5","max_tokens":32,
+       "messages":[{"role":"user","content":"hi"}]}'
+```
+
+Orange resolves the key, applies the routing override for that
+`(key, model)` pair, and the rest of the pipeline (adapt, meter, pick) runs
+unchanged.
+
 ## Quickstart
 
 ```bash
@@ -825,6 +1028,29 @@ curl -s localhost:8080/v1/models | jq '.data[] | select(.id == "gpt-4o-mini")'
 curl -s localhost:9901/clusters | grep orange_default:: | grep cx_total
 ```
 
+### Fallback and split routing
+
+```bash
+# Fallback chain: sk-fallback key → three dead TEST-NET primaries → vertex_anthropic.
+# Envoy access log shows response_flags: "UF,URX" on the first three attempts,
+# then a 200 from vertex_anthropic on the fourth.
+curl -s localhost:8080/v1/messages \
+  -H 'content-type: application/json' \
+  -H 'authorization: Bearer demo/maya/sk-fallback' \
+  -d '{"model":"claude-haiku-4-5","max_tokens":32,
+       "messages":[{"role":"user","content":"hi"}]}'
+
+# Traffic split: sk-split key → 34/33/33 across split_p1/p2/p3.
+# Run several times; the access log's provider_backend field rotates across the three.
+for i in $(seq 6); do
+  curl -s localhost:8080/v1/messages \
+    -H 'content-type: application/json' \
+    -H 'authorization: Bearer demo/maya/sk-split' \
+    -d '{"model":"claude-haiku-4-5","max_tokens":8,
+         "messages":[{"role":"user","content":"hi"}}' | jq -r '.content[0].text'
+done
+```
+
 Error paths handled by `match` (no upstream contacted):
 
 ```bash
@@ -879,6 +1105,57 @@ spec:
   connection:
     bufferLimit: 100Mi          # matches per_connection_buffer_limit_bytes on clusters
 ```
+
+### BackendTrafficPolicy — retry floor for fallback chains
+
+`orange-match` injects `x-envoy-retry-on`, `x-envoy-max-retries`, and
+`x-envoy-upstream-rq-per-try-timeout-ms` per-request when the key's routing
+policy includes a `chain.retry` block. Envoy only honours these
+`x-envoy-*` retry headers when a base `retry_on` is already present on the
+route — without it `RetryStateImpl` is never initialised and the injected
+headers are silently ignored.
+
+Add a second `BackendTrafficPolicy` (or extend the existing one) to establish
+the retry floor for the fallback-chain route:
+
+```yaml
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: orange-llm-retry
+  namespace: <your-namespace>
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: orange-llm          # adjust to your HTTPRoute name
+  retry:
+    retryOn:
+      triggers:
+        - connect-failure
+        - reset
+        - retriable-5xx
+        - retriable-status-codes
+    retriableStatusCodes: [429]
+    numRetries: 7               # ceiling; orange-match overrides per-request
+    perRetry:
+      timeout: 30s              # ceiling; orange-match overrides per-request via
+                                #   x-envoy-upstream-rq-per-try-timeout-ms
+      backOff:
+        baseInterval: 100ms
+        maxInterval: 1s
+```
+
+> `numRetries` and `perRetry.timeout` here are ceilings, not the actual
+> per-chain values — orange-match overwrites them with the chain's
+> `per_try_timeout_ms` and the child count via `x-envoy-*` headers. The floor
+> only needs to be high enough to accommodate the longest chain you expect to
+> configure; the demo `sk-fallback` key has four children so `numRetries: 7`
+> is comfortably above the three retries that chain requires.
+
+The split routing mode (`routing.split`) does not interact with Envoy's retry
+machinery at all — child selection happens inside `orange-match` before a
+single upstream attempt, so no retry policy changes are needed for split.
 
 ### ClientTrafficPolicy — downstream buffer
 
@@ -935,6 +1212,8 @@ demos/
   codex          Codex CLI wrapper that targets Orange
   claude         Claude Code CLI wrapper that targets Orange
   goose          Goose AI agent wrapper that targets Orange
+  fallback/      isolated config for the fallback-chain demo (orange.yaml + envoy.tmpl.yaml)
+  split/         isolated config for the traffic-split demo (orange.yaml + envoy.tmpl.yaml)
   tracing/
     validate     OpenInference span validator (unit + live modes)
 ```
