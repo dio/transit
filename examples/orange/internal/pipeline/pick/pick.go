@@ -78,9 +78,25 @@ func (f cfgFactory) NewCluster(h up.ClusterHandle) up.Cluster {
 }
 func (cfgFactory) Close() {}
 
-// resolvedUpstream holds all resolved IPs for one provider plus their HostPtrs
-// and the time at which the DNS TTL expires. The refresh loop wakes at the
-// earliest nextRefresh across all upstreams rather than on a fixed interval.
+// provBindingKey is the composite key for the hosts map. It combines the
+// provider backend name with the binding name so multi-binding providers get
+// one DNS-refresh entry per binding. Binding is "default" for providers that
+// use only a top-level endpoint and for all MCP servers.
+type provBindingKey struct {
+	provider string
+	binding  string
+}
+
+func (k provBindingKey) String() string {
+	if k.binding == "" || k.binding == "default" {
+		return k.provider
+	}
+	return k.provider + ":" + k.binding
+}
+
+// resolvedUpstream holds all resolved IPs for one provider-binding pair plus
+// their HostPtrs and the time at which the DNS TTL expires. The refresh loop
+// wakes at the earliest nextRefresh across all entries rather than a fixed interval.
 //
 // rr is an atomic round-robin counter; lookupHost increments it on every call
 // and selects ptrs[rr % len(ptrs)], distributing requests across all IPs.
@@ -107,8 +123,10 @@ type cluster struct {
 
 	// hosts is the source of truth ChooseHost reads from. Published atomically
 	// after each resolveAll call to keep ChooseHost lock-free. Values are
-	// pointers so the per-entry rr counter survives map republishes.
-	hosts atomic.Pointer[map[string]*resolvedUpstream]
+	// pointers so the per-entry rr counter survives map republishes. The map is
+	// keyed by (provider, binding) so multi-binding providers have independent
+	// round-robin counters and HostPtr sets.
+	hosts atomic.Pointer[map[provBindingKey]*resolvedUpstream]
 }
 
 func (c *cluster) Init(h up.ClusterHandle) {
@@ -194,16 +212,22 @@ func (c *cluster) resolve(ctx context.Context, endpoint string) ([]string, time.
 	return resolveUpstream(ctx, endpoint)
 }
 
-// lookupHost maps a match.Decision to a HostPtr for the selected provider,
-// distributing requests across all registered IPs via round-robin.
+// lookupHost maps a match.Decision to a HostPtr for the selected
+// (provider, binding) pair, distributing requests across all registered IPs
+// via round-robin. Empty binding is treated as "default".
 // It is the only orange-specific logic in the cluster LB hot path; all
 // completion lifecycle concerns are owned by up.AsyncHostSelector.
 func (c *cluster) lookupHost(d match.Decision) up.HostResult {
 	if d.Err != "" {
 		return up.HostResult{ErrDetail: d.Err}
 	}
+	binding := d.Binding
+	if binding == "" {
+		binding = "default"
+	}
+	key := provBindingKey{d.ProviderBackend, binding}
 	if m := c.hosts.Load(); m != nil {
-		if r := (*m)[d.ProviderBackend]; r != nil && len(r.ptrs) > 0 {
+		if r := (*m)[key]; r != nil && len(r.ptrs) > 0 {
 			idx := r.rr.Add(1) % uint64(len(r.ptrs))
 			return up.HostResult{Host: r.ptrs[idx]}
 		}
@@ -220,23 +244,41 @@ type dnsResult struct {
 	err      error
 }
 
-// resolveAddrs performs DNS resolution for every LLM provider and MCP server in
-// the current config. It is safe to call from any goroutine; it never touches
-// the cluster handle.
-func (c *cluster) resolveAddrs(ctx context.Context) map[string]dnsResult {
+// resolveAddrs performs DNS resolution for every LLM provider binding and MCP
+// server in the current config. Each provider contributes one entry per
+// binding (or one "default" entry when no bindings are configured). MCP
+// servers always use the "default" binding key. Safe to call from any
+// goroutine; it never touches the cluster handle.
+func (c *cluster) resolveAddrs(ctx context.Context) map[provBindingKey]dnsResult {
 	cfg := config.Get()
-	out := make(map[string]dnsResult, len(cfg.Providers))
+	out := make(map[provBindingKey]dnsResult)
 	for name, p := range cfg.Providers {
-		addrs, ttl, err := c.resolve(ctx, p.Endpoint)
-		out[name] = dnsResult{addrs: addrs, hostname: p.Host(), ttl: ttl, err: err}
+		for _, b := range p.AllBindings() {
+			key := provBindingKey{name, b.Name}
+			addrs, ttl, err := c.resolve(ctx, b.Endpoint)
+			out[key] = dnsResult{addrs: addrs, hostname: hostnameOf(b.Endpoint), ttl: ttl, err: err}
+		}
 	}
 	if cfg.MCP != nil {
 		for name, s := range cfg.MCP.Servers {
+			key := provBindingKey{name, "default"}
 			addrs, ttl, err := c.resolve(ctx, s.Endpoint)
-			out[name] = dnsResult{addrs: addrs, hostname: s.Host(), ttl: ttl, err: err}
+			out[key] = dnsResult{addrs: addrs, hostname: s.Host(), ttl: ttl, err: err}
 		}
 	}
 	return out
+}
+
+// hostnameOf parses an endpoint URL and returns its hostname.
+func hostnameOf(endpoint string) string {
+	if endpoint == "" {
+		return ""
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
 }
 
 // applyResolved reconciles the cluster host set from pre-resolved DNS results.
@@ -251,13 +293,13 @@ func (c *cluster) resolveAddrs(ctx context.Context) map[string]dnsResult {
 //   - IP removed       → RemoveHosts for gone addr
 //   - new provider     → AddHosts for all resolved addrs
 //   - provider deleted → RemoveHosts for all its ptrs
-func (c *cluster) applyResolved(h up.ClusterHandle, resolved map[string]dnsResult) {
+func (c *cluster) applyResolved(h up.ClusterHandle, resolved map[provBindingKey]dnsResult) {
 	current := c.hosts.Load()
-	out := make(map[string]*resolvedUpstream, len(resolved))
+	out := make(map[provBindingKey]*resolvedUpstream, len(resolved))
 
 	for name, r := range resolved {
 		if r.err != nil {
-			c.logger.Warn("skipping upstream: resolve failed", "upstream", name, "err", r.err)
+			c.logger.Warn("skipping upstream: resolve failed", "upstream", name.String(), "err", r.err)
 			// Preserve the existing entry so a DNS hiccup doesn't pull a healthy
 			// host, but schedule a retry soon.
 			if current != nil {
@@ -273,7 +315,7 @@ func (c *cluster) applyResolved(h up.ClusterHandle, resolved map[string]dnsResul
 		ttl := max(r.ttl, minTTLFloor)
 		nextRefresh := time.Now().Add(ttl + jitter(minTTLFloor))
 
-		// Build a map of existing addr -> HostPtr for this provider.
+		// Build a map of existing addr -> HostPtr for this (provider, binding).
 		existing := map[string]up.HostPtr{}
 		var oldRR uint64
 		var old *resolvedUpstream
@@ -313,7 +355,7 @@ func (c *cluster) applyResolved(h up.ClusterHandle, resolved map[string]dnsResul
 		for addr, ptr := range existing {
 			if _, keep := newAddrSet[addr]; !keep {
 				h.RemoveHosts([]up.HostPtr{ptr})
-				c.logger.Debug("upstream addr removed", "upstream", name, "addr", addr)
+				c.logger.Debug("upstream addr removed", "upstream", name.String(), "addr", addr)
 			}
 		}
 
@@ -328,17 +370,17 @@ func (c *cluster) applyResolved(h up.ClusterHandle, resolved map[string]dnsResul
 					Hostname: r.hostname,
 				}})
 				if len(added) == 0 {
-					c.logger.Warn("skipping addr: AddHosts returned no ptrs", "upstream", name, "addr", addr)
+					c.logger.Warn("skipping addr: AddHosts returned no ptrs", "upstream", name.String(), "addr", addr)
 					continue
 				}
 				h.UpdateHostHealth(added[0], up.HostHealthy)
 				ptrs = append(ptrs, added[0])
-				c.logger.Debug("upstream addr added", "upstream", name, "addr", addr)
+				c.logger.Debug("upstream addr added", "upstream", name.String(), "addr", addr)
 			}
 		}
 
 		if len(ptrs) == 0 {
-			c.logger.Warn("skipping upstream: no valid addrs after reconcile", "upstream", name)
+			c.logger.Warn("skipping upstream: no valid addrs after reconcile", "upstream", name.String())
 			continue
 		}
 
@@ -347,12 +389,12 @@ func (c *cluster) applyResolved(h up.ClusterHandle, resolved map[string]dnsResul
 		out[name] = entry
 	}
 
-	// Remove providers deleted from config.
+	// Remove providers/bindings deleted from config.
 	if current != nil {
 		for name, old := range *current {
 			if _, kept := out[name]; !kept {
 				h.RemoveHosts(old.ptrs)
-				c.logger.Info("upstream removed from config", "upstream", name, "addrs", old.addrs)
+				c.logger.Info("upstream removed from config", "upstream", name.String(), "addrs", old.addrs)
 			}
 		}
 	}
@@ -405,10 +447,11 @@ type lb struct {
 func (l *lb) ChooseHost(h up.ClusterLBHandle, ctx up.ClusterLBContext) (up.HostPtr, *up.ClusterLBCompletion) {
 	if ctx != nil {
 		if provider, ok := ctx.GetFilterState(match.StateUpstream); ok && provider != "" {
-			res := l.lookup(match.Decision{ProviderBackend: provider})
+			binding, _ := ctx.GetFilterState(match.StateBinding)
+			res := l.lookup(match.Decision{ProviderBackend: provider, Binding: binding})
 			if res.ErrDetail != "" {
 				if l.log != nil {
-					l.log.Warn("host selection failed", "err", res.ErrDetail, "provider", provider)
+					l.log.Warn("host selection failed", "err", res.ErrDetail, "provider", provider, "binding", binding)
 				}
 				completion := ctx.NewCompletion()
 				if completion != nil {
@@ -418,7 +461,7 @@ func (l *lb) ChooseHost(h up.ClusterLBHandle, ctx up.ClusterLBContext) (up.HostP
 				return nil, nil
 			}
 			if l.log != nil {
-				l.log.Debug("host selected", "host", res.Host, "provider", provider)
+				l.log.Debug("host selected", "host", res.Host, "provider", provider, "binding", binding)
 			}
 			return res.Host, nil
 		}
@@ -488,7 +531,15 @@ var fallbackDNSConfig = &dns.ClientConfig{
 // lookupWithTTL queries A records for host using the system resolver config
 // and returns the resolved addresses together with the minimum TTL from the
 // answer section. The TTL is used to schedule the next re-resolve.
+//
+// When host is already a literal IP address (IPv4 or IPv6), the DNS query is
+// skipped and the address is returned directly with a 24-hour synthetic TTL.
+// This allows endpoint URLs to carry IP addresses directly (e.g. for test stubs
+// or on-premise deployments that don't use DNS).
 func lookupWithTTL(ctx context.Context, host string) ([]net.IPAddr, time.Duration, error) {
+	if ip := net.ParseIP(host); ip != nil {
+		return []net.IPAddr{{IP: ip}}, 24 * time.Hour, nil
+	}
 	conf, err := dns.ClientConfigFromFile("/etc/resolv.conf")
 	if err != nil {
 		slog.Warn("orange/pick: /etc/resolv.conf unavailable, falling back to public resolvers", "err", err)

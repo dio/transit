@@ -424,11 +424,30 @@ func (h *responseswsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	cfg := config.Get()
 	var provider config.Provider
 	var ok bool
+
+	// Key-mode: resolve per-key blob when keys[] are configured.
+	var keyBlob *config.KeyBlob
+	if cfg.HasKeys() {
+		kb, _, resolved := match.ResolveKey(r.Header.Get("Authorization"))
+		if !resolved {
+			closeReason = closeReasonLookupErr
+			errClass = "unknown_key"
+			log.Warn("orange-responsesws: unknown key", "session_id", sessionID)
+			clientConn.Close(websocket.StatusPolicyViolation, "unknown or missing API key") //nolint:errcheck
+			return
+		}
+		keyBlob = kb
+	}
+
 	log.Info("orange-responsesws: resolving model provider",
 		"session_id", sessionID,
 		"model", model,
 	)
-	providerName, provider, ok = cfg.LookupModelProvider(model, match.EndpointResponses)
+	if keyBlob != nil {
+		providerName, provider, _, ok = cfg.LookupModelProviderForKey(keyBlob, model, match.EndpointResponses)
+	} else {
+		providerName, provider, _, ok = cfg.LookupModelProvider(model, match.EndpointResponses)
+	}
 	if !ok {
 		closeReason = closeReasonLookupErr
 		errClass = "unknown_model"
@@ -436,7 +455,11 @@ func (h *responseswsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		clientConn.Close(websocket.StatusPolicyViolation, "unknown model") //nolint:errcheck
 		return
 	}
-	_, backendModel = cfg.LookupModel(model, match.EndpointResponses)
+	if keyBlob != nil {
+		_, backendModel, _, _ = cfg.LookupModelForKey(keyBlob, model, match.EndpointResponses)
+	} else {
+		_, backendModel, _ = cfg.LookupModel(model, match.EndpointResponses)
+	}
 	providerKind = provider.Kind
 	log.Info("orange-responsesws: model provider resolved",
 		"session_id", sessionID,

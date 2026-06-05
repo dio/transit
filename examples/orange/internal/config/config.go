@@ -61,8 +61,9 @@ var compiledSchema = func() *jsonschema.Schema {
 
 // Config is the fully validated, secret-resolved configuration.
 type Config struct {
-	LLM LLMConfig  `yaml:"llm"`
-	MCP *MCPConfig `yaml:"mcp,omitempty"`
+	LLM  LLMConfig             `yaml:"llm"`
+	MCP  *MCPConfig            `yaml:"mcp,omitempty"`
+	Keys map[string]*KeyBlob   `yaml:"keys,omitempty"`
 
 	Providers map[string]Provider   `yaml:"-"`
 	Models    map[string]ModelEntry `yaml:"-"`
@@ -81,10 +82,19 @@ type LLMConfig struct {
 type Provider struct {
 	Kind          string            `yaml:"kind"`
 	BackendSchema string            `yaml:"backend_schema,omitempty"`
-	Endpoint      string            `yaml:"endpoint"`
+	Endpoint      string            `yaml:"endpoint,omitempty"` // implicit "default" binding (back-compat)
 	PathPrefix    *string           `yaml:"path_prefix,omitempty"`
 	Extra         map[string]string `yaml:"extra,omitempty"`
 	Auth          Auth              `yaml:"auth"`
+	Bindings      []Binding         `yaml:"bindings,omitempty"` // named endpoint variants within this provider
+}
+
+// Binding describes a named endpoint variant within a Provider.
+// Bindings share the parent's auth configuration but address different
+// upstream endpoints (e.g. regional replicas of the same vendor's API).
+type Binding struct {
+	Name     string `yaml:"name"`     // unique within the provider
+	Endpoint string `yaml:"endpoint"` // overrides Provider.Endpoint for this binding
 }
 
 // Auth describes how the gateway authenticates to a provider.
@@ -96,9 +106,24 @@ type Auth struct {
 // ModelEntry maps a client-facing model ID to a provider and optional backend name.
 type ModelEntry struct {
 	Provider  string            `yaml:"provider"`
+	Binding   string            `yaml:"binding,omitempty"` // optional named binding within the provider
 	Name      string            `yaml:"name,omitempty"`
 	Metadata  map[string]any    `yaml:"metadata,omitempty"`
 	Endpoints map[string]string `yaml:"endpoints,omitempty"`
+}
+
+// KeyBlob is the materialized per-key policy blob loaded from keys[].
+// The map key in keys[] must start with workspace/user/.
+type KeyBlob struct {
+	Workspace string `yaml:"workspace"`
+	User      string `yaml:"user"`
+	LLM       KeyLLM `yaml:"llm"`
+}
+
+// KeyLLM holds the per-key LLM model routing table.
+// Models has the same shape as the top-level llm.models.
+type KeyLLM struct {
+	Models map[string]ModelEntry `yaml:"models"`
 }
 
 // MCPConfig describes Orange-managed MCP server profiles.
@@ -221,15 +246,44 @@ func (p Provider) Host() string {
 	return u.Hostname()
 }
 
-// LookupModel returns the provider name and effective backend model name for
-// the given client model ID and endpoint discriminator. Both return values are
-// empty when there is no match. When ModelEntry.Name is unset the map key is
-// used as the backend name. If endpoint is non-empty and the model entry has a
-// matching key in Endpoints, that provider overrides the default provider.
-func (c *Config) LookupModel(model, endpoint string) (provider, backendModel string) {
+// AllBindings returns the list of named bindings for this provider.
+// When no explicit bindings are configured it synthesises a single
+// "default" binding from Provider.Endpoint to maintain back-compat.
+func (p Provider) AllBindings() []Binding {
+	if len(p.Bindings) > 0 {
+		return p.Bindings
+	}
+	return []Binding{{Name: "default", Endpoint: p.Endpoint}}
+}
+
+// BindingHost returns the hostname for the named binding.
+// Falls back to the provider's top-level Host() when binding is empty,
+// "default", or not found in Bindings.
+func (p Provider) BindingHost(binding string) string {
+	if binding != "" && binding != "default" {
+		for _, b := range p.Bindings {
+			if b.Name == binding {
+				u, err := url.Parse(b.Endpoint)
+				if err != nil {
+					return ""
+				}
+				return u.Hostname()
+			}
+		}
+	}
+	return p.Host()
+}
+
+// LookupModel returns the provider name, effective backend model name, and
+// binding for the given client model ID and endpoint discriminator. All return
+// values are empty when there is no match. When ModelEntry.Name is unset the
+// map key is used as the backend name. If endpoint is non-empty and the model
+// entry has a matching key in Endpoints, that provider overrides the default
+// provider (binding stays on the original entry).
+func (c *Config) LookupModel(model, endpoint string) (provider, backendModel, binding string) {
 	e, ok := c.Models[model]
 	if !ok {
-		return "", ""
+		return "", "", ""
 	}
 	prov := e.Provider
 	if endpoint != "" {
@@ -237,21 +291,64 @@ func (c *Config) LookupModel(model, endpoint string) (provider, backendModel str
 			prov = override
 		}
 	}
+	bm := model
 	if e.Name != "" {
-		return prov, e.Name
+		bm = e.Name
 	}
-	return prov, model
+	return prov, bm, e.Binding
 }
 
-// LookupModelProvider returns the upstream name and Provider for the given
-// client model ID and endpoint discriminator. ok is false when the model is
-// not configured.
-func (c *Config) LookupModelProvider(model, endpoint string) (upstream string, provider Provider, ok bool) {
-	upstream, _ = c.LookupModel(model, endpoint)
+// LookupModelProvider returns the upstream name, Provider, and binding for the
+// given client model ID and endpoint discriminator. ok is false when the model
+// is not configured.
+func (c *Config) LookupModelProvider(model, endpoint string) (upstream string, provider Provider, binding string, ok bool) {
+	upstream, _, binding = c.LookupModel(model, endpoint)
 	if upstream == "" {
-		return "", Provider{}, false
+		return "", Provider{}, "", false
 	}
-	return upstream, c.Providers[upstream], true
+	return upstream, c.Providers[upstream], binding, true
+}
+
+// HasKeys reports whether any per-key blobs are configured.
+// When false, the gateway uses the legacy global model routing path.
+func (c *Config) HasKeys() bool {
+	return len(c.Keys) > 0
+}
+
+// LookupKey returns the KeyBlob for keyID. One map read, no cascade.
+func (c *Config) LookupKey(keyID string) (*KeyBlob, bool) {
+	kb, ok := c.Keys[keyID]
+	return kb, ok
+}
+
+// LookupModelForKey resolves model routing from a per-key blob.
+// All strings are empty and ok is false when the model has no entry in the blob.
+func (c *Config) LookupModelForKey(keyBlob *KeyBlob, model, endpoint string) (provider, backendModel, binding string, ok bool) {
+	e, found := keyBlob.LLM.Models[model]
+	if !found {
+		return "", "", "", false
+	}
+	prov := e.Provider
+	if endpoint != "" {
+		if override, has := e.Endpoints[endpoint]; has {
+			prov = override
+		}
+	}
+	bm := model
+	if e.Name != "" {
+		bm = e.Name
+	}
+	return prov, bm, e.Binding, true
+}
+
+// LookupModelProviderForKey returns the upstream name, Provider, and binding
+// for a per-key model lookup. ok is false when the model is absent from the blob.
+func (c *Config) LookupModelProviderForKey(keyBlob *KeyBlob, model, endpoint string) (upstream string, provider Provider, binding string, ok bool) {
+	upstream, _, binding, found := c.LookupModelForKey(keyBlob, model, endpoint)
+	if !found || upstream == "" {
+		return "", Provider{}, "", false
+	}
+	return upstream, c.Providers[upstream], binding, true
 }
 
 // ProviderSecret returns the resolved credential for the named provider.
@@ -322,10 +419,42 @@ func Load(data []byte) (*Config, error) {
 	cfg.Providers = cfg.LLM.Providers
 	cfg.Models = cfg.LLM.Models
 
-	// Semantic: every models[].provider must exist in providers.
+	// Semantic: each provider must have an endpoint or at least one binding;
+	// binding names must be unique within a provider.
+	for name, p := range cfg.Providers {
+		if len(p.Bindings) == 0 && p.Endpoint == "" {
+			return nil, fmt.Errorf("orange/config: provider %q: must have endpoint or bindings", name)
+		}
+		seen := make(map[string]struct{}, len(p.Bindings))
+		for _, b := range p.Bindings {
+			if b.Name == "" {
+				return nil, fmt.Errorf("orange/config: provider %q: binding must have a name", name)
+			}
+			if _, dup := seen[b.Name]; dup {
+				return nil, fmt.Errorf("orange/config: provider %q: duplicate binding name %q", name, b.Name)
+			}
+			seen[b.Name] = struct{}{}
+		}
+	}
+
+	// Semantic: every models[].provider must exist in providers; binding (when
+	// set) must name a binding of that provider.
 	for id, entry := range cfg.Models {
-		if _, ok := cfg.Providers[entry.Provider]; !ok {
+		p, ok := cfg.Providers[entry.Provider]
+		if !ok {
 			return nil, fmt.Errorf("orange/config: models[%q].provider %q: not in providers", id, entry.Provider)
+		}
+		if entry.Binding != "" {
+			validBinding := false
+			for _, b := range p.AllBindings() {
+				if b.Name == entry.Binding {
+					validBinding = true
+					break
+				}
+			}
+			if !validBinding {
+				return nil, fmt.Errorf("orange/config: models[%q].binding %q: not a binding of provider %q", id, entry.Binding, entry.Provider)
+			}
 		}
 		for epKey, epProvider := range entry.Endpoints {
 			if _, ok := cfg.Providers[epProvider]; !ok {
@@ -367,6 +496,37 @@ func Load(data []byte) (*Config, error) {
 					if _, allowed := exposeSet[tool]; !allowed {
 						return nil, fmt.Errorf("orange/config: mcp.profiles[%q].tools[%q]: tool %q not in server expose list; available: %v", profileName, serverName, tool, expose)
 					}
+				}
+			}
+		}
+	}
+
+	// Semantic: validate keys[].
+	for keyID, kb := range cfg.Keys {
+		expectedPrefix := kb.Workspace + "/" + kb.User + "/"
+		if !strings.HasPrefix(keyID, expectedPrefix) {
+			return nil, fmt.Errorf("orange/config: keys[%q]: id must start with %q (workspace=%q user=%q)", keyID, expectedPrefix, kb.Workspace, kb.User)
+		}
+		for modelID, entry := range kb.LLM.Models {
+			p, ok := cfg.Providers[entry.Provider]
+			if !ok {
+				return nil, fmt.Errorf("orange/config: keys[%q].llm.models[%q].provider %q: not in providers", keyID, modelID, entry.Provider)
+			}
+			if entry.Binding != "" {
+				validBinding := false
+				for _, b := range p.AllBindings() {
+					if b.Name == entry.Binding {
+						validBinding = true
+						break
+					}
+				}
+				if !validBinding {
+					return nil, fmt.Errorf("orange/config: keys[%q].llm.models[%q].binding %q: not a binding of provider %q", keyID, modelID, entry.Binding, entry.Provider)
+				}
+			}
+			for epKey, epProvider := range entry.Endpoints {
+				if _, ok := cfg.Providers[epProvider]; !ok {
+					return nil, fmt.Errorf("orange/config: keys[%q].llm.models[%q].endpoints[%q] provider %q: not in providers", keyID, modelID, epKey, epProvider)
 				}
 			}
 		}

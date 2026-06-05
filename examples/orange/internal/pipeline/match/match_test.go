@@ -568,3 +568,247 @@ func TestBody_partialChunk_skipped(t *testing.T) {
 
 	down.DropStreamObjectBag(streamObjectNonce(h))
 }
+
+// --- parseBearerToken --------------------------------------------------------
+
+func TestParseBearerToken(t *testing.T) {
+	cases := []struct {
+		name   string
+		input  string
+		wantID string
+	}{
+		{"standard", "Bearer sk-abc123", "sk-abc123"},
+		{"lowercase_prefix", "bearer sk-abc123", "sk-abc123"},
+		{"mixed_case_prefix", "BEARER sk-abc123", "sk-abc123"},
+		{"compound_key_id", "Bearer acme/alice/sk-abc123", "acme/alice/sk-abc123"},
+		{"empty", "", ""},
+		{"no_bearer", "Token sk-abc123", ""},
+		{"bearer_only", "Bearer ", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseBearerToken(tc.input)
+			require.Equal(t, tc.wantID, got)
+		})
+	}
+}
+
+// --- ResolveKey / key-mode ---------------------------------------------------
+
+func loadKeysConfig(t *testing.T) {
+	t.Helper()
+	t.Setenv("OPENAI_API_KEY", "sk-test-openai")
+	t.Setenv(config.EnvVar, "testdata/match_keys_test.yaml")
+	t.Cleanup(config.MustReload)
+	config.MustReload()
+}
+
+func newPostStreamWithAuth(t *testing.T, authHeader string) (*up.Writer, *testutil.FakeFilterHandle, *up.Request, *any) {
+	t.Helper()
+	hdr := map[string]string{
+		":method":       "POST",
+		":path":         "/v1/chat/completions",
+		"content-type":  "application/json",
+		"authorization": authHeader,
+	}
+	h := testutil.NewFilterHandle(testutil.WithHeaders(hdr))
+	w := up.NewWriter(h)
+	r := up.NewRequest(h.RequestHeaders(), FilterName)
+	var ctx any
+	r.Context = &ctx
+	return w, h, r, &ctx
+}
+
+func TestResolveKey_legacyMode_returnsNil(t *testing.T) {
+	loadTestConfig(t) // no keys[] in this config
+	kb, keyID, ok := ResolveKey("Bearer acme/alice/sk-test-001")
+	require.False(t, ok, "legacy mode must return ok=false")
+	require.Nil(t, kb)
+	require.Empty(t, keyID)
+}
+
+func TestResolveKey_knownKey(t *testing.T) {
+	loadKeysConfig(t)
+	kb, keyID, ok := ResolveKey("Bearer acme/alice/sk-test-001")
+	require.True(t, ok, "known key must resolve")
+	require.NotNil(t, kb)
+	require.Equal(t, "acme/alice/sk-test-001", keyID)
+	require.Equal(t, "acme", kb.Workspace)
+	require.Equal(t, "alice", kb.User)
+}
+
+func TestResolveKey_unknownKey(t *testing.T) {
+	loadKeysConfig(t)
+	kb, keyID, ok := ResolveKey("Bearer acme/alice/does-not-exist")
+	require.False(t, ok, "unknown key must return ok=false")
+	require.Nil(t, kb)
+	require.Equal(t, "acme/alice/does-not-exist", keyID, "keyID is still returned on miss for logging")
+}
+
+func TestHeaders_unknownKey_401(t *testing.T) {
+	loadKeysConfig(t)
+	w, h, r, ctx := newPostStreamWithAuth(t, "Bearer acme/alice/not-a-real-key")
+	router.Dispatch(w, r)
+
+	require.Len(t, h.LocalResponses, 1)
+	require.EqualValues(t, 401, h.LocalResponses[0].Status)
+
+	var got struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(h.LocalResponses[0].Body, &got))
+	require.Equal(t, ErrUnknownKey, got.Error.Code)
+
+	// Promise must be resolved with the unknown-key error.
+	p, ok := (*ctx).(*up.StreamPromise[Decision])
+	require.True(t, ok && p != nil)
+	res, resolved := p.Result()
+	require.True(t, resolved)
+	require.Equal(t, ErrUnknownKey, res.Err)
+
+	// reject_reason metadata must be set.
+	v, ok := h.Metadata(MetadataNamespace, MetadataKeyRejectReason)
+	require.True(t, ok)
+	require.Equal(t, ErrUnknownKey, v)
+
+	down.DropStreamObjectBag(streamObjectNonce(h))
+}
+
+func TestHeaders_knownKey_attributionMetadata(t *testing.T) {
+	loadKeysConfig(t)
+	w, h, r, ctx := newPostStreamWithAuth(t, "Bearer acme/alice/sk-test-001")
+	router.Dispatch(w, r)
+
+	require.Empty(t, h.LocalResponses, "known key must not produce a local response")
+
+	// Attribution metadata must be written at headers phase.
+	ws, ok := h.Metadata(MetadataNamespace, MetadataKeyAttributionWorkspace)
+	require.True(t, ok)
+	require.Equal(t, "acme", ws)
+
+	user, ok := h.Metadata(MetadataNamespace, MetadataKeyAttributionUser)
+	require.True(t, ok)
+	require.Equal(t, "alice", user)
+
+	keyID, ok := h.Metadata(MetadataNamespace, MetadataKeyAttributionKeyID)
+	require.True(t, ok)
+	require.Equal(t, "acme/alice/sk-test-001", keyID)
+
+	p, ok := (*ctx).(*up.StreamPromise[Decision])
+	require.True(t, ok && p != nil)
+
+	down.DropStreamObjectBag(streamObjectNonce(h))
+}
+
+func TestBody_keyMode_knownModel_resolves(t *testing.T) {
+	loadKeysConfig(t)
+	w, h, r, ctx := newPostStreamWithAuth(t, "Bearer acme/alice/sk-test-001")
+	router.Dispatch(w, r)
+	require.Empty(t, h.LocalResponses)
+
+	chunk := &up.BodyChunk{Data: []byte(`{"model":"gpt-4o-mini","messages":[]}`), EndStream: true, Context: ctx}
+	bodyHandler(w, chunk)
+
+	p, _ := (*ctx).(*up.StreamPromise[Decision])
+	res, ok := p.Result()
+	require.True(t, ok)
+	require.Empty(t, res.Err)
+	require.Equal(t, "openai_direct", res.ProviderBackend)
+	require.Equal(t, "openai", res.ProviderKind)
+	require.Equal(t, "gpt-4o-mini", res.Model)
+
+	down.DropStreamObjectBag(streamObjectNonce(h))
+}
+
+func TestBody_keyMode_unknownModel_404(t *testing.T) {
+	loadKeysConfig(t)
+	w, h, r, ctx := newPostStreamWithAuth(t, "Bearer acme/alice/sk-test-001")
+	router.Dispatch(w, r)
+	require.Empty(t, h.LocalResponses)
+
+	// gpt-99 is not in the key blob's model table.
+	chunk := &up.BodyChunk{Data: []byte(`{"model":"gpt-99","messages":[]}`), EndStream: true, Context: ctx}
+	bodyHandler(w, chunk)
+
+	require.Len(t, h.LocalResponses, 1)
+	require.EqualValues(t, 404, h.LocalResponses[0].Status)
+
+	p, _ := (*ctx).(*up.StreamPromise[Decision])
+	res, _ := p.Result()
+	require.Equal(t, ErrUnknownModel, res.Err)
+
+	down.DropStreamObjectBag(streamObjectNonce(h))
+}
+
+// --- binding tests -----------------------------------------------------------
+
+func loadBindingsConfig(t *testing.T) {
+	t.Helper()
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test-anthropic")
+	t.Setenv(config.EnvVar, "testdata/match_bindings_test.yaml")
+	t.Cleanup(config.MustReload)
+	config.MustReload()
+}
+
+// TestBody_binding_setsDecisionBinding verifies that Decision.Binding is set
+// when a model entry carries a binding field.
+func TestBody_binding_setsDecisionBinding(t *testing.T) {
+	loadBindingsConfig(t)
+	body := []byte(`{"model":"claude-east","messages":[]}`)
+	h, p := runFlow(t, body)
+
+	require.Empty(t, h.LocalResponses)
+	res, ok := p.Result()
+	require.True(t, ok)
+	require.Empty(t, res.Err)
+	require.Equal(t, "anthropic", res.ProviderBackend)
+	require.Equal(t, "us-east", res.Binding, "Decision.Binding must be set from the model entry")
+
+	down.DropStreamObjectBag(streamObjectNonce(h))
+}
+
+// TestBody_binding_westEntry verifies the us-west binding is threaded through.
+func TestBody_binding_westEntry(t *testing.T) {
+	loadBindingsConfig(t)
+	body := []byte(`{"model":"claude-west","messages":[]}`)
+	h, p := runFlow(t, body)
+
+	require.Empty(t, h.LocalResponses)
+	res, ok := p.Result()
+	require.True(t, ok)
+	require.Empty(t, res.Err)
+	require.Equal(t, "us-west", res.Binding)
+
+	down.DropStreamObjectBag(streamObjectNonce(h))
+}
+
+// TestBody_binding_filterState verifies StateBinding filter state is written.
+func TestBody_binding_filterState(t *testing.T) {
+	loadBindingsConfig(t)
+	body := []byte(`{"model":"claude-east","messages":[]}`)
+	h, _ := runFlow(t, body)
+
+	require.Empty(t, h.LocalResponses)
+	b, ok := h.FilterStateString(StateBinding)
+	require.True(t, ok)
+	require.Equal(t, "us-east", b, "StateBinding filter state must carry the binding name")
+
+	down.DropStreamObjectBag(streamObjectNonce(h))
+}
+
+// TestBody_binding_authorityRewrite verifies that :authority is rewritten to
+// the binding's endpoint host, not the provider's top-level Host().
+func TestBody_binding_authorityRewrite(t *testing.T) {
+	loadBindingsConfig(t)
+	body := []byte(`{"model":"claude-west","messages":[]}`)
+	h, _ := runFlow(t, body)
+
+	require.Empty(t, h.LocalResponses)
+	authority := h.RequestHeaders().GetOne(":authority").ToString()
+	require.Equal(t, "api-west.anthropic.com", authority,
+		":authority must be rewritten to the binding endpoint host")
+
+	down.DropStreamObjectBag(streamObjectNonce(h))
+}

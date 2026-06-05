@@ -17,6 +17,7 @@ package match
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/tidwall/gjson"
 
@@ -62,6 +63,7 @@ type Decision struct {
 	Model        string // client-facing model ID, kept for telemetry
 	BackendModel string // resolved backend model name (from models[].name, or == Model if unset)
 	Endpoint     string // endpoint discriminator, e.g. EndpointChatCompletions
+	Binding      string // named binding within the provider; empty means "default"
 	Err          string
 }
 
@@ -74,11 +76,13 @@ func (d Decision) Apply(w *up.Writer) {
 	w.SetFilterState(StateUpstream, d.ProviderBackend) // config backend name → "upstream"
 	w.SetFilterState(StateProvider, d.ProviderKind)    // API wire-format kind → "provider"
 	w.SetFilterState(StateEndpoint, d.Endpoint)
+	w.SetFilterState(StateBinding, d.Binding)
 	w.SetMetadata(MetadataNamespace, MetadataKeyModel, d.Model)
 	w.SetMetadata(MetadataNamespace, MetadataKeyUpstream, d.ProviderBackend) // config backend name → "upstream"
 	w.SetMetadata(MetadataNamespace, MetadataKeyProvider, d.ProviderKind)    // API wire-format kind → "provider"
 	w.SetMetadata(MetadataNamespace, MetadataKeyBackendModel, d.BackendModel)
 	w.SetMetadata(MetadataNamespace, MetadataKeyEndpoint, d.Endpoint)
+	w.SetMetadata(MetadataNamespace, MetadataKeyBinding, d.Binding)
 }
 
 // DecisionKey is the typed stream-object key match uses to store the
@@ -90,6 +94,13 @@ var DecisionKey = up.NewStreamKey[*up.StreamPromise[Decision]]("orange.decision"
 // without the original request path being available.
 var EndpointKey = up.NewStreamKey[string]("orange.endpoint")
 
+// KeyBlobKey stores the resolved *config.KeyBlob for key-mode requests.
+// Absent in legacy mode (no keys[] configured).
+var KeyBlobKey = up.NewStreamKey[*config.KeyBlob]("orange.key_blob")
+
+// KeyIDKey stores the resolved key id (bearer token) for key-mode requests.
+var KeyIDKey = up.NewStreamKey[string]("orange.key_id")
+
 const (
 	FilterName = "orange-match"
 
@@ -98,6 +109,7 @@ const (
 	StateProvider = "orange.provider_kind"
 	StateModel    = "orange.model"
 	StateEndpoint = "orange.endpoint"
+	StateBinding  = "orange.provider_binding"
 
 	// Dynamic metadata — readable by upstream HTTP filters (adapt, meter).
 	//
@@ -115,6 +127,7 @@ const (
 	MetadataKeyModel        = "model"
 	MetadataKeyBackendModel = "backend_model"
 	MetadataKeyEndpoint     = "endpoint"
+	MetadataKeyBinding      = "provider_binding"
 
 	// Endpoint discriminator values carried on Decision.Endpoint.
 	EndpointChatCompletions = "chat_completions"
@@ -149,6 +162,19 @@ const (
 	// Resolve is first-wins, so this is a no-op when bodyHandler already
 	// published a result.
 	ErrStreamTerminated = "orange.stream_terminated"
+
+	// ErrUnknownKey is the orange.* code published when key-mode is active and
+	// the request bears an unknown or missing API key.
+	ErrUnknownKey = "orange.unknown_key"
+
+	// MetadataKeyRejectReason is the dynamic metadata key written when a request
+	// is rejected at the headers phase (e.g. unknown key).
+	MetadataKeyRejectReason = "reject_reason"
+
+	// Attribution metadata keys written when a request resolves through a KeyBlob.
+	MetadataKeyAttributionWorkspace = "attribution.workspace"
+	MetadataKeyAttributionUser      = "attribution.user"
+	MetadataKeyAttributionKeyID     = "attribution.key_id"
 )
 
 var router = up.NewRouter(func(w *up.Writer, r *up.Request) {
@@ -175,6 +201,8 @@ func init() {
 
 // tagRequestForEndpoint returns a headers-phase handler that stores the
 // per-stream promise and endpoint discriminator in the stream-object bag.
+// When key-mode is active (keys[] present) it also resolves the per-key blob
+// from the Authorization header and rejects unknown keys immediately.
 func tagRequestForEndpoint(endpoint string) func(*up.Writer, *up.Request) {
 	return func(w *up.Writer, r *up.Request) {
 		if r.Context == nil {
@@ -182,11 +210,26 @@ func tagRequestForEndpoint(endpoint string) func(*up.Writer, *up.Request) {
 		}
 		p := up.NewStreamPromise[Decision]()
 		*r.Context = p
-		// Store the promise and endpoint in the per-stream object bag.
-		// pick reads DecisionKey.GetFromCtx to retrieve the promise.
-		// bodyHandler reads EndpointKey.Get to populate Decision.Endpoint.
 		DecisionKey.Set(w, p)
 		EndpointKey.Set(w, endpoint)
+
+		cfg := config.Get()
+		if cfg.HasKeys() {
+			kb, keyID, ok := resolveKey(r.Header("authorization"), cfg)
+			if !ok {
+				w.Slog().Warn("Rejected unknown key", "endpoint", endpoint)
+				w.SetMetadata(MetadataNamespace, MetadataKeyRejectReason, ErrUnknownKey)
+				p.Resolve(Decision{Endpoint: endpoint, Err: ErrUnknownKey})
+				send.Error(w, http.StatusUnauthorized, send.AuthenticationError, ErrUnknownKey, "unknown or missing API key")
+				return
+			}
+			KeyBlobKey.Set(w, kb)
+			KeyIDKey.Set(w, keyID)
+			w.SetMetadata(MetadataNamespace, MetadataKeyAttributionWorkspace, kb.Workspace)
+			w.SetMetadata(MetadataNamespace, MetadataKeyAttributionUser, kb.User)
+			w.SetMetadata(MetadataNamespace, MetadataKeyAttributionKeyID, keyID)
+		}
+
 		w.Slog().Info("Received headers", "authority_in", r.Host, "endpoint", endpoint)
 	}
 }
@@ -224,7 +267,16 @@ func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 	}
 
 	cfg := config.Get()
-	upstream, backendModel := cfg.LookupModel(model, endpoint)
+	var upstream, backendModel, binding string
+	if kb, ok := KeyBlobKey.Get(w); ok {
+		var found bool
+		upstream, backendModel, binding, found = cfg.LookupModelForKey(kb, model, endpoint)
+		if !found {
+			upstream = ""
+		}
+	} else {
+		upstream, backendModel, binding = cfg.LookupModel(model, endpoint)
+	}
 	if upstream == "" {
 		w.Slog().Warn("Received body unknown model", "model", model)
 		p.Resolve(Decision{Endpoint: endpoint, Err: ErrUnknownModel})
@@ -232,11 +284,12 @@ func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 		return
 	}
 	provider := cfg.Providers[upstream]
-	// Rewrite :authority to the provider host so the upstream sees the right
-	// Host header. SNI is driven by the selected host's configured hostname.
-	w.SetRequestHeader(up.HeaderAuthority, provider.Host())
+	// Rewrite :authority to the binding's endpoint host so the upstream sees
+	// the right Host header. SNI is driven by the selected host's configured
+	// hostname. BindingHost falls back to Provider.Host() when binding is empty.
+	w.SetRequestHeader(up.HeaderAuthority, provider.BindingHost(binding))
 
-	d := Decision{ProviderBackend: upstream, ProviderKind: provider.Kind, Model: model, BackendModel: backendModel, Endpoint: endpoint}
+	d := Decision{ProviderBackend: upstream, ProviderKind: provider.Kind, Model: model, BackendModel: backendModel, Endpoint: endpoint, Binding: binding}
 	d.Apply(w)
 
 	if endpoint == EndpointImages {
@@ -248,7 +301,7 @@ func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 		}
 	}
 
-	w.Slog().Info("Received body resolved", "model", model, "backend_model", backendModel, "provider", upstream, "host", provider.Host(), "kind", provider.Kind, "endpoint", endpoint)
+	w.Slog().Info("Received body resolved", "model", model, "backend_model", backendModel, "provider", upstream, "host", provider.BindingHost(binding), "kind", provider.Kind, "endpoint", endpoint, "binding", binding)
 	p.Resolve(d)
 }
 
@@ -270,4 +323,39 @@ func onStreamComplete(ctx *any) {
 	p.Resolve(Decision{Err: ErrStreamTerminated})
 	// No bag delete here: the stream-object bag is owned and drained
 	// by the SDK (Primitive A / dropBag in filter.OnStreamComplete).
+}
+
+// ResolveKey parses the Authorization bearer token from authHeader and looks up
+// the corresponding KeyBlob in the current config snapshot. Returns the blob,
+// key id, and true when found. Returns nil, "", false when key-mode is not
+// active (legacy config with no keys[]) or when the key is absent.
+func ResolveKey(authHeader string) (*config.KeyBlob, string, bool) {
+	return resolveKey(authHeader, config.Get())
+}
+
+// resolveKey is the internal implementation shared by ResolveKey and
+// tagRequestForEndpoint (which already holds a cfg snapshot).
+func resolveKey(authHeader string, cfg *config.Config) (*config.KeyBlob, string, bool) {
+	if !cfg.HasKeys() {
+		return nil, "", false
+	}
+	keyID := parseBearerToken(authHeader)
+	if keyID == "" {
+		return nil, "", false
+	}
+	kb, ok := cfg.LookupKey(keyID)
+	return kb, keyID, ok
+}
+
+// parseBearerToken extracts the token value from an Authorization header.
+// The comparison is case-insensitive on the "Bearer " prefix.
+func parseBearerToken(authHeader string) string {
+	const prefix = "bearer "
+	if len(authHeader) <= len(prefix) {
+		return ""
+	}
+	if !strings.EqualFold(authHeader[:len(prefix)], prefix) {
+		return ""
+	}
+	return strings.TrimSpace(authHeader[len(prefix):])
 }

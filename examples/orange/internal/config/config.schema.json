@@ -12,6 +12,11 @@
     },
     "mcp": {
       "$ref": "#/$defs/MCPConfig"
+    },
+    "keys": {
+      "description": "Per-key materialized policy blobs. When present, all requests must carry a known key; unknown keys are rejected with HTTP 401. Map keys must start with workspace/user/.",
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/KeyBlob" }
     }
   },
   "$defs": {
@@ -34,9 +39,9 @@
       }
     },
     "Provider": {
-      "description": "A single upstream provider definition.",
+      "description": "A single upstream provider definition. Either endpoint or bindings[] must be present (validated semantically).",
       "type": "object",
-      "required": ["kind", "endpoint", "auth"],
+      "required": ["kind", "auth"],
       "additionalProperties": false,
       "properties": {
         "kind": {
@@ -50,9 +55,15 @@
           "enum": ["openai", "anthropic", "azureopenai", "awsbedrock", "awsanthropic", "gcpvertexai", "gcpanthropic"]
         },
         "endpoint": {
-          "description": "Upstream base URL. The hostname drives SNI selection and :authority rewrite.",
+          "description": "Upstream base URL. The hostname drives SNI selection and :authority rewrite. Acts as the implicit 'default' binding. Required when bindings[] is absent.",
           "type": "string",
           "format": "uri"
+        },
+        "bindings": {
+          "description": "Named endpoint variants within this provider (e.g. regional replicas). When present, endpoint is optional. At least one binding must be listed. Each binding name must be unique within the provider.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/Binding" }
         },
         "path_prefix": {
           "description": "URL path prefix for backend requests. Defaults to /v1. Set for non-standard providers (Azure, Bedrock, Vertex, Groq, DeepInfra).",
@@ -89,6 +100,23 @@
         "auth": { "$ref": "#/$defs/Auth" }
       }
     },
+    "Binding": {
+      "description": "A named endpoint variant within a provider.",
+      "type": "object",
+      "required": ["name", "endpoint"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "Unique binding name within the provider (e.g. 'us-east', 'us-west').",
+          "type": "string"
+        },
+        "endpoint": {
+          "description": "Upstream base URL for this binding. The hostname drives SNI selection.",
+          "type": "string",
+          "format": "uri"
+        }
+      }
+    },
     "Auth": {
       "description": "Credential injection configuration for a provider.",
       "type": "object",
@@ -121,6 +149,10 @@
       "properties": {
         "provider": {
           "description": "Provider name. Must exist in providers.",
+          "type": "string"
+        },
+        "binding": {
+          "description": "Named binding within the provider. Defaults to the implicit 'default' binding when omitted. Must match a binding name in the provider's bindings[] array.",
           "type": "string"
         },
         "name": {
@@ -339,6 +371,38 @@
         "exclude_regex": {
           "type": "array",
           "items": { "type": "string" }
+        }
+      }
+    },
+    "KeyBlob": {
+      "description": "Per-key policy blob. The containing map key must start with workspace/user/.",
+      "type": "object",
+      "required": ["workspace", "user", "llm"],
+      "additionalProperties": false,
+      "properties": {
+        "workspace": {
+          "description": "Workspace identifier. The map key must start with this value.",
+          "type": "string"
+        },
+        "user": {
+          "description": "User identifier. The map key must start with workspace/user/.",
+          "type": "string"
+        },
+        "llm": {
+          "$ref": "#/$defs/KeyLLM"
+        }
+      }
+    },
+    "KeyLLM": {
+      "description": "Per-key LLM model routing table. Same model entry shape as top-level llm.models.",
+      "type": "object",
+      "required": ["models"],
+      "additionalProperties": false,
+      "properties": {
+        "models": {
+          "description": "Map of client-facing model ID to routing entry for this key.",
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/ModelEntry" }
         }
       }
     }

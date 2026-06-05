@@ -1,0 +1,21 @@
+llm:
+  providers:
+    anthropic:
+      kind: anthropic
+      auth:
+        type: anthropic
+        secret_ref: env://PICK_TEST_KEY
+      bindings:
+        - name: us-east
+          endpoint: https://api.anthropic.com
+        - name: us-west
+          endpoint: https://api-west.anthropic.com
+  models:
+    claude-east:
+      provider: anthropic
+      binding: us-east
+      name: claude-haiku-4-5-20251001
+    claude-west:
+      provider: anthropic
+      binding: us-west
+      name: claude-haiku-4-5-20251001

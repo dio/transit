@@ -56,7 +56,7 @@ func egressHandler(w *up.Writer, r *up.Request) {
 	// Cross-check headers against the active config snapshot.
 	// Headers are hints, not a trust boundary — they must still match active config.
 	cfg := config.Get()
-	configProvider, providerConfig, ok := cfg.LookupModelProvider(model, match.EndpointResponses)
+	configProvider, providerConfig, _, ok := cfg.LookupModelProvider(model, match.EndpointResponses)
 	if !ok {
 		send.Errorf(w, http.StatusBadRequest, send.InvalidRequestError,
 			"orange.responsesws_model_not_found",
