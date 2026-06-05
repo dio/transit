@@ -2,7 +2,7 @@
 
 **Goal**: ship LLM cross-target fallback for orange. Given a request
 that selects a model alias on a known key, orange resolves a chain of
-`(provider, binding)` targets; on classified transport errors *before*
+provider targets; on classified transport errors *before*
 any response byte has streamed, Envoy retries on the next target.
 Streaming bypasses fallback (acknowledged limitation, ch. 16).
 
@@ -52,14 +52,12 @@ keys:
     user: user-maya
     llm:
       models:
-        smart:
+        claude-haiku-4-5:
           routing:
             chain:
-              retry_on: [429, 5xx, timeout, reset]
               children:
-                - target: { provider: anthropic, binding: us-east, name: claude-haiku-4-5-20251001 }
-                - target: { provider: anthropic, binding: us-west, name: claude-haiku-4-5-20251001 }
-                - target: { provider: openai, name: gpt-4o-mini }
+                - target: { provider: anthropic, name: claude-haiku-4-5 }
+                - target: { provider: vertex_anthropic, name: claude-haiku-4-5@20251001 }
 ```
 
 Types in `internal/config`:
@@ -72,13 +70,11 @@ type RoutingNode struct {
 }
 
 type ChainNode struct {
-    RetryOn  []string      // accepts "429", "5xx", "timeout", "reset"
     Children []RoutingNode // first = primary, rest = ordered fallbacks
 }
 
 type TargetLeaf struct {
     Provider string
-    Binding  string
     Name     string // backend model id
 }
 ```
@@ -88,9 +84,7 @@ Validation:
 - Exactly one of `chain` / `target` set on a node.
 - Chain has ≥1 child and ≤ some sane cap (8 — covers any realistic
   fallback chain; rejects pathological configs).
-- All Target `(provider, binding)` pairs must exist in the catalog.
-- `retry_on` codes are a subset of the union supported by the Envoy
-  template route's `retry_policy`.
+- All Target `provider` values must exist in the catalog's `providers[]`.
 
 ### Match
 
@@ -101,14 +95,12 @@ from the prelims. Extend it with the fallback routing fields:
 ```go
 type Target struct {
     ProviderBackend string
-    Binding         string
     BackendModel    string
     ProviderKind    string
 }
 
 // Additions to Decision — existing fields unchanged.
-//   Fallbacks []Target // ordered; empty for sugar entries
-//   RetryOn   []int    // numeric HTTP codes; "timeout"/"reset" mapped to retry_on policy bits
+//   Fallbacks []Target  // ordered; empty for sugar entries
 ```
 
 The flat primary-target fields on `Decision` remain authoritative for
@@ -130,12 +122,13 @@ dynamic metadata for access logs.
 
 ### Pick
 
-- `lookupHost` (`pick.go:220`) reads attempt count from filter state.
-  The dynamic-modules SDK surfaces it via
-  `ClusterLBContext`/`envoy.lb.previous_hosts`; if that path is not
-  yet wired, add a minimal helper that exposes attempt count to
-  `ChooseHost`. On attempt N (1-indexed past the primary), pick the
-  host for `Fallbacks[N-1]`; if N exceeds `len(Fallbacks)`, return
+- `lookupHost` (`pick.go:220`) reads the attempt number directly from
+  `ctx.GetHostSelectionRetryCount()` — this method is on
+  `down.ClusterLBContext` (and therefore `up.ClusterLBContext`) and
+  returns 0 on the primary attempt, 1 on the first retry, etc. No
+  stream-bag counter or SDK changes are needed. Use the value as a
+  zero-indexed offset: 0 → primary (existing flat fields), N →
+  `Fallbacks[N-1]`. If N exceeds `len(Fallbacks)`, return
   `orange.fallback_exhausted` and let Envoy fail the request.
 - Continue to multi-IP round-robin *within* the chosen
   `(provider, binding)` bucket.
@@ -145,35 +138,49 @@ dynamic metadata for access logs.
 ### Envoy template
 
 In `examples/orange/envoy.tmpl.yaml` (and the e2e copy), add a
-`retry_policy` on `/v1/chat/completions`, `/v1/messages`, and
-`/v1/responses` routes:
+**fixed blanket** `retry_policy` on `/v1/chat/completions`,
+`/v1/messages`, and `/v1/responses` routes:
 
 ```yaml
 retry_policy:
   retry_on: "5xx,gateway-error,reset,connect-failure,refused-stream,retriable-status-codes"
   retriable_status_codes: [429]
-  num_retries: 7   # matches the chain cap above; ChooseHost gates further
+  num_retries: 7   # ceiling; pick is the real gatekeeper
   per_try_timeout: <existing per-request timeout>
 ```
 
-Per-request gating is enforced by `pick`: when `len(Fallbacks) == 0`
-on a given Decision, `ChooseHost` returns the primary and refuses to
-serve a different host on retry — Envoy's `num_retries` cap is a
-ceiling, not a mandate. This keeps the policy decision in the data
-plane's blob, not in xDS.
+This policy is static and shared — it does not vary per key or per
+model. All it does is give Envoy permission to call `ChooseHost` again
+after a transport error; `pick` decides whether to actually advance to
+a fallback. When `len(Fallbacks) == 0` (sugar entry or chain
+exhausted), `ChooseHost` returns `orange.fallback_exhausted` and Envoy
+stops. No per-chain `retry_on` field exists; the chain config is
+intentionally silent on which error codes trigger a retry, because
+`ClusterLBContext` does not expose the previous response code — `pick`
+cannot enforce it anyway.
+
+**Future: per-request retry_policy override via dynamic module extension.**
+The blanket policy is the right trade-off today, but the ideal end state
+is a dynamic module HTTP filter that rewrites the route's `retry_policy`
+per request based on the resolved chain — so a key with no fallbacks gets
+`num_retries: 0` (no retry at all) and a key with a chain gets a policy
+scoped to exactly the codes that chain cares about. This requires an
+Envoy dynamic module extension point for mutating per-route retry config
+after the downstream filter chain runs, which does not exist today. When
+that primitive lands, `ChainNode` can grow a `retry_on` field again and
+the coordination problem disappears.
 
 ### Credinject
 
-- Read `(provider, binding)` from the Decision and inject the right
-  endpoint + auth header on each attempt. Provider-scoped auth means
-  a regional fallback uses the same key; a cross-provider fallback
-  rewrites credentials. `Provider.BindingHost(binding)` (`config.go:262`,
-  landed in prelim 2) already resolves the per-binding `:authority`
-  value — credinject should use it rather than the top-level provider
-  host. Confirm the retry path re-runs the headers phase — otherwise
-  the SNI lock-in bites. If retries do not re-run the downstream
-  filter chain, document the path; otherwise no change is needed
-  beyond reading the current target from the Decision.
+- Read `provider` from the Decision and inject the right endpoint +
+  auth header on each attempt. A cross-provider fallback rewrites
+  credentials; same-provider retries reuse the same key.
+  `Provider.Host()` gives the `:authority` value — no binding lookup
+  needed since `TargetLeaf` carries no binding. Confirm the retry path
+  re-runs the headers phase — otherwise the SNI lock-in bites. If
+  retries do not re-run the downstream filter chain, document the path;
+  otherwise no change is needed beyond reading the current target from
+  the Decision.
 
 ### Streaming caveat
 
@@ -198,15 +205,14 @@ Table-driven in `internal/pipeline/match` and `internal/pipeline/pick`:
 - Streaming response from primary errors after first SSE byte → no
   retry; client sees the partial stream + transport error.
 - Sugar form (no `routing`) still works; no retries.
-- Unknown `(provider, binding)` in a chain Target → loader rejects
-  with a clear error.
+- Unknown `provider` in a chain Target → loader rejects with a clear error.
 - Per-key isolation: same alias on two different keys with different
   chains; each resolves to its own chain.
 
 e2e in `examples/orange/e2e/`:
 
-- Two stub upstreams ("us-east-fake", "us-west-fake") plus a third
-  ("openai-fake"); chain authored across them. Kill the primary →
+- Two stub provider upstreams ("anthropic-fake", "vertex-fake") plus a
+  third ("openai-fake"); chain authored across them. Kill the primary →
   retry hits the secondary; kill both → tertiary.
 
 ## Out of scope
@@ -227,8 +233,8 @@ e2e in `examples/orange/e2e/`:
 - `gsed` (not `sed`) for any in-place YAML/JSON edits.
 - No backwards-compat shims for code paths we're replacing. The sugar
   shape (`provider`/`name`/`binding` directly on the model entry)
-  stays because operators use it; `Decision` is extended with
-  `Fallbacks`/`RetryOn` fields rather than restructured.
+  stays because operators use it; `Decision` is extended with a
+  `Fallbacks` field rather than restructured.
 - No new comments beyond what's already requested in pick's package
   doc + the README's "Runtime hosts without xDS" section. Don't
   annotate every retry branch.
