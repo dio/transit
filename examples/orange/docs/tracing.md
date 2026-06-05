@@ -44,6 +44,91 @@ make trace-validate
 
 The script sets `OTEL_TRACES_EXPORTER=console`, sends a request to `/v1/chat/completions`, and `grep`s the stdout output for `"openinference.span.kind": "LLM"` and `llm.model_name`.
 
+## Envoy tracing configuration
+
+To have Envoy emit its own spans (and inject `traceparent` so orange can create child spans), add three blocks to `envoy.tmpl.yaml`:
+
+### 1. OTLP collector cluster
+
+```yaml
+static_resources:
+  clusters:
+    - name: otel_collector
+      type: LOGICAL_DNS
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http2_protocol_options: {}
+      load_assignment:
+        cluster_name: otel_collector
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: "${OTEL_COLLECTOR_HOST:-localhost}"
+                      port_value: "${OTEL_COLLECTOR_PORT:-4317}"
+```
+
+### 2. Bootstrap tracing block
+
+```yaml
+tracing:
+  http:
+    name: envoy.tracers.opentelemetry
+    typed_config:
+      "@type": type.googleapis.com/envoy.config.trace.v3.OpenTelemetryConfig
+      grpc_service:
+        envoy_grpc:
+          cluster_name: otel_collector
+      service_name: orange
+```
+
+### 3. HCM tracing section
+
+Inside the `http_connection_manager` filter config, add:
+
+```yaml
+generate_request_id: true
+tracing:
+  random_sampling:
+    value: 100.0
+  custom_tags:
+    - tag: llm.model_name
+      metadata:
+        kind: { request: {} }
+        metadata_key:
+          key: orange
+          path: [{ key: model }]
+    - tag: llm.system
+      metadata:
+        kind: { request: {} }
+        metadata_key:
+          key: orange
+          path: [{ key: provider_kind }]
+    - tag: llm.provider_backend
+      metadata:
+        kind: { request: {} }
+        metadata_key:
+          key: orange
+          path: [{ key: provider_backend }]
+    - tag: llm.token_count.prompt
+      metadata:
+        kind: { request: {} }
+        metadata_key:
+          key: orange_meter
+          path: [{ key: input_tokens }]
+    - tag: llm.token_count.completion
+      metadata:
+        kind: { request: {} }
+        metadata_key:
+          key: orange_meter
+          path: [{ key: output_tokens }]
+```
+
+`generate_request_id: true` causes Envoy to create a `traceparent` header on each request, which orange reads as the parent for its child spans. Both Envoy and orange export to the same `OTEL_EXPORTER_OTLP_ENDPOINT`.
+
 ## Viewing traces
 
 Point `OTEL_EXPORTER_OTLP_ENDPOINT` at any OTLP-compatible collector:
