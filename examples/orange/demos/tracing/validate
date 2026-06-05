@@ -34,7 +34,7 @@ done
 run_unit_tests() {
   echo "Running tracer unit tests..."
   cd "$ORANGE_DIR"
-  GOWORK=off go test ./orange/internal/pipeline/tracer/... -v -count=1 2>&1 | \
+  GOWORK=off go test ./internal/pipeline/tracer/... -v -count=1 2>&1 | \
     grep -E '(PASS|FAIL|---)'
   echo "Unit tests passed."
 }

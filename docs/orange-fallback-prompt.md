@@ -8,7 +8,9 @@ Streaming bypasses fallback (acknowledged limitation, ch. 16).
 
 Traffic splitting is **out of scope** here — split lands after this.
 
-## Prereqs (must be merged first)
+## Prereqs
+
+**All three are landed** in commit `e2325b9`.
 
 1. `docs/orange-fallback-prelim-1-keys.md` — `keys[id]` blob loading,
    key-id parsing, 401 on unknown key, `LookupModelForKey`.
@@ -20,9 +22,6 @@ Traffic splitting is **out of scope** here — split lands after this.
    is host-resolved and registered regardless of current model
    references; the Envoy-side `auto_host_sni` + SNI session cache
    substrate is already in place (do not re-add).
-
-If any of these are not landed, **stop and finish them first**. Do not
-ship fallback on top of a partial substrate.
 
 ## Context
 
@@ -95,40 +94,43 @@ Validation:
 
 ### Match
 
-Replace the single-target `Decision` with primary + fallbacks:
+`Decision` (`match.go:53`) already carries the flat primary-target
+fields (`ProviderBackend`, `ProviderKind`, `BackendModel`, `Binding`)
+from the prelims. Extend it with the fallback routing fields:
 
 ```go
-type Decision struct {
-    Primary   Target
-    Fallbacks []Target
-    RetryOn   []int     // numeric HTTP codes; "timeout"/"reset" mapped to retry_on policy bits, not status codes
-    // ... existing fields (Err, etc.)
-}
-
 type Target struct {
     ProviderBackend string
     Binding         string
     BackendModel    string
     ProviderKind    string
 }
+
+// Additions to Decision — existing fields unchanged.
+//   Fallbacks []Target // ordered; empty for sugar entries
+//   RetryOn   []int    // numeric HTTP codes; "timeout"/"reset" mapped to retry_on policy bits
 ```
+
+The flat primary-target fields on `Decision` remain authoritative for
+the primary attempt; `Fallbacks[N-1]` is read by `pick` on attempt N+1.
 
 Resolver:
 
-- For a model entry with `routing.chain`, flatten the chain's Target
-  children into `Primary` + `Fallbacks[]`, preserving order.
+- For a model entry with `routing.chain`, populate the flat fields from
+  the first Target child and store the remaining children in
+  `Fallbacks[]`, preserving order.
 - For a sugar entry (`provider`/`binding`/`name` at the model level),
-  emit a single-target Decision with empty `Fallbacks`.
+  leave `Fallbacks` nil.
 - Disallow nested Chain-of-Chain in v1 (flatten or reject — pick one;
   rejecting is simpler).
 
-Write `Decision` to filter state as today (`Apply` at
-`match.go:72`). Add a small `attempt_targets` slice serialized into
+`Apply` (`match.go:74`) already writes primary-target state; no changes
+needed there. Add a small `attempt_targets` slice serialized into
 dynamic metadata for access logs.
 
 ### Pick
 
-- `lookupHost` (`pick.go:192`) reads attempt count from filter state.
+- `lookupHost` (`pick.go:220`) reads attempt count from filter state.
   The dynamic-modules SDK surfaces it via
   `ClusterLBContext`/`envoy.lb.previous_hosts`; if that path is not
   yet wired, add a minimal helper that exposes attempt count to
@@ -165,12 +167,13 @@ plane's blob, not in xDS.
 - Read `(provider, binding)` from the Decision and inject the right
   endpoint + auth header on each attempt. Provider-scoped auth means
   a regional fallback uses the same key; a cross-provider fallback
-  rewrites credentials. Confirm `:authority` is set from the headers
-  handler (per the README's `auto_sni` trap section) and that the
-  retry path re-runs the headers phase — otherwise the SNI lock-in
-  bites. If retries do not re-run the downstream filter chain,
-  document the path; otherwise no change needed beyond reading the
-  current target.
+  rewrites credentials. `Provider.BindingHost(binding)` (`config.go:262`,
+  landed in prelim 2) already resolves the per-binding `:authority`
+  value — credinject should use it rather than the top-level provider
+  host. Confirm the retry path re-runs the headers phase — otherwise
+  the SNI lock-in bites. If retries do not re-run the downstream
+  filter chain, document the path; otherwise no change is needed
+  beyond reading the current target from the Decision.
 
 ### Streaming caveat
 
@@ -224,8 +227,8 @@ e2e in `examples/orange/e2e/`:
 - `gsed` (not `sed`) for any in-place YAML/JSON edits.
 - No backwards-compat shims for code paths we're replacing. The sugar
   shape (`provider`/`name`/`binding` directly on the model entry)
-  stays because operators use it; the `Decision`-single-target shape
-  goes away cleanly.
+  stays because operators use it; `Decision` is extended with
+  `Fallbacks`/`RetryOn` fields rather than restructured.
 - No new comments beyond what's already requested in pick's package
   doc + the README's "Runtime hosts without xDS" section. Don't
   annotate every retry branch.

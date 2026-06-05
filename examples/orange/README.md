@@ -594,6 +594,46 @@ ORANGE_LLM_BASE_URL=http://localhost:8080
 ORANGE_LLM_SHOW_HEADERS=1   # or pass --headers
 ```
 
+### Image generation demos
+
+`demos/images` is a curl wrapper for `/v1/images/generations`.
+
+```bash
+# Default: DALL-E 3, one image, default prompt
+./demos/images
+
+# Custom prompt
+./demos/images "a sunset over the ocean"
+
+# DALL-E 3, HD quality, landscape size
+./demos/images --model dall-e-3 --quality hd --size 1792x1024 "a mountain landscape"
+
+# GPT Image 1 — save to file
+./demos/images --model gpt-image-1 --output /tmp/out.png "a neon city at night"
+
+# GPT Image 1 — save all images to a directory
+./demos/images --model gpt-image-1 --save /tmp "a robot reading a book"
+
+# Gemini image generation
+./demos/images --model gemini-2.5-flash-image "a cartoon cat"
+
+# DALL-E 2, multiple images
+./demos/images --model dall-e-2 --n 2 "a red apple"
+
+# Extra parameters (e.g. transparent background)
+./demos/images --model gpt-image-1 --param background=transparent "a logo"
+
+# List image-capable models
+./demos/images models
+```
+
+Useful overrides:
+
+```bash
+ORANGE_LLM_BASE_URL=http://localhost:8080
+ORANGE_LLM_SHOW_HEADERS=1   # or pass --headers
+```
+
 ### MCP traffic
 
 `demos/mcp` is a curl wrapper for the Orange MCP endpoint. It captures the
@@ -890,8 +930,11 @@ envoy.tmpl.yaml  Envoy config; ${ORANGE_TRUSTED_CA} substituted by make
 orange.yaml      runtime config (providers, models, MCP servers/profiles)
 demos/
   llm            curl wrapper for /v1/chat/completions, /v1/responses, /v1/messages
+  images         curl wrapper for /v1/images/generations
   mcp            curl wrapper for the /mcp endpoint
   codex          Codex CLI wrapper that targets Orange
   claude         Claude Code CLI wrapper that targets Orange
   goose          Goose AI agent wrapper that targets Orange
+  tracing/
+    validate     OpenInference span validator (unit + live modes)
 ```
