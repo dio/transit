@@ -43,6 +43,19 @@ static_resources:
                         typed_config:
                           "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
                 http_filters:
+                  # orange-reqlog must be first so it captures the original
+                  # (pre-match) request body. In the response direction it runs
+                  # last, after all upstream filters (adapt, meter, tracer) have
+                  # written their dynamic metadata.
+                  - name: orange-reqlog
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: orange
+                      filter_name: orange-reqlog
+                      filter_config:
+                        "@type": type.googleapis.com/google.protobuf.StringValue
+                        value: '{}'
                   - name: orange-match
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
@@ -56,6 +69,21 @@ static_resources:
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
                 access_log:
+                  # orange-reqlog audit log — triggers OnStreamFinalized in the
+                  # reqlog filter so finalized timing/byte fields are delivered.
+                  - name: envoy.access_loggers.dynamic_modules
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.access_loggers.dynamic_modules.v3.DynamicModuleAccessLog
+                      dynamic_module_config:
+                        name: orange
+                      logger_name: orange-reqlog
+                      logger_config:
+                        "@type": type.googleapis.com/google.protobuf.StringValue
+                        value: '{}'
+                      log_format:
+                        json_format:
+                          ts:         "%START_TIME%"
+                          request_id: "%REQ(x-request-id)%"
                   # LLM request log — skips /mcp/* paths.
                   - name: envoy.access_loggers.file
                     filter:

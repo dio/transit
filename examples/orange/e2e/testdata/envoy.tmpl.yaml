@@ -10,6 +10,15 @@ static_resources:
                 "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
                 stat_prefix: orange
                 http_filters:
+                  - name: orange-reqlog
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
+                      dynamic_module_config:
+                        name: orange
+                      filter_name: orange-reqlog
+                      filter_config:
+                        "@type": type.googleapis.com/google.protobuf.StringValue
+                        value: '{}'
                   - name: orange-match
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter
@@ -32,6 +41,19 @@ static_resources:
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
                 access_log:
+                  - name: envoy.access_loggers.dynamic_modules
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.access_loggers.dynamic_modules.v3.DynamicModuleAccessLog
+                      dynamic_module_config:
+                        name: orange
+                      logger_name: orange-reqlog
+                      logger_config:
+                        "@type": type.googleapis.com/google.protobuf.StringValue
+                        value: '{}'
+                      log_format:
+                        json_format:
+                          ts:         "%START_TIME%"
+                          request_id: "%REQ(x-request-id)%"
                   - name: envoy.access_loggers.file
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.access_loggers.file.v3.FileAccessLog
