@@ -29,7 +29,9 @@ func sampleSplitFrom(children []config.SplitChild, randN func(n int) int) int {
 		total += c.Weight
 	}
 	if total <= 0 {
-		// Degenerate: all weights zero. Fall back to uniform selection.
+		// Degenerate: all weights zero — validateRoutingNode is the strict
+		// gate that rejects this at load time. The fallback here is a second
+		// line of defence: a bad config must not crash the proxy process.
 		return randN(len(children))
 	}
 	draw := randN(total)
