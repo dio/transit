@@ -157,51 +157,48 @@ func TestInit_HostnamePopulated(t *testing.T) {
 	require.True(t, found, "expected AddHosts call with Hostname=api.openai.com for openai_direct")
 }
 
-// --- earliestNextRefresh ---
+// --- DNSDiscovery.earliestNext ---
 
-func TestEarliestNextRefresh_nilMap(t *testing.T) {
-	c := &cluster{}
+func TestEarliestNext_nilMap(t *testing.T) {
+	d := &DNSDiscovery{}
 	before := time.Now()
-	got := c.earliestNextRefresh()
-	// Must be approximately now + defaultDNSRefreshInterval.
+	got := d.earliestNext()
 	require.True(t, got.After(before.Add(defaultDNSRefreshInterval-time.Second)),
 		"nil map: want ~now+defaultDNSRefreshInterval, got %v", got)
 	require.True(t, got.Before(before.Add(defaultDNSRefreshInterval+time.Second)),
 		"nil map: result too far in the future")
 }
 
-func TestEarliestNextRefresh_emptyMap(t *testing.T) {
-	c := &cluster{}
-	m := map[provBindingKey]*resolvedUpstream{}
-	c.hosts.Store(&m)
+func TestEarliestNext_emptyMap(t *testing.T) {
+	d := &DNSDiscovery{nextRefresh: map[provBindingKey]time.Time{}}
 	before := time.Now()
-	got := c.earliestNextRefresh()
+	got := d.earliestNext()
 	require.True(t, got.After(before.Add(defaultDNSRefreshInterval-time.Second)),
 		"empty map: want ~now+defaultDNSRefreshInterval, got %v", got)
 }
 
-func TestEarliestNextRefresh_singleEntry(t *testing.T) {
-	c := &cluster{}
+func TestEarliestNext_singleEntry(t *testing.T) {
 	target := time.Now().Add(42 * time.Second)
-	m := map[provBindingKey]*resolvedUpstream{
-		{provider: "only", binding: "default"}: {nextRefresh: target},
+	d := &DNSDiscovery{
+		nextRefresh: map[provBindingKey]time.Time{
+			{provider: "only", binding: "default"}: target,
+		},
 	}
-	c.hosts.Store(&m)
-	got := c.earliestNextRefresh()
+	got := d.earliestNext()
 	require.WithinDuration(t, target, got, time.Millisecond)
 }
 
-func TestEarliestNextRefresh_picksEarliest(t *testing.T) {
-	c := &cluster{}
+func TestEarliestNext_picksEarliest(t *testing.T) {
 	soon := time.Now().Add(5 * time.Second)
 	later := time.Now().Add(60 * time.Second)
-	m := map[provBindingKey]*resolvedUpstream{
-		{provider: "a", binding: "default"}: {nextRefresh: later},
-		{provider: "b", binding: "default"}: {nextRefresh: soon},
-		{provider: "c", binding: "default"}: {nextRefresh: later.Add(time.Minute)},
+	d := &DNSDiscovery{
+		nextRefresh: map[provBindingKey]time.Time{
+			{provider: "a", binding: "default"}: later,
+			{provider: "b", binding: "default"}: soon,
+			{provider: "c", binding: "default"}: later.Add(time.Minute),
+		},
 	}
-	c.hosts.Store(&m)
-	got := c.earliestNextRefresh()
+	got := d.earliestNext()
 	require.WithinDuration(t, soon, got, time.Millisecond,
 		"must return the earliest nextRefresh across all entries")
 }
@@ -224,7 +221,7 @@ func TestLookupHost_errDecision(t *testing.T) {
 func TestLookupHost_knownProvider(t *testing.T) {
 	ptr := makeTestHostPtr()
 	c := &cluster{}
-	m := map[provBindingKey]*resolvedUpstream{
+	m := map[provBindingKey]*hostEntry{
 		{provider: "openai_direct", binding: "default"}: {addrs: []string{"1.2.3.4:443"}, ptrs: []up.HostPtr{ptr}},
 	}
 	c.hosts.Store(&m)
@@ -235,7 +232,7 @@ func TestLookupHost_knownProvider(t *testing.T) {
 
 func TestLookupHost_unknownProvider(t *testing.T) {
 	c := &cluster{}
-	m := map[provBindingKey]*resolvedUpstream{
+	m := map[provBindingKey]*hostEntry{
 		{provider: "openai_direct", binding: "default"}: {addrs: []string{"1.2.3.4:443"}, ptrs: []up.HostPtr{makeTestHostPtr()}},
 	}
 	c.hosts.Store(&m)
@@ -254,7 +251,7 @@ func TestLookupHost_nilHosts(t *testing.T) {
 func TestLookupHost_errTakesPrecedenceOverHosts(t *testing.T) {
 	ptr := makeTestHostPtr()
 	c := &cluster{}
-	m := map[provBindingKey]*resolvedUpstream{
+	m := map[provBindingKey]*hostEntry{
 		{provider: "p", binding: "default"}: {addrs: []string{"1.2.3.4:443"}, ptrs: []up.HostPtr{ptr}},
 	}
 	c.hosts.Store(&m)
@@ -267,7 +264,7 @@ func TestLookupHost_errTakesPrecedenceOverHosts(t *testing.T) {
 func TestLookupHost_roundRobins(t *testing.T) {
 	ptr1, ptr2 := makeTestHostPtr(), makeTestHostPtr()
 	c := &cluster{}
-	m := map[provBindingKey]*resolvedUpstream{
+	m := map[provBindingKey]*hostEntry{
 		{provider: "openai", binding: "default"}: {addrs: []string{"1.2.3.4:443", "5.6.7.8:443"}, ptrs: []up.HostPtr{ptr1, ptr2}},
 	}
 	c.hosts.Store(&m)
@@ -280,7 +277,7 @@ func TestLookupHost_roundRobins(t *testing.T) {
 func TestLBChooseHost_filterStateProvider(t *testing.T) {
 	ptr := makeTestHostPtr()
 	c := &cluster{}
-	m := map[provBindingKey]*resolvedUpstream{
+	m := map[provBindingKey]*hostEntry{
 		{provider: "openai", binding: "default"}: {addrs: []string{"1.2.3.4:443"}, ptrs: []up.HostPtr{ptr}},
 	}
 	c.hosts.Store(&m)
@@ -305,7 +302,7 @@ func TestLBChooseHost_filterStateProvider(t *testing.T) {
 	require.Nil(t, completion)
 }
 
-// --- resolveAddrs / applyResolved reconciliation ---
+// --- DNSDiscovery.buildSnapshot / cluster.reconcileSnapshot ---
 
 // loadPickConfig loads a testdata config file with PICK_TEST_KEY set.
 func loadPickConfig(t *testing.T, path string) {
@@ -319,13 +316,20 @@ func loadPickConfig(t *testing.T, path string) {
 	})
 }
 
-// newTestCluster returns a cluster with a stub resolveFunc and an initialised logger.
+// newTestCluster returns a cluster backed by a DNSDiscovery with a stub
+// resolveFunc so tests never make real DNS calls.
 func newTestCluster(fn func(ctx context.Context, endpoint string) ([]string, time.Duration, error)) *cluster {
-	c := &cluster{
-		resolveFunc: fn,
-		logger:      slog.Default().With("component", "orange/pick/test"),
+	return &cluster{
+		disc:   &DNSDiscovery{resolveFunc: fn, logger: slog.Default().With("component", "orange/pick/test")},
+		logger: slog.Default().With("component", "orange/pick/test"),
 	}
-	return c
+}
+
+// resolveAndApply is a test helper that runs buildSnapshot + reconcileSnapshot
+// in sequence, mirroring the production Init path.
+func resolveAndApply(c *cluster, h up.ClusterHandle) {
+	snap := c.disc.buildSnapshot(context.Background())
+	c.reconcileSnapshot(h, snap)
 }
 
 // fixedResolve returns a resolveFunc that always resolves any endpoint to the
@@ -351,7 +355,7 @@ func TestResolveAll_newProvider(t *testing.T) {
 	h := &pickRecordingHandle{}
 	c := newTestCluster(fixedResolve("1.2.3.4:443", 60*time.Second))
 
-	c.applyResolved(h, c.resolveAddrs(context.Background()))
+	resolveAndApply(c, h)
 
 	require.Equal(t, 2, h.addCount(), "both providers must be added on first resolveAll")
 	require.Equal(t, 0, h.removeCount(), "no removes on first pass")
@@ -365,7 +369,7 @@ func TestResolveAll_addrUnchanged(t *testing.T) {
 	h := &pickRecordingHandle{}
 	c := newTestCluster(fixedResolve("1.2.3.4:443", 60*time.Second))
 
-	c.applyResolved(h, c.resolveAddrs(context.Background()))
+	resolveAndApply(c, h)
 	addCallsAfterFirst := h.addCount()
 	require.Equal(t, 2, addCallsAfterFirst)
 
@@ -376,7 +380,7 @@ func TestResolveAll_addrUnchanged(t *testing.T) {
 	require.NotNil(t, ptrA)
 	require.NotNil(t, ptrB)
 
-	c.applyResolved(h, c.resolveAddrs(context.Background()))
+	resolveAndApply(c, h)
 
 	// No new AddHosts or RemoveHosts calls when addr is unchanged.
 	require.Equal(t, addCallsAfterFirst, h.addCount(), "no new AddHosts when addr unchanged")
@@ -395,14 +399,14 @@ func TestResolveAll_addrChanged(t *testing.T) {
 
 	h := &pickRecordingHandle{}
 	c := newTestCluster(fixedResolve("1.2.3.4:443", 60*time.Second))
-	c.applyResolved(h, c.resolveAddrs(context.Background()))
+	resolveAndApply(c, h)
 	require.Equal(t, 2, h.addCount())
 
 	oldPtrA := (*c.hosts.Load())[provBindingKey{provider: "provider_a", binding: "default"}].ptrs[0]
 
 	// Simulate IP change for both providers.
-	c.resolveFunc = fixedResolve("9.9.9.9:443", 60*time.Second)
-	c.applyResolved(h, c.resolveAddrs(context.Background()))
+	c.disc.resolveFunc = fixedResolve("9.9.9.9:443", 60*time.Second)
+	resolveAndApply(c, h)
 
 	require.Equal(t, 4, h.addCount(), "two new AddHosts calls for changed IPs")
 	require.Equal(t, 2, h.removeCount(), "two RemoveHosts calls for stale IPs")
@@ -419,30 +423,34 @@ func TestResolveAll_resolveFailKeepsOld(t *testing.T) {
 
 	h := &pickRecordingHandle{}
 	c := newTestCluster(fixedResolve("1.2.3.4:443", 60*time.Second))
-	c.applyResolved(h, c.resolveAddrs(context.Background()))
+	resolveAndApply(c, h)
 	require.Equal(t, 2, h.addCount())
 
 	oldHosts := c.hosts.Load()
 	ptrA := (*oldHosts)[provBindingKey{provider: "provider_a", binding: "default"}].ptrs[0]
 
 	// Next resolve fails for all providers.
-	c.resolveFunc = errResolve("simulated DNS failure")
-	c.applyResolved(h, c.resolveAddrs(context.Background()))
+	c.disc.resolveFunc = errResolve("simulated DNS failure")
+	now := time.Now()
+	resolveAndApply(c, h)
 
 	// No additional AddHosts or RemoveHosts.
 	require.Equal(t, 2, h.addCount(), "no new AddHosts on DNS failure")
 	require.Equal(t, 0, h.removeCount(), "no RemoveHosts on DNS failure — keep healthy host")
 
-	// The preserved entry must have nextRefresh reset to retryDelay() = minTTLFloor + rand[0, minTTLFloor).
-	now := time.Now()
+	// The preserved hostEntry must still hold the old HostPtr.
 	m := c.hosts.Load()
 	require.NotNil(t, m)
 	entry := (*m)[provBindingKey{provider: "provider_a", binding: "default"}]
 	require.Equal(t, ptrA, entry.ptrs[0], "HostPtr must be preserved after DNS failure")
-	require.True(t, !entry.nextRefresh.Before(now.Add(minTTLFloor-time.Second)),
-		"nextRefresh must be at least ~now+minTTLFloor after DNS failure, got %v", entry.nextRefresh)
-	require.True(t, entry.nextRefresh.Before(now.Add(2*minTTLFloor+time.Second)),
-		"nextRefresh must be less than ~now+2*minTTLFloor after DNS failure, got %v", entry.nextRefresh)
+
+	// DNSDiscovery must have scheduled a retry in the [minTTLFloor, 2*minTTLFloor) window.
+	key := provBindingKey{provider: "provider_a", binding: "default"}
+	nr := c.disc.nextRefresh[key]
+	require.True(t, !nr.Before(now.Add(minTTLFloor-time.Second)),
+		"nextRefresh must be at least ~now+minTTLFloor after DNS failure, got %v", nr)
+	require.True(t, nr.Before(now.Add(2*minTTLFloor+time.Second)),
+		"nextRefresh must be less than ~now+2*minTTLFloor after DNS failure, got %v", nr)
 }
 
 // TestResolveAll_providerDeleted verifies that a provider removed from config is
@@ -452,14 +460,14 @@ func TestResolveAll_providerDeleted(t *testing.T) {
 
 	h := &pickRecordingHandle{}
 	c := newTestCluster(fixedResolve("1.2.3.4:443", 60*time.Second))
-	c.applyResolved(h, c.resolveAddrs(context.Background()))
+	resolveAndApply(c, h)
 	require.Equal(t, 2, h.addCount(), "both providers added on first pass")
 
 	// Switch config to only provider_a.
 	t.Setenv(orangecfg.EnvVar, "testdata/one_provider.yaml")
 	orangecfg.MustReload()
 
-	c.applyResolved(h, c.resolveAddrs(context.Background()))
+	resolveAndApply(c, h)
 
 	// provider_b must have been removed; provider_a survives.
 	require.Equal(t, 1, h.removeCount(), "provider_b must be evicted when deleted from config")
@@ -528,7 +536,7 @@ func TestResolveAll_multipleAddrs(t *testing.T) {
 		return []string{"1.2.3.4:443", "5.6.7.8:443"}, 60 * time.Second, nil
 	})
 
-	c.applyResolved(h, c.resolveAddrs(context.Background()))
+	resolveAndApply(c, h)
 
 	require.Equal(t, 2, h.addCount(), "all IPs for provider_a must be registered")
 	require.ElementsMatch(t, []string{"1.2.3.4:443", "5.6.7.8:443"}, h.allAddedAddrs())
@@ -537,7 +545,8 @@ func TestResolveAll_multipleAddrs(t *testing.T) {
 	require.Len(t, entry.addrs, 2)
 }
 
-// TestResolveAll_ttlFloor verifies that short TTLs are clamped to minTTLFloor.
+// TestResolveAll_ttlFloor verifies that short TTLs are clamped to minTTLFloor
+// in DNSDiscovery's scheduled next-refresh time.
 func TestResolveAll_ttlFloor(t *testing.T) {
 	loadPickConfig(t, "testdata/one_provider.yaml")
 
@@ -546,13 +555,12 @@ func TestResolveAll_ttlFloor(t *testing.T) {
 	c := newTestCluster(func(_ context.Context, _ string) ([]string, time.Duration, error) {
 		return []string{"1.2.3.4:443"}, time.Second, nil
 	})
-	c.applyResolved(h, c.resolveAddrs(context.Background()))
+	resolveAndApply(c, h)
 
-	m := c.hosts.Load()
-	require.NotNil(t, m)
-	entry := (*m)[provBindingKey{provider: "provider_a", binding: "default"}]
-	require.True(t, entry.nextRefresh.After(time.Now().Add(minTTLFloor-time.Second)),
-		"nextRefresh must be at least minTTLFloor ahead even for short-TTL DNS responses")
+	key := provBindingKey{provider: "provider_a", binding: "default"}
+	nr := c.disc.nextRefresh[key]
+	require.True(t, nr.After(time.Now().Add(minTTLFloor-time.Second)),
+		"DNSDiscovery nextRefresh must be at least minTTLFloor ahead even for short-TTL DNS responses")
 }
 
 // --- bindings ----------------------------------------------------------------
@@ -565,7 +573,7 @@ func TestResolveAll_twoBindings(t *testing.T) {
 	h := &pickRecordingHandle{}
 	c := newTestCluster(fixedResolve("1.2.3.4:443", 60*time.Second))
 
-	c.applyResolved(h, c.resolveAddrs(context.Background()))
+	resolveAndApply(c, h)
 
 	require.Equal(t, 2, h.addCount(), "both bindings must produce separate AddHosts calls")
 	require.Equal(t, 0, h.removeCount(), "no removes on first pass")
@@ -583,7 +591,7 @@ func TestLookupHost_namedBinding(t *testing.T) {
 	eastPtr := makeTestHostPtr()
 	westPtr := makeTestHostPtr()
 	c := &cluster{}
-	m := map[provBindingKey]*resolvedUpstream{
+	m := map[provBindingKey]*hostEntry{
 		{provider: "anthropic", binding: "us-east"}: {addrs: []string{"1.2.3.4:443"}, ptrs: []up.HostPtr{eastPtr}},
 		{provider: "anthropic", binding: "us-west"}: {addrs: []string{"5.6.7.8:443"}, ptrs: []up.HostPtr{westPtr}},
 	}
@@ -602,7 +610,7 @@ func TestLookupHost_namedBinding(t *testing.T) {
 // returns orange.unknown_upstream.
 func TestLookupHost_missingBinding(t *testing.T) {
 	c := &cluster{}
-	m := map[provBindingKey]*resolvedUpstream{
+	m := map[provBindingKey]*hostEntry{
 		{provider: "anthropic", binding: "us-east"}: {addrs: []string{"1.2.3.4:443"}, ptrs: []up.HostPtr{makeTestHostPtr()}},
 	}
 	c.hosts.Store(&m)
@@ -617,7 +625,7 @@ func TestLookupHost_missingBinding(t *testing.T) {
 func TestLookupHost_emptyBindingNormalizesToDefault(t *testing.T) {
 	ptr := makeTestHostPtr()
 	c := &cluster{}
-	m := map[provBindingKey]*resolvedUpstream{
+	m := map[provBindingKey]*hostEntry{
 		{provider: "openai", binding: "default"}: {addrs: []string{"1.2.3.4:443"}, ptrs: []up.HostPtr{ptr}},
 	}
 	c.hosts.Store(&m)
@@ -634,7 +642,7 @@ func TestResolveAll_legacyEndpoint(t *testing.T) {
 
 	h := &pickRecordingHandle{}
 	c := newTestCluster(fixedResolve("1.2.3.4:443", 60*time.Second))
-	c.applyResolved(h, c.resolveAddrs(context.Background()))
+	resolveAndApply(c, h)
 
 	m := c.hosts.Load()
 	_, hasDefault := (*m)[provBindingKey{provider: "provider_a", binding: "default"}]
@@ -663,7 +671,7 @@ func TestResolveAll_unreferencedBindingsRegistered(t *testing.T) {
 	h := &pickRecordingHandle{}
 	c := newTestCluster(fixedResolve("1.2.3.4:443", 60*time.Second))
 
-	c.applyResolved(h, c.resolveAddrs(context.Background()))
+	resolveAndApply(c, h)
 
 	// us-east is referenced by a model; us-west and us-central are not.
 	// All three must still be registered.
@@ -687,7 +695,7 @@ func TestResolveAll_bindingRemovedEvictsOnlyThatBinding(t *testing.T) {
 
 	h := &pickRecordingHandle{}
 	c := newTestCluster(fixedResolve("1.2.3.4:443", 60*time.Second))
-	c.applyResolved(h, c.resolveAddrs(context.Background()))
+	resolveAndApply(c, h)
 	require.Equal(t, 2, h.addCount(), "both bindings added on first pass")
 	require.Equal(t, 0, h.removeCount())
 
@@ -699,7 +707,7 @@ func TestResolveAll_bindingRemovedEvictsOnlyThatBinding(t *testing.T) {
 	t.Setenv(orangecfg.EnvVar, "testdata/one_binding.yaml")
 	orangecfg.MustReload()
 
-	c.applyResolved(h, c.resolveAddrs(context.Background()))
+	resolveAndApply(c, h)
 
 	require.Equal(t, 1, h.removeCount(), "only us-west must be evicted via RemoveHosts")
 
@@ -712,7 +720,7 @@ func TestResolveAll_bindingRemovedEvictsOnlyThatBinding(t *testing.T) {
 	require.Equal(t, eastPtr, entry.ptrs[0], "us-east HostPtr must be preserved — no spurious re-registration")
 }
 
-// TestApplyResolved_hostnameSetForSNI verifies that applyResolved passes the
+// TestApplyResolved_hostnameSetForSNI verifies that reconcileSnapshot passes the
 // correct Hostname (extracted from the binding's endpoint URL) in every
 // HostSpec. This is the pick layer's contribution to TLS SNI: the custom
 // Envoy build uses HostSpec.Hostname as the SNI value (auto_host_sni) when
@@ -722,7 +730,7 @@ func TestApplyResolved_hostnameSetForSNI(t *testing.T) {
 
 	h := &pickRecordingHandle{}
 	c := newTestCluster(fixedResolve("1.2.3.4:443", 60*time.Second))
-	c.applyResolved(h, c.resolveAddrs(context.Background()))
+	resolveAndApply(c, h)
 
 	require.Equal(t, 2, h.addCount())
 	hostnames := h.allAddedHostnames()

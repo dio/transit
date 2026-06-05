@@ -7,7 +7,7 @@
 // body-driven host-selection pattern.
 //
 // All hosts on the orange-pick cluster are added at runtime via
-// ClusterHandle.AddHosts from applyResolved — never via xDS. The custom
+// ClusterHandle.AddHosts from reconcileSnapshot — never via xDS. The custom
 // Envoy build enables auto_host_sni and a bounded SNI-scoped TLS session
 // cache on the orange-pick upstream (see
 // https://gist.github.com/dio/965d1e555909c02013ca882a2b3caa78), so
@@ -28,7 +28,6 @@ import (
 	"os"
 	"sort"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -97,19 +96,35 @@ func (k provBindingKey) String() string {
 	return k.provider + ":" + k.binding
 }
 
-// resolvedUpstream holds all resolved IPs for one provider-binding pair plus
-// their HostPtrs and the time at which the DNS TTL expires. The refresh loop
-// wakes at the earliest nextRefresh across all entries rather than a fixed interval.
+// hostEntry holds all resolved IPs for one provider-binding pair plus their
+// HostPtrs. TTL and refresh scheduling are owned by DNSDiscovery, not here.
 //
 // rr is an atomic round-robin counter; lookupHost increments it on every call
 // and selects ptrs[rr % len(ptrs)], distributing requests across all IPs.
-// resolvedUpstream is always heap-allocated (stored as *resolvedUpstream) so
-// rr can be mutated without copying the struct (atomic.Uint64 is noCopy).
-type resolvedUpstream struct {
-	addrs       []string
-	ptrs        []up.HostPtr
-	nextRefresh time.Time
-	rr          atomic.Uint64
+// hostEntry is always heap-allocated (stored as *hostEntry) so rr can be
+// mutated without copying the struct (atomic.Uint64 is noCopy).
+type hostEntry struct {
+	addrs []string
+	ptrs  []up.HostPtr
+	rr    atomic.Uint64
+}
+
+// Discovery emits periodic snapshots of resolved upstream addresses.
+type Discovery interface {
+	Run(ctx context.Context, updates chan<- *Snapshot)
+}
+
+// Snapshot is a point-in-time view of all resolved upstream addresses.
+type Snapshot struct {
+	Entries map[provBindingKey]Entry
+}
+
+// Entry holds the resolved hostname and IP addresses for one provider-binding
+// pair. Empty Addresses signals a resolution failure; the reconciler preserves
+// any existing healthy hosts rather than removing them.
+type Entry struct {
+	Hostname  string
+	Addresses []string
 }
 
 type cluster struct {
@@ -119,17 +134,18 @@ type cluster struct {
 	stopRefresh   context.CancelFunc
 	logger        *slog.Logger
 
-	// resolveFunc is called by resolveAll for each provider endpoint. Nil means
-	// use the package-level resolveUpstream (real DNS). Set in tests to avoid
-	// network calls.
-	resolveFunc func(ctx context.Context, endpoint string) (addrs []string, ttl time.Duration, err error)
+	// disc is the Discovery instance used for both the synchronous Init resolve
+	// and the background Run loop. Tests pre-populate this field with a
+	// DNSDiscovery carrying a stub resolveFunc; production code creates it lazily
+	// in Init when the field is nil.
+	disc *DNSDiscovery
 
 	// hosts is the source of truth ChooseHost reads from. Published atomically
-	// after each resolveAll call to keep ChooseHost lock-free. Values are
+	// after each reconcileSnapshot call to keep ChooseHost lock-free. Values are
 	// pointers so the per-entry rr counter survives map republishes. The map is
 	// keyed by (provider, binding) so multi-binding providers have independent
 	// round-robin counters and HostPtr sets.
-	hosts atomic.Pointer[map[provBindingKey]*resolvedUpstream]
+	hosts atomic.Pointer[map[provBindingKey]*hostEntry]
 }
 
 func (c *cluster) Init(h up.ClusterHandle) {
@@ -138,12 +154,15 @@ func (c *cluster) Init(h up.ClusterHandle) {
 		c.logger = observability.Logger("orange/pick")
 	}
 	config.EnsureLogger()
+	if c.disc == nil {
+		c.disc = &DNSDiscovery{logger: c.logger}
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultResolveTimeout)
 	defer cancel()
-	// Init is called on the main thread, so resolveAddrs (DNS) + applyResolved
+	// Init is called on the main thread, so buildSnapshot (DNS) + reconcileSnapshot
 	// (host mutations) can run in sequence here without scheduling.
-	c.applyResolved(h, c.resolveAddrs(ctx))
+	c.reconcileSnapshot(h, c.disc.buildSnapshot(ctx))
 	h.PreInitComplete()
 }
 
@@ -155,64 +174,31 @@ func (c *cluster) ServerInitialized(h up.ClusterHandle) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	c.stopRefresh = cancel
-	go c.refreshLoop(ctx, h)
-}
 
-// refreshLoop wakes at the earliest nextRefresh across all registered upstreams,
-// resolves DNS on the goroutine, then schedules host reconciliation on the main
-// thread (AddHosts/RemoveHosts/UpdateHostHealth must not be called off-thread).
-func (c *cluster) refreshLoop(ctx context.Context, h up.ClusterHandle) {
-	for {
-		delay := time.Until(c.earliestNextRefresh())
-		if delay < minTTLFloor {
-			delay = minTTLFloor
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(delay):
-			rctx, cancel := context.WithTimeout(ctx, defaultResolveTimeout)
-			addrs := c.resolveAddrs(rctx)
-			cancel()
-			done := make(chan struct{})
-			c.handle.Schedule(func() {
-				c.applyResolved(h, addrs)
-				close(done)
-			})
+	updates := make(chan *Snapshot)
+	go c.disc.Run(ctx, updates)
+	go func() {
+		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-done:
+			case snap, ok := <-updates:
+				if !ok {
+					return
+				}
+				done := make(chan struct{})
+				c.handle.Schedule(func() {
+					c.reconcileSnapshot(h, snap)
+					close(done)
+				})
+				select {
+				case <-ctx.Done():
+					return
+				case <-done:
+				}
 			}
 		}
-	}
-}
-
-// earliestNextRefresh returns the soonest nextRefresh across all registered
-// upstreams, or now+defaultDNSRefreshInterval when the host map is empty.
-func (c *cluster) earliestNextRefresh() time.Time {
-	m := c.hosts.Load()
-	if m == nil || len(*m) == 0 {
-		return time.Now().Add(defaultDNSRefreshInterval)
-	}
-	var earliest time.Time
-	for _, r := range *m {
-		if r == nil {
-			continue
-		}
-		if earliest.IsZero() || r.nextRefresh.Before(earliest) {
-			earliest = r.nextRefresh
-		}
-	}
-	return earliest
-}
-
-// resolve delegates to c.resolveFunc when set, otherwise calls resolveUpstream.
-func (c *cluster) resolve(ctx context.Context, endpoint string) ([]string, time.Duration, error) {
-	if c.resolveFunc != nil {
-		return c.resolveFunc(ctx, endpoint)
-	}
-	return resolveUpstream(ctx, endpoint)
+	}()
 }
 
 // lookupHostN maps a match.Decision and an attempt number to a HostPtr.
@@ -260,76 +246,29 @@ func (c *cluster) lookupHost(d match.Decision) up.HostResult {
 	return c.lookupHostN(d, 0)
 }
 
-// dnsResult holds the outcome of one DNS resolution attempt, plus the
-// provider hostname needed to build a HostSpec if the host set changes.
-type dnsResult struct {
-	addrs    []string
-	hostname string // p.Host(), captured at resolve time
-	ttl      time.Duration
-	err      error
-}
-
-// resolveAddrs performs DNS resolution for every LLM provider binding and MCP
-// server in the current config. Each provider contributes one entry per
-// binding (or one "default" entry when no bindings are configured). MCP
-// servers always use the "default" binding key. Safe to call from any
-// goroutine; it never touches the cluster handle.
-func (c *cluster) resolveAddrs(ctx context.Context) map[provBindingKey]dnsResult {
-	cfg := config.Get()
-	out := make(map[provBindingKey]dnsResult)
-	for name, p := range cfg.Providers {
-		for _, b := range p.AllBindings() {
-			key := provBindingKey{name, b.Name}
-			addrs, ttl, err := c.resolve(ctx, b.Endpoint)
-			out[key] = dnsResult{addrs: addrs, hostname: hostnameOf(b.Endpoint), ttl: ttl, err: err}
-		}
-	}
-	if cfg.MCP != nil {
-		for name, s := range cfg.MCP.Servers {
-			key := provBindingKey{name, "default"}
-			addrs, ttl, err := c.resolve(ctx, s.Endpoint)
-			out[key] = dnsResult{addrs: addrs, hostname: s.Host(), ttl: ttl, err: err}
-		}
-	}
-	return out
-}
-
-// hostnameOf parses an endpoint URL and returns its hostname.
-func hostnameOf(endpoint string) string {
-	if endpoint == "" {
-		return ""
-	}
-	u, err := url.Parse(endpoint)
-	if err != nil {
-		return ""
-	}
-	return u.Hostname()
-}
-
-// applyResolved reconciles the cluster host set from pre-resolved DNS results.
+// reconcileSnapshot reconciles the cluster host set from a pre-resolved snapshot.
 // Must be called on the cluster main thread (AddHosts/RemoveHosts/UpdateHostHealth
 // are main-thread-only per the ClusterHandle contract).
 //
 // Each provider may resolve to multiple A-record IPs; all are registered so the
 // round-robin in lookupHost can distribute across them. Reconciliation rules:
-//   - resolve fails    → keep existing entry, reset nextRefresh to now+minTTLFloor
-//   - IP set unchanged → keep existing HostPtrs and rr counter, update nextRefresh
-//   - IP added         → AddHosts for new addr, retain ptrs for unchanged addrs
-//   - IP removed       → RemoveHosts for gone addr
-//   - new provider     → AddHosts for all resolved addrs
-//   - provider deleted → RemoveHosts for all its ptrs
-func (c *cluster) applyResolved(h up.ClusterHandle, resolved map[provBindingKey]dnsResult) {
+//   - empty Addresses (resolve failed) → keep existing entry
+//   - IP set unchanged                  → keep existing HostPtrs and rr counter
+//   - IP added                          → AddHosts for new addr, retain ptrs for unchanged addrs
+//   - IP removed                        → RemoveHosts for gone addr
+//   - new provider                      → AddHosts for all resolved addrs
+//   - provider deleted from snapshot    → RemoveHosts for all its ptrs
+func (c *cluster) reconcileSnapshot(h up.ClusterHandle, snap *Snapshot) {
 	current := c.hosts.Load()
-	out := make(map[provBindingKey]*resolvedUpstream, len(resolved))
+	out := make(map[provBindingKey]*hostEntry, len(snap.Entries))
 
-	for name, r := range resolved {
-		if r.err != nil {
-			c.logger.Warn("skipping upstream: resolve failed", "upstream", name.String(), "err", r.err)
-			// Preserve the existing entry so a DNS hiccup doesn't pull a healthy
-			// host, but schedule a retry soon.
+	for name, e := range snap.Entries {
+		if len(e.Addresses) == 0 {
+			c.logger.Warn("skipping upstream: resolve failed", "upstream", name.String())
+			// Preserve the existing entry so a DNS hiccup doesn't pull a healthy host.
 			if current != nil {
 				if old, ok := (*current)[name]; ok {
-					entry := &resolvedUpstream{addrs: old.addrs, ptrs: old.ptrs, nextRefresh: time.Now().Add(retryDelay())}
+					entry := &hostEntry{addrs: old.addrs, ptrs: old.ptrs}
 					entry.rr.Store(old.rr.Load())
 					out[name] = entry
 				}
@@ -337,13 +276,10 @@ func (c *cluster) applyResolved(h up.ClusterHandle, resolved map[provBindingKey]
 			continue
 		}
 
-		ttl := max(r.ttl, minTTLFloor)
-		nextRefresh := time.Now().Add(ttl + jitter(minTTLFloor))
-
 		// Build a map of existing addr -> HostPtr for this (provider, binding).
 		existing := map[string]up.HostPtr{}
 		var oldRR uint64
-		var old *resolvedUpstream
+		var old *hostEntry
 		if current != nil {
 			if o, ok := (*current)[name]; ok {
 				old = o
@@ -354,13 +290,13 @@ func (c *cluster) applyResolved(h up.ClusterHandle, resolved map[provBindingKey]
 			}
 		}
 
-		// Remove IPs that are no longer in the DNS result.
-		newAddrSet := make(map[string]struct{}, len(r.addrs))
-		for _, addr := range r.addrs {
+		// Remove IPs that are no longer in the snapshot.
+		newAddrSet := make(map[string]struct{}, len(e.Addresses))
+		for _, addr := range e.Addresses {
 			newAddrSet[addr] = struct{}{}
 		}
 
-		// IP set unchanged (order-independent) — just extend the refresh deadline.
+		// IP set unchanged (order-independent) — keep existing HostPtrs and rr counter.
 		if old != nil && len(existing) == len(newAddrSet) {
 			unchanged := true
 			for addr := range existing {
@@ -370,7 +306,7 @@ func (c *cluster) applyResolved(h up.ClusterHandle, resolved map[provBindingKey]
 				}
 			}
 			if unchanged {
-				entry := &resolvedUpstream{addrs: old.addrs, ptrs: old.ptrs, nextRefresh: nextRefresh}
+				entry := &hostEntry{addrs: old.addrs, ptrs: old.ptrs}
 				entry.rr.Store(oldRR)
 				out[name] = entry
 				continue
@@ -385,14 +321,14 @@ func (c *cluster) applyResolved(h up.ClusterHandle, resolved map[provBindingKey]
 		}
 
 		// Build the new ptrs slice, registering any IPs not yet in the cluster.
-		ptrs := make([]up.HostPtr, 0, len(r.addrs))
-		for _, addr := range r.addrs {
+		ptrs := make([]up.HostPtr, 0, len(e.Addresses))
+		for _, addr := range e.Addresses {
 			if ptr, ok := existing[addr]; ok {
 				ptrs = append(ptrs, ptr)
 			} else {
 				added := h.AddHosts([]up.HostSpec{{
 					Address:  addr,
-					Hostname: r.hostname,
+					Hostname: e.Hostname,
 				}})
 				if len(added) == 0 {
 					c.logger.Warn("skipping addr: AddHosts returned no ptrs", "upstream", name.String(), "addr", addr)
@@ -409,12 +345,12 @@ func (c *cluster) applyResolved(h up.ClusterHandle, resolved map[provBindingKey]
 			continue
 		}
 
-		entry := &resolvedUpstream{addrs: r.addrs, ptrs: ptrs, nextRefresh: nextRefresh}
+		entry := &hostEntry{addrs: e.Addresses, ptrs: ptrs}
 		entry.rr.Store(oldRR)
 		out[name] = entry
 	}
 
-	// Remove providers/bindings deleted from config.
+	// Remove providers/bindings absent from the snapshot (deleted from config).
 	if current != nil {
 		for name, old := range *current {
 			if _, kept := out[name]; !kept {
@@ -441,9 +377,9 @@ func (c *cluster) NewClusterLB() up.ClusterLB {
 		},
 	)
 	return &lb{
-		sel:        sel,
+		sel:         sel,
 		lookupHostN: c.lookupHostN,
-		log:        log,
+		log:         log,
 	}
 }
 
@@ -521,6 +457,135 @@ func (l *lb) CancelHostSelection(completion *up.ClusterLBCompletion) {
 	l.sel.Cancel(completion)
 }
 
+// DNSDiscovery implements Discovery using DNS. It owns all TTL bookkeeping,
+// refresh scheduling, and retry logic. The cluster only sees Snapshots.
+type DNSDiscovery struct {
+	logger *slog.Logger
+
+	// resolveFunc is called for each provider endpoint. Nil means use the
+	// package-level resolveUpstream (real DNS). Set in tests to avoid network calls.
+	resolveFunc func(ctx context.Context, endpoint string) (addrs []string, ttl time.Duration, err error)
+
+	// nextRefresh tracks when each key's DNS TTL expires. Updated by buildSnapshot.
+	nextRefresh map[provBindingKey]time.Time
+}
+
+func (d *DNSDiscovery) resolve(ctx context.Context, endpoint string) ([]string, time.Duration, error) {
+	if d.resolveFunc != nil {
+		return d.resolveFunc(ctx, endpoint)
+	}
+	return resolveUpstream(ctx, endpoint)
+}
+
+// buildSnapshot resolves every provider binding and MCP server in the current
+// config and returns a complete Snapshot. Failed resolutions produce entries
+// with empty Addresses so the reconciler can preserve existing healthy hosts.
+// The nextRefresh map is updated as a side-effect so Run knows when to wake.
+func (d *DNSDiscovery) buildSnapshot(ctx context.Context) *Snapshot {
+	if d.nextRefresh == nil {
+		d.nextRefresh = make(map[provBindingKey]time.Time)
+	}
+	cfg := config.Get()
+	snap := &Snapshot{Entries: make(map[provBindingKey]Entry)}
+
+	for name, p := range cfg.Providers {
+		for _, b := range p.AllBindings() {
+			key := provBindingKey{name, b.Name}
+			hostname := hostnameOf(b.Endpoint)
+			addrs, ttl, err := d.resolve(ctx, b.Endpoint)
+			if err != nil {
+				if d.logger != nil {
+					d.logger.Warn("resolve failed", "upstream", key.String(), "err", err)
+				}
+				d.nextRefresh[key] = time.Now().Add(retryDelay())
+				snap.Entries[key] = Entry{Hostname: hostname}
+			} else {
+				ttl = max(ttl, minTTLFloor)
+				d.nextRefresh[key] = time.Now().Add(ttl + jitter(minTTLFloor))
+				snap.Entries[key] = Entry{Hostname: hostname, Addresses: addrs}
+			}
+		}
+	}
+
+	if cfg.MCP != nil {
+		return snap
+	}
+
+	for name, s := range cfg.MCP.Servers {
+		key := provBindingKey{name, "default"}
+		hostname := s.Host()
+		addrs, ttl, err := d.resolve(ctx, s.Endpoint)
+		if err != nil {
+			if d.logger != nil {
+				d.logger.Warn("resolve failed", "upstream", key.String(), "err", err)
+			}
+			d.nextRefresh[key] = time.Now().Add(retryDelay())
+			snap.Entries[key] = Entry{Hostname: hostname}
+		} else {
+			ttl = max(ttl, minTTLFloor)
+			d.nextRefresh[key] = time.Now().Add(ttl + jitter(minTTLFloor))
+			snap.Entries[key] = Entry{Hostname: hostname, Addresses: addrs}
+		}
+	}
+
+	return snap
+}
+
+// earliestNext returns the soonest scheduled refresh across all known keys,
+// or now+defaultDNSRefreshInterval when no keys have been resolved yet.
+func (d *DNSDiscovery) earliestNext() time.Time {
+	if len(d.nextRefresh) == 0 {
+		return time.Now().Add(defaultDNSRefreshInterval)
+	}
+	var earliest time.Time
+	for _, t := range d.nextRefresh {
+		if earliest.IsZero() || t.Before(earliest) {
+			earliest = t
+		}
+	}
+	return earliest
+}
+
+// Run resolves upstreams periodically and emits complete Snapshots on updates.
+// It wakes at the earliest TTL expiry across all registered keys rather than
+// a fixed interval. The channel send blocks until the consumer is ready,
+// naturally serialising DNS resolves with Envoy main-thread reconciliation.
+func (d *DNSDiscovery) Run(ctx context.Context, updates chan<- *Snapshot) {
+	if d.nextRefresh == nil {
+		d.nextRefresh = make(map[provBindingKey]time.Time)
+	}
+	for {
+		delay := max(time.Until(d.earliestNext()), minTTLFloor)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+
+		rctx, cancel := context.WithTimeout(ctx, defaultResolveTimeout)
+		snap := d.buildSnapshot(rctx)
+		cancel()
+
+		select {
+		case updates <- snap:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// hostnameOf parses an endpoint URL and returns its hostname.
+func hostnameOf(endpoint string) string {
+	if endpoint == "" {
+		return ""
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
+}
+
 // resolveUpstream parses an endpoint URL, resolves the hostname to IP addresses
 // via DNS, and returns all "ip:port" strings plus the minimum TTL observed in
 // the A-record answer. Multiple IPs are returned when DNS returns multiple A
@@ -576,40 +641,16 @@ var fallbackDNSConfig = &dns.ClientConfig{
 	Port:    "53",
 }
 
-// dnsEnvVar is the environment variable that overrides the resolver used by
-// lookupWithTTL. Set to a comma-separated list of IP addresses (optionally
-// with :port) to bypass /etc/resolv.conf — useful when the system resolver
-// (e.g. a VPN's split-DNS) returns different IPs than the public authoritative
-// servers for LLM provider endpoints. Example:
-//
-//	ORANGE_DNS_SERVERS=8.8.8.8,1.1.1.1
-const dnsEnvVar = "ORANGE_DNS_SERVERS"
-
-// staticDNSConfig is parsed once at startup from ORANGE_DNS_SERVERS. Nil means
-// the env var was absent or contained no valid IPs; lookupWithTTL then reads
-// /etc/resolv.conf fresh on each call so VPN connect/disconnect is picked up.
-var staticDNSConfig = func() *dns.ClientConfig {
-	v := os.Getenv(dnsEnvVar)
-	if v == "" {
-		return nil
+// dnsConfig is resolved once at startup from /etc/resolv.conf, falling back
+// to fallbackDNSConfig when the file is missing or unreadable. Immutable after
+// process start.
+var dnsConfig = func() *dns.ClientConfig {
+	conf, err := dns.ClientConfigFromFile("/etc/resolv.conf")
+	if err != nil {
+		slog.Warn("orange/pick: /etc/resolv.conf unavailable, falling back to public resolvers", "err", err)
+		return fallbackDNSConfig
 	}
-	var servers []string
-	for _, s := range strings.Split(v, ",") {
-		s = strings.TrimSpace(s)
-		if s == "" {
-			continue
-		}
-		// Accept plain IPs; leave host:port as-is.
-		if net.ParseIP(s) != nil {
-			servers = append(servers, s)
-		} else if h, _, err := net.SplitHostPort(s); err == nil && net.ParseIP(h) != nil {
-			servers = append(servers, s)
-		}
-	}
-	if len(servers) == 0 {
-		return nil
-	}
-	return &dns.ClientConfig{Servers: servers, Port: "53"}
+	return conf
 }()
 
 // lookupWithTTL queries A records for host using the system resolver config
@@ -624,15 +665,7 @@ func lookupWithTTL(ctx context.Context, host string) ([]net.IPAddr, time.Duratio
 	if ip := net.ParseIP(host); ip != nil {
 		return []net.IPAddr{{IP: ip}}, 24 * time.Hour, nil
 	}
-	conf := staticDNSConfig
-	if conf == nil {
-		var err error
-		conf, err = dns.ClientConfigFromFile("/etc/resolv.conf")
-		if err != nil {
-			slog.Warn("orange/pick: /etc/resolv.conf unavailable, falling back to public resolvers", "err", err)
-			conf = fallbackDNSConfig
-		}
-	}
+	conf := dnsConfig
 
 	c := &dns.Client{}
 	m := new(dns.Msg)
