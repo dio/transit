@@ -257,7 +257,7 @@ func TestLookupModel_emptyID(t *testing.T) {
 func TestLookupModel_endpointOverride(t *testing.T) {
 	cfg := &Config{
 		Providers: map[string]Provider{
-			"anthropic":              {Kind: "anthropic", Endpoint: "https://api.anthropic.com"},
+			"anthropic":               {Kind: "anthropic", Endpoint: "https://api.anthropic.com"},
 			"anthropic_openai_compat": {Kind: "openai", Endpoint: "https://api.anthropic.com"},
 		},
 		Models: map[string]ModelEntry{
@@ -277,7 +277,7 @@ func TestLookupModel_endpointOverride(t *testing.T) {
 func TestLookupModel_endpointOverride_inheritName(t *testing.T) {
 	cfg := &Config{
 		Providers: map[string]Provider{
-			"anthropic":              {Kind: "anthropic", Endpoint: "https://api.anthropic.com"},
+			"anthropic":               {Kind: "anthropic", Endpoint: "https://api.anthropic.com"},
 			"anthropic_openai_compat": {Kind: "openai", Endpoint: "https://api.anthropic.com"},
 		},
 		Models: map[string]ModelEntry{
