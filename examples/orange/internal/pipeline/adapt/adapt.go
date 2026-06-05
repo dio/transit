@@ -34,10 +34,15 @@
 package adapt
 
 import (
+	"encoding/json"
+	"strconv"
+	"strings"
+
 	"github.com/dio/transit/examples/orange/internal/config"
 	"github.com/dio/transit/examples/orange/internal/pipeline/match"
 	"github.com/dio/transit/examples/orange/internal/translator"
 	"github.com/dio/transit/up"
+	"github.com/dio/transit/up/compress"
 )
 
 const FilterName = "orange-adapt"
@@ -60,6 +65,7 @@ type streamContext struct {
 	translator   translator.Translator
 	auth         backendAuthHandler
 	upstreamHost string
+	rawQuery     string // query string from the original client path (e.g. "beta=true")
 }
 
 func handler(w *up.Writer, r *up.Request) {
@@ -103,10 +109,12 @@ func handler(w *up.Writer, r *up.Request) {
 		authHandler = noAuth{}
 	}
 
+	_, rawQuery, _ := strings.Cut(r.Path, "?")
 	sc := &streamContext{
 		translator:   t,
 		auth:         authHandler,
 		upstreamHost: prov.Host(),
+		rawQuery:     rawQuery,
 	}
 	if r.Context != nil {
 		*r.Context = sc
@@ -115,6 +123,13 @@ func handler(w *up.Writer, r *up.Request) {
 	// Strip client-auth headers before applying translator headers and credentials.
 	for _, h := range stripRequestHeaders {
 		w.RemoveRequestHeader(h)
+	}
+	// Force identity if the client's Accept-Encoding includes an encoding we
+	// cannot decode, so the upstream response is always decodable. Streaming
+	// requests also force identity (handled in bodyHandler after the stream
+	// flag is parsed from the request body).
+	if !compress.AcceptEncodingAllSupported(r.Header("accept-encoding")) {
+		w.SetRequestHeader("accept-encoding", "identity")
 	}
 
 	hdrs, err := t.RequestHeaders(allRequestHeaders(r))
@@ -136,9 +151,29 @@ func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 		return
 	}
 
+	// For SSE streaming requests, force identity encoding so the upstream does
+	// not compress the response. Incremental gzip decompression across chunks
+	// is not supported; compressed non-streaming bodies are decoded in full.
+	var streamReq struct {
+		Stream bool `json:"stream"`
+	}
+	if json.Unmarshal(chunk.Data, &streamReq) == nil && streamReq.Stream {
+		w.SetRequestHeader("accept-encoding", "identity")
+	}
+
 	newHdrs, mutated, err := sc.translator.RequestBody(chunk.Data)
 	if err != nil {
 		return
+	}
+	// Re-append the original query string to any :path the translator sets.
+	// Translators write a clean path (e.g. /v1/messages); clients like Claude
+	// Code add query params (e.g. ?beta=true) that must reach the upstream.
+	if sc.rawQuery != "" {
+		for i := range newHdrs {
+			if newHdrs[i].Name == ":path" && !strings.Contains(newHdrs[i].Value, "?") {
+				newHdrs[i].Value += "?" + sc.rawQuery
+			}
+		}
 	}
 	applyRequestHeaders(w, newHdrs)
 
@@ -179,13 +214,43 @@ func responseHandler(w *up.Writer, chunk *up.ResponseChunk) {
 		}
 		applyResponseHeaders(w, newHdrs)
 	} else {
-		newHdrs, out, err := t.ResponseBody(chunk.Data, chunk.EndStream)
+		// Streaming requests force accept-encoding: identity (see bodyHandler),
+		// so this branch is only reached for non-streaming JSON responses.
+		// Decode before translation so the translator and token counter see raw
+		// bytes, then re-encode with the same scheme so the client receives what
+		// it negotiated (content-encoding is preserved) and content-length
+		// reflects the re-compressed size. q-values in the client's
+		// Accept-Encoding are not re-checked here: the upstream is trusted to
+		// have honored them during negotiation.
+		enc := chunk.ContentEncoding
+		data := chunk.Data
+		if enc != "" && enc != "identity" {
+			decoded, err := compress.Decode(enc, data)
+			if err != nil {
+				w.Slog().Info("decompress response body error", "encoding", enc, "err", err)
+				return
+			}
+			data = decoded
+		}
+		newHdrs, out, err := t.ResponseBody(data, chunk.EndStream)
 		if err != nil {
 			return
 		}
 		applyResponseHeaders(w, newHdrs)
 		if out != nil {
-			w.SetResponseBody(out)
+			if enc != "" && enc != "identity" {
+				reenc, err := compress.Encode(enc, out)
+				if err != nil {
+					w.Slog().Info("recompress response body error", "encoding", enc, "err", err)
+					w.RemoveResponseHeader("content-encoding")
+					w.SetResponseBody(out)
+					return
+				}
+				w.SetResponseHeader("content-length", strconv.Itoa(len(reenc)))
+				w.SetResponseBody(reenc)
+			} else {
+				w.SetResponseBody(out)
+			}
 		}
 	}
 }

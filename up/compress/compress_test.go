@@ -109,6 +109,32 @@ func TestRequestIdentity(t *testing.T) {
 	require.Equal(t, "identity", h.calls[0][1])
 }
 
+func TestAcceptEncodingAllSupported(t *testing.T) {
+	tests := []struct {
+		header string
+		want   bool
+	}{
+		{"", true},
+		{"identity", true},
+		{"gzip", true},
+		{"deflate", true},
+		{"br", true},
+		{"zstd", true},
+		{"GZIP", true},
+		{"gzip, deflate, br", true},
+		{"gzip;q=0.9, deflate;q=0.8, identity;q=0.1", true},
+		{"*", false},
+		{"compress", false},
+		{"gzip, compress", false},
+		{"gzip, *", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.header, func(t *testing.T) {
+			require.Equal(t, tt.want, compress.AcceptEncodingAllSupported(tt.header))
+		})
+	}
+}
+
 type fakeHeaderSetter struct {
 	calls [][2]string
 }

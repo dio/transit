@@ -75,6 +75,35 @@ func RequestIdentity(h RequestHeaderSetter) {
 	h.SetRequestHeader("accept-encoding", "identity")
 }
 
+// supportedEncodings is the set of Content-Encoding values that Decode handles.
+var supportedEncodings = map[string]bool{
+	"":         true,
+	"identity": true,
+	"gzip":     true,
+	"deflate":  true,
+	"br":       true,
+	"zstd":     true,
+}
+
+// AcceptEncodingAllSupported reports whether every encoding token in an
+// Accept-Encoding header value is one that Decode can handle. Quality values
+// (e.g. ;q=0.9) are ignored: the upstream performs actual negotiation and we
+// will only receive an encoding that the upstream chose to use. The wildcard
+// "*" always returns false because any encoding could be selected.
+func AcceptEncodingAllSupported(acceptEncoding string) bool {
+	if acceptEncoding == "" {
+		return true
+	}
+	for _, part := range strings.Split(acceptEncoding, ",") {
+		enc, _, _ := strings.Cut(strings.TrimSpace(part), ";")
+		enc = strings.ToLower(strings.TrimSpace(enc))
+		if enc == "*" || !supportedEncodings[enc] {
+			return false
+		}
+	}
+	return true
+}
+
 func decodeGzip(data []byte) ([]byte, error) {
 	r, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
