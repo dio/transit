@@ -83,13 +83,15 @@ const (
 	// Endpoint discriminator values carried on Decision.Endpoint.
 	EndpointChatCompletions = "chat_completions"
 	EndpointMessages        = "messages"
+	EndpointCountTokens     = "count_tokens"
 	EndpointResponses       = "responses"
 
-	pathV1ChatCompletions = "/v1/chat/completions"
-	pathV1Messages        = "/v1/messages"
-	pathV1Models          = "/v1/models"
-	pathV1Responses       = "/v1/responses"
-	pathMCP               = "/mcp"
+	pathV1ChatCompletions     = "/v1/chat/completions"
+	pathV1Messages            = "/v1/messages"
+	pathV1MessagesCountTokens = "/v1/messages/count_tokens"
+	pathV1Models              = "/v1/models"
+	pathV1Responses           = "/v1/responses"
+	pathMCP                   = "/mcp"
 
 	// ErrModelRequired and ErrUnknownModel are the orange.* codes published on
 	// Decision.Err. They mirror the error response codes.
@@ -110,6 +112,7 @@ var router = up.NewRouter(func(w *up.Writer, r *up.Request) {
 }).
 	GET(pathV1Models, listModels).
 	POST(pathV1ChatCompletions, tagRequestForEndpoint(EndpointChatCompletions)).
+	POST(pathV1MessagesCountTokens, tagRequestForEndpoint(EndpointCountTokens)).
 	POST(pathV1Messages, tagRequestForEndpoint(EndpointMessages)).
 	POST(pathV1Responses, tagRequestForEndpoint(EndpointResponses)).
 	GET(pathV1Responses, func(*up.Writer, *up.Request) {}). // passthrough for WS upgrades → orange-responsesws sidecar

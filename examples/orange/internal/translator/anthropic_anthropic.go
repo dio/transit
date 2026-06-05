@@ -32,4 +32,10 @@ func init() {
 			messagesPath: path.Join("/", cfg.PathPrefix, "messages"),
 		}
 	})
+	// count_tokens shares the same no-op body translation; only the path differs.
+	Register("anthropic:count_tokens", func(cfg ProviderConfig) Translator {
+		return &anthropicPassthrough{
+			messagesPath: path.Join("/", cfg.PathPrefix, "messages", "count_tokens"),
+		}
+	})
 }

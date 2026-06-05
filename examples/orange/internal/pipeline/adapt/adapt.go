@@ -45,13 +45,16 @@ import (
 	"github.com/dio/transit/up/compress"
 )
 
-const FilterName = "orange-adapt"
+const (
+	FilterName = "orange-adapt"
 
-// stripRequestHeaders is the fixed set of client auth headers removed before
-// the translator and credential handlers inject their own values. Deployment-
-// invariant: every orange instance strips the same headers. See the config
-// ergonomics doc for the rationale for keeping this out of config.
-var stripRequestHeaders = []string{"authorization", "x-api-key", "anthropic-version"}
+	// orangeAPIKeyHeader is the orange-internal gateway auth header sent by
+	// clients to signal passthrough mode. Its presence tells orange to forward
+	// the client's own Anthropic credentials (authorization / x-api-key) to the
+	// upstream rather than injecting orange's own API key. The header is always
+	// stripped before the request leaves orange — the upstream never sees it.
+	orangeAPIKeyHeader = "x-orange-api-key"
+)
 
 func init() {
 	up.Register(FilterName, handler,
@@ -62,10 +65,11 @@ func init() {
 
 // streamContext holds per-request state shared across all four filter phases.
 type streamContext struct {
-	translator   translator.Translator
-	auth         backendAuthHandler
-	upstreamHost string
-	rawQuery     string // query string from the original client path (e.g. "beta=true")
+	translator      translator.Translator
+	auth            backendAuthHandler
+	upstreamHost    string
+	rawQuery        string // query string from the original client path (e.g. "beta=true")
+	passthroughMode bool   // true when x-orange-api-key was present; client credentials forwarded
 }
 
 func handler(w *up.Writer, r *up.Request) {
@@ -83,7 +87,7 @@ func handler(w *up.Writer, r *up.Request) {
 	if !ok {
 		return
 	}
-	w.Slog().Info("Adapting request", "provider", upstream, "authority", r.Host, "kind", prov.Kind)
+	w.Slog().Info("Adapting request", "provider", upstream, "authority", r.Host, "kind", prov.Kind, "accept-encoding", r.Header("accept-encoding"))
 
 	backendModel := ""
 	if bm, ok := w.GetMetadataString(up.MetadataSourceDynamic, match.MetadataNamespace, match.MetadataKeyBackendModel); ok {
@@ -109,21 +113,34 @@ func handler(w *up.Writer, r *up.Request) {
 		authHandler = noAuth{}
 	}
 
+	// Passthrough mode: x-orange-api-key present means the client's own Anthropic
+	// credentials (authorization / x-api-key / anthropic-version) must reach the
+	// upstream untouched. Orange only strips the internal routing header and skips
+	// injecting its own credentials.
+	// Normal mode: strip client auth headers and inject orange's own credentials.
+	passthroughMode := r.Header(orangeAPIKeyHeader) != ""
+
 	_, rawQuery, _ := strings.Cut(r.Path, "?")
 	sc := &streamContext{
-		translator:   t,
-		auth:         authHandler,
-		upstreamHost: prov.Host(),
-		rawQuery:     rawQuery,
+		translator:      t,
+		auth:            authHandler,
+		upstreamHost:    prov.Host(),
+		rawQuery:        rawQuery,
+		passthroughMode: passthroughMode,
 	}
 	if r.Context != nil {
 		*r.Context = sc
 	}
 
-	// Strip client-auth headers before applying translator headers and credentials.
-	for _, h := range stripRequestHeaders {
-		w.RemoveRequestHeader(h)
+	if passthroughMode {
+		w.RemoveRequestHeader(orangeAPIKeyHeader)
+		w.SetMetadata(match.MetadataNamespace, "passthrough", "true")
+	} else {
+		w.RemoveRequestHeader("authorization")
+		w.RemoveRequestHeader("x-api-key")
+		w.RemoveRequestHeader("anthropic-version")
 	}
+
 	// Force identity if the client's Accept-Encoding includes an encoding we
 	// cannot decode, so the upstream response is always decodable. Streaming
 	// requests also force identity (handled in bodyHandler after the stream
@@ -139,7 +156,10 @@ func handler(w *up.Writer, r *up.Request) {
 	applyRequestHeaders(w, hdrs)
 	// Static handlers (Bearer, APIKey, Anthropic) inject here.
 	// AWSAuth.InjectAuth is a no-op; it signs in bodyHandler.
-	authHandler.InjectAuth(w)
+	// Skipped in passthrough mode — client credentials flow through as-is.
+	if !passthroughMode {
+		authHandler.InjectAuth(w)
+	}
 }
 
 func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
@@ -181,15 +201,17 @@ func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 	if mutated != nil {
 		effectiveBody = mutated
 	}
-	if baw, ok := sc.auth.(BodyAwareAuthHandler); ok {
-		req := SigningRequest{
-			Method: "POST",
-			Path:   pathFromHeaders(newHdrs),
-			Host:   sc.upstreamHost,
-			Body:   effectiveBody,
-		}
-		if err := baw.InjectAuthWithBody(w, req); err != nil {
-			w.Slog().Info("InjectAuthWithBody error", "err", err)
+	if !sc.passthroughMode {
+		if baw, ok := sc.auth.(BodyAwareAuthHandler); ok {
+			req := SigningRequest{
+				Method: "POST",
+				Path:   pathFromHeaders(newHdrs),
+				Host:   sc.upstreamHost,
+				Body:   effectiveBody,
+			}
+			if err := baw.InjectAuthWithBody(w, req); err != nil {
+				w.Slog().Info("InjectAuthWithBody error", "err", err)
+			}
 		}
 	}
 

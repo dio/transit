@@ -14,6 +14,7 @@ usage() {
 Usage:
   ./llm [options] [<message>]
   ./llm [options] models
+  ./llm count-tokens [--model <name>] [<message>]
 
 Options:
   -p <message>                     Send a one-shot message (mirrors claude/goose/codex -p)
@@ -28,9 +29,10 @@ Environment:
   ORANGE_LLM_SHOW_HEADERS  Set to 1 to print headers (or --headers)
 
 Default models per API:
-  chat       /v1/chat/completions   gpt-4o-mini
-  responses  /v1/responses          gpt-4o-mini
-  messages   /v1/messages           claude-haiku-4-5
+  chat         /v1/chat/completions       gpt-4o-mini
+  responses    /v1/responses              gpt-4o-mini
+  messages     /v1/messages               claude-haiku-4-5
+  count-tokens /v1/messages/count_tokens  claude-haiku-4-5
 
 Examples:
   ./llm
@@ -44,6 +46,8 @@ Examples:
   ./llm --api chat --model claude-haiku-4-5 "hi"
   ./llm --api chat --model claude-haiku-4-5 --stream "count 1 to 5"
   ./llm models
+  ./llm count-tokens "tell me a long story"
+  ./llm count-tokens --model claude-haiku-4-5 "explain quantum computing in detail"
 EOF
 }
 
@@ -83,7 +87,7 @@ parse_args() {
   CMD="${positional[0]:-send}"
   if [[ "${#positional[@]}" -gt 1 ]]; then
     MESSAGE="${positional[1]}"
-  elif [[ "${#positional[@]}" -eq 1 && "$CMD" != "send" && "$CMD" != "models" ]]; then
+  elif [[ "${#positional[@]}" -eq 1 && "$CMD" != "send" && "$CMD" != "models" && "$CMD" != "count-tokens" ]]; then
     MESSAGE="$CMD"
     CMD="send"
   fi
@@ -194,6 +198,42 @@ do_send() {
   fi
 }
 
+do_count_tokens() {
+  require_cmd jq
+  local model="${MODEL:-claude-haiku-4-5}"
+  local url="${BASE_URL}/v1/messages/count_tokens"
+  local payload
+  payload="$(jq -nc \
+    --arg model "$model" \
+    --arg content "$MESSAGE" \
+    '{model:$model, messages:[{role:"user",content:$content}]}')"
+  if [[ "$SHOW_HEADERS" == "1" ]]; then
+    echo "--- request ---" >&2
+    echo "> POST $url" >&2
+    echo "> content-type: application/json" >&2
+    echo "---------------" >&2
+  fi
+  local headers="$tmpdir/headers"
+  local body="$tmpdir/body"
+  local code
+  code="$(curl -sS -H 'content-type: application/json' \
+    --data-binary "$payload" \
+    -D "$headers" -o "$body" -w '%{http_code}' "$url")"
+  print_response_headers "$headers"
+  if [[ "$code" == 404 || "$code" == 503 ]]; then
+    echo "HTTP $code from $url" >&2
+    echo "Orange route may not be wired yet." >&2
+  fi
+  # Pretty-print if jq is available; extract the token count for quick reading.
+  local input_tokens
+  input_tokens="$(jq -r '.input_tokens // empty' "$body" 2>/dev/null || true)"
+  jq . "$body" 2>/dev/null || cat "$body"
+  echo
+  if [[ -n "$input_tokens" ]]; then
+    echo "input_tokens: $input_tokens" >&2
+  fi
+}
+
 do_models() {
   local url="${BASE_URL}/v1/models"
   if [[ "$SHOW_HEADERS" == "1" ]]; then
@@ -218,8 +258,9 @@ parse_args "$@"
 require_cmd curl
 
 case "$CMD" in
-  send)   do_send ;;
-  models) do_models ;;
+  send)         do_send ;;
+  models)       do_models ;;
+  count-tokens) do_count_tokens ;;
   *)
     echo "unknown command: $CMD" >&2
     usage >&2

@@ -80,6 +80,8 @@ static_resources:
                           model:         "%DYNAMIC_METADATA(orange:model)%"
                           upstream:      "%DYNAMIC_METADATA(orange:upstream)%"
                           provider:      "%DYNAMIC_METADATA(orange:provider)%"
+                          passthrough:   "%DYNAMIC_METADATA(orange:passthrough)%"
+                          gateway_client: "%DYNAMIC_METADATA(orange:gateway_client)%"
                           input_tokens:                  "%DYNAMIC_METADATA(orange_meter:input_tokens)%"
                           output_tokens:                 "%DYNAMIC_METADATA(orange_meter:output_tokens)%"
                           cached_input_tokens:           "%DYNAMIC_METADATA(orange_meter:cached_input_tokens)%"
