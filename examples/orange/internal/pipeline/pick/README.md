@@ -329,6 +329,28 @@ curl -s http://127.0.0.1:9901/clusters
 
 ---
 
+## Runtime hosts without xDS
+
+All upstream hosts on the `orange-pick` cluster are added at runtime by
+`applyResolved` via `ClusterHandle.AddHosts` — never via xDS. This is the
+designed entry point for every host that orange ever needs to dial,
+including fallback / retry targets.
+
+The custom Envoy build used here enables `auto_host_sni` and a bounded
+SNI-scoped TLS session cache on the `orange-pick` upstream TLS context
+(see https://gist.github.com/dio/965d1e555909c02013ca882a2b3caa78). With
+that substrate already in place, runtime-added hosts get their SNI from
+the `HostSpec` rather than from static xDS, and TLS session reuse is
+bounded per-SNI so a churning host set does not blow out cache memory.
+
+Practical consequence: if you need a new upstream addressable from
+`ChooseHost` (a new provider binding, a fallback target, a region
+shard), the path is **always** "load it into the config snapshot →
+`applyResolved` calls `AddHosts`." Do not reach for xDS, Backend CRDs,
+or `EnvoyPatchPolicy` for this.
+
+---
+
 ## Non-goals
 
 - Per-upstream refresh intervals from config (all upstreams share the TTL-based schedule)

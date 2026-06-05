@@ -5,6 +5,15 @@
 // See README.md for design details: lifecycle, STRICT_DNS-style DNS refresh,
 // multi-IP round-robin, cluster main-thread contract, and the async
 // body-driven host-selection pattern.
+//
+// All hosts on the orange-pick cluster are added at runtime via
+// ClusterHandle.AddHosts from applyResolved — never via xDS. The custom
+// Envoy build enables auto_host_sni and a bounded SNI-scoped TLS session
+// cache on the orange-pick upstream (see
+// https://gist.github.com/dio/965d1e555909c02013ca882a2b3caa78), so
+// runtime-added hosts handshake with their own SNI without xDS supplying
+// it. New providers, bindings, or fallback targets are introduced by
+// loading them into the config snapshot; do not reach for xDS for this.
 package pick
 
 import (
