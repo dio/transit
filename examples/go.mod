@@ -35,6 +35,7 @@ require (
 	cloud.google.com/go v0.116.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
+	github.com/andybalholm/brotli v1.2.1 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.20 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.26 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.26 // indirect
@@ -61,6 +62,7 @@ require (
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.28.0 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
+	github.com/klauspost/compress v1.18.6 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
