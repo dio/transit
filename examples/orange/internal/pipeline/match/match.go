@@ -17,6 +17,7 @@ package match
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -336,35 +337,14 @@ func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 	var upstream, backendModel, binding string
 	var fallbacks []Target
 
-	if entry.Routing != nil && entry.Routing.Chain != nil {
-		// Chain routing: first child is the primary; the rest become fallbacks.
-		children := entry.Routing.Chain.Children
-		if len(children) > 0 && children[0].Target != nil {
-			t := children[0].Target
-			upstream = t.Provider
-			backendModel = t.Name
-			if backendModel == "" {
-				backendModel = model
-			}
-		}
-		for _, child := range children[1:] {
-			if child.Target == nil {
-				continue
-			}
-			t := child.Target
-			bm := t.Name
-			if bm == "" {
-				bm = model
-			}
-			pk := ""
-			if prov, ok := cfg.Providers[t.Provider]; ok {
-				pk = prov.Kind
-			}
-			fallbacks = append(fallbacks, Target{
-				ProviderBackend: t.Provider,
-				BackendModel:    bm,
-				ProviderKind:    pk,
-			})
+	if entry.Routing != nil {
+		var rerr error
+		upstream, backendModel, binding, fallbacks, rerr = resolveRouting(cfg, *entry.Routing, model)
+		if rerr != nil {
+			w.Slog().Warn("Routing resolution failed", "model", model, "err", rerr)
+			p.Resolve(Decision{Endpoint: endpoint, Err: ErrUnknownModel})
+			send.Errorf(w, http.StatusNotFound, send.InvalidRequestError, ErrUnknownModel, "no upstream configured for model %s", model)
+			return
 		}
 	} else {
 		// Sugar path: direct provider reference.
@@ -428,6 +408,61 @@ func onStreamComplete(ctx *any) {
 	p.Resolve(Decision{Err: ErrStreamTerminated})
 	// No bag delete here: the stream-object bag is owned and drained
 	// by the SDK (Primitive A / dropBag in filter.OnStreamComplete).
+}
+
+// resolveRouting walks node top-down and returns the primary target,
+// the ordered fallback slice, and the effective backend model name.
+// Sampling (for split nodes) happens inside this call.
+func resolveRouting(cfg *config.Config, node config.RoutingNode, entryModel string) (
+	upstream, backendModel, binding string, fallbacks []Target, err error,
+) {
+	switch {
+	case node.Target != nil:
+		t := node.Target
+		bm := t.Name
+		if bm == "" {
+			bm = entryModel
+		}
+		return t.Provider, bm, "", nil, nil
+
+	case node.Chain != nil:
+		children := node.Chain.Children
+		// Disallow chain-of-chain in v1.
+		for i, child := range children {
+			if child.Chain != nil {
+				return "", "", "", nil, fmt.Errorf("chain.children[%d] is itself a chain (chain-of-chain not supported)", i)
+			}
+		}
+		u, bm, bi, _, e := resolveRouting(cfg, children[0], entryModel)
+		if e != nil {
+			return "", "", "", nil, e
+		}
+		upstream, backendModel, binding = u, bm, bi
+		for _, child := range children[1:] {
+			cu, cbm, _, _, ce := resolveRouting(cfg, child, entryModel)
+			if ce != nil {
+				return "", "", "", nil, ce
+			}
+			pk := ""
+			if prov, ok := cfg.Providers[cu]; ok {
+				pk = prov.Kind
+			}
+			fallbacks = append(fallbacks, Target{
+				ProviderBackend: cu,
+				BackendModel:    cbm,
+				ProviderKind:    pk,
+			})
+		}
+		return upstream, backendModel, binding, fallbacks, nil
+
+	case node.Split != nil:
+		idx := sampleSplit(node.Split)
+		child := node.Split.Children[idx]
+		return resolveRouting(cfg, child.RoutingNode, entryModel)
+
+	default:
+		return "", "", "", nil, fmt.Errorf("routing node has no target, chain, or split")
+	}
 }
 
 // ResolveKey parses the Authorization bearer token from authHeader and looks up

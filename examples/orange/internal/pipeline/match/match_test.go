@@ -812,3 +812,139 @@ func TestBody_binding_authorityRewrite(t *testing.T) {
 
 	down.DropStreamObjectBag(streamObjectNonce(h))
 }
+
+// --- split routing tests ---
+
+func loadSplitConfig(t *testing.T) {
+	t.Helper()
+	t.Setenv("OPENAI_API_KEY", "sk-test-openai")
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test-anthropic")
+	t.Setenv(config.EnvVar, "testdata/match_split_test.yaml")
+	t.Cleanup(config.MustReload)
+	config.MustReload()
+}
+
+func runSplitFlow(t *testing.T, model string) (*testutil.FakeFilterHandle, *up.StreamPromise[Decision]) {
+	t.Helper()
+	body := []byte(`{"model":"` + model + `","messages":[]}`)
+	return runFlow(t, body)
+}
+
+// TestBody_split_allArmsReachable verifies that over N requests, all three
+// arms of a three-way split are selected at least once.
+func TestBody_split_allArmsReachable(t *testing.T) {
+	loadSplitConfig(t)
+	seen := map[string]bool{}
+	const N = 300
+	for range N {
+		h, p := runSplitFlow(t, "split-model")
+		require.Empty(t, h.LocalResponses)
+		res, ok := p.Result()
+		require.True(t, ok)
+		require.Empty(t, res.Err)
+		seen[res.ProviderBackend] = true
+		down.DropStreamObjectBag(streamObjectNonce(h))
+	}
+	require.True(t, seen["provider_a"], "provider_a must be selected at least once")
+	require.True(t, seen["provider_b"], "provider_b must be selected at least once")
+	require.True(t, seen["provider_c"], "provider_c must be selected at least once")
+}
+
+// TestBody_split_modelIsMapKey verifies that Decision.Model is always the
+// client-facing model key regardless of which arm is sampled.
+func TestBody_split_modelIsMapKey(t *testing.T) {
+	loadSplitConfig(t)
+	const N = 20
+	for range N {
+		h, p := runSplitFlow(t, "split-model")
+		require.Empty(t, h.LocalResponses)
+		res, ok := p.Result()
+		require.True(t, ok)
+		require.Equal(t, "split-model", res.Model)
+		down.DropStreamObjectBag(streamObjectNonce(h))
+	}
+}
+
+// TestBody_split_backendModelFromTargetName verifies Decision.BackendModel
+// equals the sampled child's Target.Name.
+func TestBody_split_backendModelFromTargetName(t *testing.T) {
+	loadSplitConfig(t)
+	const N = 20
+	for range N {
+		h, p := runSplitFlow(t, "split-model")
+		require.Empty(t, h.LocalResponses)
+		res, ok := p.Result()
+		require.True(t, ok)
+		require.Equal(t, "split-model", res.BackendModel)
+		down.DropStreamObjectBag(streamObjectNonce(h))
+	}
+}
+
+// TestBody_split_backendModelFallsBackToMapKey verifies that when Target.Name
+// is unset, Decision.BackendModel falls back to the model map key.
+func TestBody_split_backendModelFallsBackToMapKey(t *testing.T) {
+	loadSplitConfig(t)
+	const N = 20
+	for range N {
+		h, p := runSplitFlow(t, "split-no-name")
+		require.Empty(t, h.LocalResponses)
+		res, ok := p.Result()
+		require.True(t, ok)
+		require.Equal(t, "split-no-name", res.BackendModel)
+		down.DropStreamObjectBag(streamObjectNonce(h))
+	}
+}
+
+// TestBody_split_chainArm_fallbacksPopulated verifies that when a split arm
+// is a chain, Decision.Fallbacks is populated from the chain's remaining children.
+func TestBody_split_chainArm_fallbacksPopulated(t *testing.T) {
+	loadSplitConfig(t)
+	// split-with-chain: arm 0 = chain(provider_a → provider_b), arm 1 = provider_c
+	// We need to hit arm 0 at least once to check fallbacks. Run many times.
+	hitChainArm := false
+	const N = 100
+	for range N {
+		h, p := runSplitFlow(t, "split-with-chain")
+		require.Empty(t, h.LocalResponses)
+		res, ok := p.Result()
+		require.True(t, ok)
+		if res.ProviderBackend == "provider_a" {
+			hitChainArm = true
+			require.Len(t, res.Fallbacks, 1, "chain arm must produce 1 fallback")
+			require.Equal(t, "provider_b", res.Fallbacks[0].ProviderBackend)
+		}
+		down.DropStreamObjectBag(streamObjectNonce(h))
+	}
+	require.True(t, hitChainArm, "chain arm (provider_a primary) must be selected at least once in %d tries", N)
+}
+
+// TestBody_sugar_regression verifies sugar path still resolves correctly after
+// the resolveRouting refactor.
+func TestBody_sugar_regression(t *testing.T) {
+	loadSplitConfig(t)
+	h, p := runSplitFlow(t, "sugar-model")
+	require.Empty(t, h.LocalResponses)
+	res, ok := p.Result()
+	require.True(t, ok)
+	require.Empty(t, res.Err)
+	require.Equal(t, "single_provider", res.ProviderBackend)
+	require.Equal(t, "anthropic", res.ProviderKind)
+	require.Equal(t, "sugar-model", res.Model)
+	require.Equal(t, "claude-haiku-4-5", res.BackendModel)
+	down.DropStreamObjectBag(streamObjectNonce(h))
+}
+
+// TestBody_chain_regression verifies chain routing still resolves correctly.
+func TestBody_chain_regression(t *testing.T) {
+	loadSplitConfig(t)
+	h, p := runSplitFlow(t, "chain-model")
+	require.Empty(t, h.LocalResponses)
+	res, ok := p.Result()
+	require.True(t, ok)
+	require.Empty(t, res.Err)
+	require.Equal(t, "provider_a", res.ProviderBackend)
+	require.Equal(t, "chain-model", res.Model)
+	require.Len(t, res.Fallbacks, 1)
+	require.Equal(t, "provider_b", res.Fallbacks[0].ProviderBackend)
+	down.DropStreamObjectBag(streamObjectNonce(h))
+}
