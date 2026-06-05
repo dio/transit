@@ -561,29 +561,62 @@ curl -N -s localhost:8080/v1/chat/completions -H 'content-type: application/json
        "messages":[{"role":"user","content":"count 1 to 5"}]}'
 ```
 
+### LLM demos
+
+`demos/llm` is a curl wrapper for all three LLM API paths.
+
+```bash
+# Chat Completions (default, gpt-4o-mini)
+./demos/llm
+./demos/llm "count 1 to 5"
+./demos/llm --stream "count 1 to 5"
+
+# Responses API
+./demos/llm --api responses "hi"
+./demos/llm --api responses --stream "count 1 to 5"
+
+# Anthropic Messages
+./demos/llm --api messages "hi"
+./demos/llm --api messages --stream "count 1 to 5"
+
+# Different model
+./demos/llm --model amazon.nova-lite-v1:0 "hi"
+./demos/llm --model gemini-2.5-flash --stream "count 1 to 5"
+
+# List models served by Orange
+./demos/llm models
+```
+
+Useful overrides:
+
+```bash
+ORANGE_LLM_BASE_URL=http://localhost:8080
+ORANGE_LLM_SHOW_HEADERS=1   # or pass --headers
+```
+
 ### MCP traffic
 
-`mcp-demo` is a curl wrapper for the Orange MCP endpoint. It captures the
+`demos/mcp` is a curl wrapper for the Orange MCP endpoint. It captures the
 public `mcp-session-id` from `initialize` and then drives `tools/list`,
 `tools/call`, SSE stream, and `DELETE`.
 
 ```bash
 # Initialize the default profile and print the export line for ORANGE_MCP_SESSION_ID.
-./mcp-demo profile=default
+./demos/mcp profile=default
 export ORANGE_MCP_SESSION_ID='<session printed by initialize>'
 
-./mcp-demo profile=default list
-./mcp-demo profile=default call kiwi__search-flight \
+./demos/mcp profile=default list
+./demos/mcp profile=default call kiwi__search-flight \
     '{"flyFrom":"SFO","flyTo":"JFK","departureDate":"10/06/2026"}'
-./mcp-demo profile=default stream
-./mcp-demo profile=default delete
+./demos/mcp profile=default stream
+./demos/mcp profile=default delete
 
 # Target a single MCP server directly with the s/<name> shorthand.
-./mcp-demo server=github
-./mcp-demo server=github list
+./demos/mcp server=github
+./demos/mcp server=github list
 
 # See all request/response headers for debugging.
-./mcp-demo --headers profile=default
+./demos/mcp --headers profile=default
 ```
 
 Useful overrides:
@@ -613,13 +646,13 @@ make demo
 **Terminal 2** — run Codex through Orange:
 
 ```bash
-./codex-demo                              # interactive, HTTP
-./codex-demo --ws                         # interactive, Responses WebSocket
-./codex-demo exec "write a hello-world HTTP server in Go"      # one-shot
-./codex-demo --ws exec "write a hello-world HTTP server in Go" # one-shot, WS
+./demos/codex                              # interactive, HTTP
+./demos/codex --ws                         # interactive, Responses WebSocket
+./demos/codex exec "write a hello-world HTTP server in Go"      # one-shot
+./demos/codex --ws exec "write a hello-world HTTP server in Go" # one-shot, WS
 ```
 
-`codex-demo` runs Codex with a clean `CODEX_HOME` under `$TMPDIR`, points
+`demos/codex` runs Codex with a clean `CODEX_HOME` under `$TMPDIR`, points
 Codex at `codex-model-catalog.json`, and disables Codex-side OpenAI auth for
 the Orange provider. That avoids inheriting local skills/plugins that can
 trigger startup budget warnings and avoids the fallback model metadata
@@ -649,7 +682,7 @@ Validate that Codex is reading the Orange demo model catalogue without
 starting an interactive session:
 
 ```bash
-ORANGE_CODEX_HOME="$(mktemp -d)" ./codex-demo debug models \
+ORANGE_CODEX_HOME="$(mktemp -d)" ./demos/codex debug models \
   | jq '.models[] | select(.slug == "gpt-4o-mini") |
         {slug, context_window, max_context_window, supports_parallel_tool_calls}'
 ```
@@ -657,14 +690,14 @@ ORANGE_CODEX_HOME="$(mktemp -d)" ./codex-demo debug models \
 That command should print the `gpt-4o-mini` entry from
 `codex-model-catalog.json` and should not print the fallback metadata
 warning. If you still see skill/plugin budget warnings, make sure you are
-using `./codex-demo`; running `codex …` directly loads your normal
+using `./demos/codex`; running `codex …` directly loads your normal
 `$CODEX_HOME`.
 
 Validate the Codex WebSocket path with Codex-side WS tracing enabled:
 
 ```bash
 ORANGE_CODEX_HOME="$(mktemp -d)" ORANGE_CODEX_TRACE=1 \
-  ./codex-demo --ws exec --json "reply with exactly: orange responsesws ok"
+  ./demos/codex --ws exec --json "reply with exactly: orange responsesws ok"
 ```
 
 The Orange server log should show these checkpoints for the same
@@ -678,6 +711,61 @@ orange-responsesws: model provider resolved
 orange-responsesws: egress websocket connected
 orange-responsesws: first client frame forwarded
 orange-responsesws: pump egress->client read frame
+```
+
+## Claude Code CLI support
+
+Orange serves the Anthropic Messages API at `/v1/messages` and routes to the
+configured Anthropic (or Vertex Anthropic) backend based on the `model` field.
+`demos/claude` sets `ANTHROPIC_BASE_URL` to point Claude Code at Orange and
+supplies a placeholder `ANTHROPIC_API_KEY` so `--bare` auth does not bail out
+before the first request — Orange does not validate the client-side key.
+
+**Terminal 1** — start the proxy:
+
+```bash
+make demo
+```
+
+**Terminal 2** — run Claude Code through Orange:
+
+```bash
+./demos/claude                         # interactive
+./demos/claude -p "write hello world in Go"   # one-shot (--print)
+```
+
+Useful overrides:
+
+```bash
+ORANGE_CLAUDE_BASE_URL=http://localhost:8080   # default
+ORANGE_CLAUDE_MODEL=haiku                     # default alias; must resolve to a model in orange.yaml
+```
+
+## Goose AI agent support
+
+Orange serves an OpenAI-compatible Chat Completions endpoint at
+`/v1/chat/completions`. `demos/goose` sets `GOOSE_PROVIDER=openai`,
+`OPENAI_BASE_URL`, and a placeholder `OPENAI_API_KEY` — Goose requires the
+key to be non-empty even though Orange ignores it on inbound requests.
+
+**Terminal 1** — start the proxy:
+
+```bash
+make demo
+```
+
+**Terminal 2** — run Goose through Orange:
+
+```bash
+./demos/goose session                                              # interactive
+./demos/goose run --no-session --text "write hello world in Go"   # one-shot
+```
+
+Useful overrides:
+
+```bash
+ORANGE_GOOSE_BASE_URL=http://localhost:8080   # default
+ORANGE_GOOSE_MODEL=gpt-4o-mini               # default; must be in orange.yaml
 ```
 
 ## Diagnostics
@@ -739,6 +827,10 @@ codemod/         source-to-source migration tool (OpenAI SDK → orange endpoint
 cmd/             c-shared entrypoint (blank-imports all pipeline packages)
 envoy.tmpl.yaml  Envoy config; ${ORANGE_TRUSTED_CA} substituted by make
 orange.yaml      runtime config (providers, models, MCP servers/profiles)
-codex-demo       Codex CLI wrapper that targets Orange
-mcp-demo         curl wrapper for the /mcp endpoint
+demos/
+  llm            curl wrapper for /v1/chat/completions, /v1/responses, /v1/messages
+  mcp            curl wrapper for the /mcp endpoint
+  codex          Codex CLI wrapper that targets Orange
+  claude         Claude Code CLI wrapper that targets Orange
+  goose          Goose AI agent wrapper that targets Orange
 ```
