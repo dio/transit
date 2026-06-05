@@ -80,10 +80,6 @@ static_resources:
                       logger_config:
                         "@type": type.googleapis.com/google.protobuf.StringValue
                         value: '{}'
-                      log_format:
-                        json_format:
-                          ts:         "%START_TIME%"
-                          request_id: "%REQ(x-request-id)%"
                   # LLM request log — skips /mcp/* paths.
                   - name: envoy.access_loggers.file
                     filter:
@@ -167,7 +163,17 @@ static_resources:
                             cluster: orange-mcp-loopback
                             timeout: 0s
                         - match: { prefix: "/" }
-                          route: { cluster: orange_default, timeout: 900s }
+                          route:
+                            cluster: orange_default
+                            timeout: 900s
+                            retry_policy:
+                              retry_on: "5xx,gateway-error,reset,connect-failure,refused-stream,retriable-status-codes"
+                              retriable_status_codes: [429]
+                              num_retries: 7
+                              per_try_timeout: 30s
+                              retry_back_off:
+                                base_interval: 0.1s
+                                max_interval: 1s
 
     # orange-responsesws egress listener: receives WebSocket dials from the orange-responsesws sidecar.
     # orange-responsesws-egress-match validates/strips internal headers and writes Orange
