@@ -507,7 +507,7 @@ func (d *DNSDiscovery) buildSnapshot(ctx context.Context) *Snapshot {
 		}
 	}
 
-	if cfg.MCP != nil {
+	if cfg.MCP == nil {
 		return snap
 	}
 
