@@ -3,6 +3,7 @@ package resources
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -32,8 +33,15 @@ CREATE TABLE IF NOT EXISTS workspaces (
 type WorkspaceService struct {
 	adminv1connect.UnimplementedWorkspaceAdminServiceHandler
 
-	pool   *pgxpool.Pool
-	logger *slog.Logger
+	pool      *pgxpool.Pool
+	logger    *slog.Logger
+	egressSvc *EgressService
+}
+
+// SetEgressService wires in the EgressService so CreateWorkspace can atomically
+// provision the egress artefacts.
+func (s *WorkspaceService) SetEgressService(es *EgressService) {
+	s.egressSvc = es
 }
 
 // NewWorkspaceService creates a WorkspaceService and ensures the workspaces table exists.
@@ -48,6 +56,8 @@ func (s *WorkspaceService) EnsureSchema(ctx context.Context) error {
 }
 
 // CreateWorkspace inserts a new workspace and returns the created record.
+// When an EgressService is wired in, the egress and all its cryptographic
+// artefacts are provisioned atomically within the same transaction.
 func (s *WorkspaceService) CreateWorkspace(
 	ctx context.Context,
 	req *connect.Request[workspacev1.CreateWorkspaceRequest],
@@ -59,6 +69,57 @@ INSERT INTO workspaces (workspace_id, project_id, name, description)
 VALUES ($1, $2, $3, $4)
 RETURNING workspace_id, project_id, name, description, created_at, updated_at`
 
+	if s.egressSvc != nil {
+		// Transactional path: workspace + egress in one atomic operation.
+		tx, err := s.pool.Begin(ctx)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+		defer tx.Rollback(ctx) //nolint:errcheck
+
+		var (
+			wID, pID, name string
+			desc            *string
+			createdAt       time.Time
+			updatedAt       time.Time
+		)
+		err = tx.QueryRow(ctx, query,
+			workspaceID,
+			req.Msg.GetProjectId(),
+			req.Msg.GetName(),
+			req.Msg.Description,
+		).Scan(&wID, &pID, &name, &desc, &createdAt, &updatedAt)
+		if err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+				return nil, connect.NewError(connect.CodeAlreadyExists, err)
+			}
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+
+		eg, err := s.egressSvc.ProvisionForWorkspace(ctx, tx, workspaceID)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("provision egress: %w", err))
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+
+		return connect.NewResponse(&workspacev1.CreateWorkspaceResponse{
+			Workspace: &workspacev1.Workspace{
+				WorkspaceId: wID,
+				ProjectId:   pID,
+				Name:        name,
+				Description: desc,
+				CreatedAt:   timestamppb.New(createdAt),
+				UpdatedAt:   timestamppb.New(updatedAt),
+				EgressId:    eg.EgressId,
+			},
+		}), nil
+	}
+
+	// Non-transactional path (no egress provisioning).
 	var (
 		wID, pID, name string
 		desc            *string
@@ -97,18 +158,20 @@ func (s *WorkspaceService) GetWorkspace(
 	req *connect.Request[workspacev1.GetWorkspaceRequest],
 ) (*connect.Response[workspacev1.GetWorkspaceResponse], error) {
 	const query = `
-SELECT workspace_id, project_id, name, description, created_at, updated_at
-FROM workspaces
-WHERE workspace_id = $1`
+SELECT w.workspace_id, w.project_id, w.name, w.description, w.created_at, w.updated_at,
+       COALESCE(e.egress_id, '')
+FROM workspaces w
+LEFT JOIN egresses e ON e.workspace_id = w.workspace_id
+WHERE w.workspace_id = $1`
 
 	var (
-		wID, pID, name string
-		desc            *string
-		createdAt       time.Time
-		updatedAt       time.Time
+		wID, pID, name, egressID string
+		desc                     *string
+		createdAt                time.Time
+		updatedAt                time.Time
 	)
 	err := s.pool.QueryRow(ctx, query, req.Msg.GetWorkspaceId()).
-		Scan(&wID, &pID, &name, &desc, &createdAt, &updatedAt)
+		Scan(&wID, &pID, &name, &desc, &createdAt, &updatedAt, &egressID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, connect.NewError(connect.CodeNotFound, err)
@@ -124,6 +187,7 @@ WHERE workspace_id = $1`
 			Description: desc,
 			CreatedAt:   timestamppb.New(createdAt),
 			UpdatedAt:   timestamppb.New(updatedAt),
+			EgressId:    egressID,
 		},
 	}), nil
 }
@@ -146,18 +210,22 @@ func (s *WorkspaceService) ListWorkspaces(
 	pageToken := req.Msg.GetPageToken()
 	if pageToken != "" {
 		const query = `
-SELECT workspace_id, project_id, name, description, created_at, updated_at
-FROM workspaces
-WHERE project_id = $1 AND workspace_id > $2
-ORDER BY workspace_id ASC
+SELECT w.workspace_id, w.project_id, w.name, w.description, w.created_at, w.updated_at,
+       COALESCE(e.egress_id, '')
+FROM workspaces w
+LEFT JOIN egresses e ON e.workspace_id = w.workspace_id
+WHERE w.project_id = $1 AND w.workspace_id > $2
+ORDER BY w.workspace_id ASC
 LIMIT $3`
 		rows, err = s.pool.Query(ctx, query, req.Msg.GetProjectId(), pageToken, limit)
 	} else {
 		const query = `
-SELECT workspace_id, project_id, name, description, created_at, updated_at
-FROM workspaces
-WHERE project_id = $1
-ORDER BY workspace_id ASC
+SELECT w.workspace_id, w.project_id, w.name, w.description, w.created_at, w.updated_at,
+       COALESCE(e.egress_id, '')
+FROM workspaces w
+LEFT JOIN egresses e ON e.workspace_id = w.workspace_id
+WHERE w.project_id = $1
+ORDER BY w.workspace_id ASC
 LIMIT $2`
 		rows, err = s.pool.Query(ctx, query, req.Msg.GetProjectId(), limit)
 	}
@@ -169,12 +237,12 @@ LIMIT $2`
 	var workspaces []*workspacev1.Workspace
 	for rows.Next() {
 		var (
-			wID, pID, name string
-			desc            *string
-			createdAt       time.Time
-			updatedAt       time.Time
+			wID, pID, name, egressID string
+			desc                     *string
+			createdAt                time.Time
+			updatedAt                time.Time
 		)
-		if err := rows.Scan(&wID, &pID, &name, &desc, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&wID, &pID, &name, &desc, &createdAt, &updatedAt, &egressID); err != nil {
 			return nil, connect.NewError(connect.CodeInternal, err)
 		}
 		workspaces = append(workspaces, &workspacev1.Workspace{
@@ -184,6 +252,7 @@ LIMIT $2`
 			Description: desc,
 			CreatedAt:   timestamppb.New(createdAt),
 			UpdatedAt:   timestamppb.New(updatedAt),
+			EgressId:    egressID,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -207,21 +276,27 @@ func (s *WorkspaceService) UpdateWorkspace(
 	req *connect.Request[workspacev1.UpdateWorkspaceRequest],
 ) (*connect.Response[workspacev1.UpdateWorkspaceResponse], error) {
 	const query = `
-UPDATE workspaces
-SET description = $1, updated_at = now()
-WHERE workspace_id = $2
-RETURNING workspace_id, project_id, name, description, created_at, updated_at`
+WITH updated AS (
+  UPDATE workspaces
+  SET description = $1, updated_at = now()
+  WHERE workspace_id = $2
+  RETURNING workspace_id, project_id, name, description, created_at, updated_at
+)
+SELECT u.workspace_id, u.project_id, u.name, u.description, u.created_at, u.updated_at,
+       COALESCE(e.egress_id, '')
+FROM updated u
+LEFT JOIN egresses e ON e.workspace_id = u.workspace_id`
 
 	var (
-		wID, pID, name string
-		desc            *string
-		createdAt       time.Time
-		updatedAt       time.Time
+		wID, pID, name, egressID string
+		desc                     *string
+		createdAt                time.Time
+		updatedAt                time.Time
 	)
 	err := s.pool.QueryRow(ctx, query,
 		req.Msg.Description,
 		req.Msg.GetWorkspaceId(),
-	).Scan(&wID, &pID, &name, &desc, &createdAt, &updatedAt)
+	).Scan(&wID, &pID, &name, &desc, &createdAt, &updatedAt, &egressID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, connect.NewError(connect.CodeNotFound, err)
@@ -237,6 +312,7 @@ RETURNING workspace_id, project_id, name, description, created_at, updated_at`
 			Description: desc,
 			CreatedAt:   timestamppb.New(createdAt),
 			UpdatedAt:   timestamppb.New(updatedAt),
+			EgressId:    egressID,
 		},
 	}), nil
 }
