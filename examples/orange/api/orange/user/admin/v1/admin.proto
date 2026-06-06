@@ -1,0 +1,147 @@
+// admin.proto — UserAdminService: user and workspace-membership management.
+//
+// A User belongs to an Organization and may be a member of many Workspaces.
+// WorkspaceMember is the junction that grants a User access to a Workspace.
+// All members of a Workspace have identical capabilities; there are no
+// workspace-specific roles.
+//
+// user_id is server-assigned as a UUID7 on CreateUser.
+//
+// Authentication: every RPC requires AUTH_TYPE_API_KEY with scope "admin".
+//
+// Field numbers are stable and must not be reused once released.
+
+syntax = "proto3";
+
+package orange.user.admin.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "orange/auth/v1/auth_options.proto";
+
+service UserAdminService {
+  // ── User CRUD ─────────────────────────────────────────────────────────────
+
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse) {
+    option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
+  }
+  rpc GetUser(GetUserRequest) returns (GetUserResponse) {
+    option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse) {
+    option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc UpdateUser(UpdateUserRequest) returns (UpdateUserResponse) {
+    option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
+  }
+  rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse) {
+    option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
+  }
+
+  // ── Workspace membership ──────────────────────────────────────────────────
+
+  // AddWorkspaceMember adds a user to a workspace.
+  rpc AddWorkspaceMember(AddWorkspaceMemberRequest) returns (AddWorkspaceMemberResponse) {
+    option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
+  }
+  // RemoveWorkspaceMember removes a user from a workspace. Does not delete the user.
+  rpc RemoveWorkspaceMember(RemoveWorkspaceMemberRequest) returns (RemoveWorkspaceMemberResponse) {
+    option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
+  }
+  // ListWorkspaceMembers lists all users in a workspace.
+  rpc ListWorkspaceMembers(ListWorkspaceMembersRequest) returns (ListWorkspaceMembersResponse) {
+    option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+}
+
+// ── User messages ─────────────────────────────────────────────────────────────
+
+message CreateUserRequest {
+  string org_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+  string email = 2 [(buf.validate.field).string = {
+    min_len: 3
+    max_len: 254
+  }];
+  optional string description = 3 [(buf.validate.field).string.max_len = 1024];
+}
+
+message CreateUserResponse { User user = 1; }
+
+message GetUserRequest {
+  string user_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+}
+
+message GetUserResponse { User user = 1; }
+
+message ListUsersRequest {
+  string org_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+  optional int32 limit = 2 [(buf.validate.field).int32 = {gte: 0 lte: 1000}];
+  optional string page_token = 3;
+}
+
+message ListUsersResponse {
+  repeated User users = 1;
+  string next_page_token = 2;
+}
+
+message UpdateUserRequest {
+  string user_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+  optional string description = 2 [(buf.validate.field).string.max_len = 1024];
+}
+
+message UpdateUserResponse { User user = 1; }
+
+message DeleteUserRequest {
+  string user_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+}
+
+message DeleteUserResponse {}
+
+// User is a member of an Organization and may belong to many Workspaces.
+message User {
+  string user_id = 1;  // UUID7, server-assigned
+  string org_id = 2;   // owning organization
+  string email = 3;    // unique within org
+  optional string description = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp updated_at = 6;
+}
+
+// ── Workspace membership messages ─────────────────────────────────────────────
+
+message AddWorkspaceMemberRequest {
+  string workspace_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+  string user_id = 2 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+}
+
+message AddWorkspaceMemberResponse {
+  WorkspaceMember member = 1;
+}
+
+message RemoveWorkspaceMemberRequest {
+  string workspace_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+  string user_id = 2 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+}
+
+message RemoveWorkspaceMemberResponse {}
+
+message ListWorkspaceMembersRequest {
+  string workspace_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+  optional int32 limit = 2 [(buf.validate.field).int32 = {gte: 0 lte: 1000}];
+  optional string page_token = 3;
+}
+
+message ListWorkspaceMembersResponse {
+  repeated WorkspaceMember members = 1;
+  string next_page_token = 2;
+}
+
+// WorkspaceMember is the join record granting a User access to a Workspace.
+message WorkspaceMember {
+  string workspace_id = 1;
+  string user_id = 2;
+  google.protobuf.Timestamp joined_at = 3;
+}

@@ -17,7 +17,7 @@
 // receives the response last — after all upstream filters (adapt, meter,
 // tracer) have written their metadata.
 //
-// Registration: blank-import this package from cmd/main.go. To receive
+// Registration: blank-import this package from cmd/module/main.go. To receive
 // records, call [AddExporter] from an init() in your binary. A stdout JSON
 // exporter is available via [NewStdoutExporter]; enable it explicitly if
 // needed.

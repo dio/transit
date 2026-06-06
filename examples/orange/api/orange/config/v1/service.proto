@@ -1,0 +1,113 @@
+// service.proto — SnapshotService: control-plane → data-plane config delivery.
+//
+// The data-plane proxy (client) opens one Watch stream on startup and keeps it
+// alive. The server pushes a new SnapshotEnvelope whenever the config changes,
+// and emits a Heartbeat on the idle timer so the client can distinguish "no
+// changes" from "stream is stalled."
+//
+// Fetch is the cold-start / reconnect path. When last_version and last_checksum
+// both still match, the server returns Unchanged instead of re-sending the full
+// payload; otherwise it returns the current SnapshotEnvelope.
+//
+// All request messages are annotated with buf.validate constraints. The server
+// should call protovalidate.Validate() on every incoming request before
+// processing. Generated clients may call it on response messages as an
+// extra integrity check.
+//
+// Field numbers are stable and must not be reused once released.
+
+syntax = "proto3";
+
+package orange.config.v1;
+
+import "buf/validate/validate.proto";
+import "orange/config/v1/snapshot.proto";
+
+
+// ── Service ───────────────────────────────────────────────────────────────────
+
+service SnapshotService {
+  // Watch is the steady-state live-update channel.
+  // The client keeps the stream open; the server pushes a new SnapshotEnvelope
+  // on every config change and emits a Heartbeat on the idle timer.
+  rpc Watch(WatchRequest) returns (stream WatchResponse);
+
+  // Fetch is the unary cold-start or reconnect path.
+  // When last_version and last_checksum both still match the current snapshot,
+  // the server returns Unchanged. Otherwise it returns the current envelope.
+  rpc Fetch(FetchRequest) returns (FetchResponse);
+}
+
+// ── Watch ─────────────────────────────────────────────────────────────────────
+
+// WatchRequest opens a live-update stream. last_version = 0 is the bootstrap
+// request: the server sends the current snapshot unconditionally.
+message WatchRequest {
+  // workspace_id is the UUID7 workspace whose config snapshot to stream.
+  string workspace_id = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 36
+  }];
+
+  // last_version is the highest version the client has already applied.
+  // The server skips sending if its current version equals last_version.
+  // Use 0 for a bootstrap request (always receive the current snapshot).
+  uint64 last_version = 2; // no lower-bound constraint: 0 is a valid bootstrap sentinel
+}
+
+message WatchResponse {
+  oneof event {
+    option (buf.validate.oneof).required = true;
+
+    SnapshotEnvelope snapshot = 1; // new config snapshot
+    Heartbeat heartbeat = 2; // liveness probe; no new snapshot
+  }
+}
+
+// ── Fetch ─────────────────────────────────────────────────────────────────────
+
+// FetchRequest is the unary cold-start or reconnect path. When both
+// last_version and last_checksum still match the server's current snapshot,
+// the server replies with Unchanged. Send last_version = 0 and omit
+// last_checksum for an unconditional fetch.
+message FetchRequest {
+  // workspace_id is the UUID7 workspace whose config snapshot to fetch.
+  string workspace_id = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 36
+  }];
+
+  // last_version is the highest version the client has applied; 0 = unconditional.
+  uint64 last_version = 2;
+
+  // last_checksum is the SHA-256 of the last accepted decompressed payload.
+  // When present it must be exactly 32 bytes. Omit (leave empty) for an
+  // unconditional fetch or when last_version alone is sufficient.
+  bytes last_checksum = 3 [(buf.validate.field).cel = {
+    id: "fetch_checksum_sha256_len"
+    message: "last_checksum must be empty or exactly 32 bytes (SHA-256)"
+    expression: "this.size() == 0 || this.size() == 32"
+  }];
+}
+
+message FetchResponse {
+  oneof result {
+    option (buf.validate.oneof).required = true;
+
+    SnapshotEnvelope snapshot = 1; // current snapshot (version or checksum changed)
+    Unchanged unchanged = 2; // version and checksum still match; no payload
+  }
+}
+
+// ── Shared ────────────────────────────────────────────────────────────────────
+
+// Heartbeat signals liveness on an idle Watch stream.
+message Heartbeat {
+  // server_version is the config version currently held by the server.
+  // Clients may use this to detect that the server has advanced past the
+  // client's last_version without receiving a full snapshot.
+  uint64 server_version = 1;
+}
+
+// Unchanged is returned by Fetch when the client's snapshot is already current.
+message Unchanged {}

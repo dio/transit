@@ -1,0 +1,87 @@
+// admin.proto — OrgAdminService: lifecycle management for orange organizations.
+//
+// Organization is the top-level tenant. It owns Projects and Users.
+// All other resources are contained transitively under an Organization.
+//
+// org_id is server-assigned as a UUID7 on CreateOrg.
+//
+// Authentication: every RPC requires AUTH_TYPE_API_KEY with scope "admin".
+//
+// Field numbers are stable and must not be reused once released.
+
+syntax = "proto3";
+
+package orange.org.admin.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "orange/auth/v1/auth_options.proto";
+
+service OrgAdminService {
+  rpc CreateOrg(CreateOrgRequest) returns (CreateOrgResponse) {
+    option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
+  }
+  rpc GetOrg(GetOrgRequest) returns (GetOrgResponse) {
+    option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc ListOrgs(ListOrgsRequest) returns (ListOrgsResponse) {
+    option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc UpdateOrg(UpdateOrgRequest) returns (UpdateOrgResponse) {
+    option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
+  }
+  rpc DeleteOrg(DeleteOrgRequest) returns (DeleteOrgResponse) {
+    option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
+  }
+}
+
+message CreateOrgRequest {
+  string name = 1 [(buf.validate.field).string = {
+    pattern: "^[a-z0-9][a-z0-9-]*[a-z0-9]$"
+    min_len: 2
+    max_len: 63
+  }];
+  optional string description = 2 [(buf.validate.field).string.max_len = 1024];
+}
+
+message CreateOrgResponse { Org org = 1; }
+
+message GetOrgRequest {
+  string org_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+}
+
+message GetOrgResponse { Org org = 1; }
+
+message ListOrgsRequest {
+  optional int32 limit = 1 [(buf.validate.field).int32 = {gte: 0 lte: 1000}];
+  optional string page_token = 2;
+}
+
+message ListOrgsResponse {
+  repeated Org orgs = 1;
+  string next_page_token = 2;
+}
+
+message UpdateOrgRequest {
+  string org_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+  optional string description = 2 [(buf.validate.field).string.max_len = 1024];
+}
+
+message UpdateOrgResponse { Org org = 1; }
+
+message DeleteOrgRequest {
+  string org_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+}
+
+message DeleteOrgResponse {}
+
+// Org is the top-level tenant record.
+message Org {
+  string org_id = 1;        // UUID7, server-assigned
+  string name = 2;          // unique slug (e.g. "acme")
+  optional string description = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}

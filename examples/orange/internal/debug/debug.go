@@ -1,5 +1,5 @@
 // Package debug starts an embedded HTTP server that exposes orange-internal
-// state for tests and operators. Blank-imported from cmd/main.go so it loads
+// state for tests and operators. Blank-imported from cmd/module/main.go so it loads
 // alongside the other orange filters; no-op when ORANGE_DEBUG_ADDR is unset.
 //
 // Endpoints:

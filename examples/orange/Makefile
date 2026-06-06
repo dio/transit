@@ -5,6 +5,7 @@
 
 EXAMPLE := orange
 OUTPUT  := liborange.so
+BUF     := buf
 
 ROOT := $(abspath $(CURDIR)/../..)
 ENVOY_BIN ?= $(ROOT)/.bin/envoy
@@ -34,19 +35,19 @@ endif
 build: $(ZIG_BIN)
 	cd $(ROOT)/examples && $(ZIG_BUILD_ENV) \
 	  GOWORK=off go build -trimpath -buildmode=c-shared \
-	    -o $(CURDIR)/$(OUTPUT) ./$(EXAMPLE)/cmd
+	    -o $(CURDIR)/$(OUTPUT) ./$(EXAMPLE)/cmd/module
 	@echo "built: $(OUTPUT)"
 
 build-linux-amd64: $(ZIG_BIN)
 	cd $(ROOT)/examples && $(ZIG_BUILD_ENV_LINUX_AMD64) \
 	  GOWORK=off go build -trimpath -buildmode=c-shared \
-	    -o $(CURDIR)/$(OUTPUT:.so=.linux-amd64.so) ./$(EXAMPLE)/cmd
+	    -o $(CURDIR)/$(OUTPUT:.so=.linux-amd64.so) ./$(EXAMPLE)/cmd/module
 	@echo "built: $(OUTPUT:.so=.linux-amd64.so)"
 
 build-linux-arm64: $(ZIG_BIN)
 	cd $(ROOT)/examples && $(ZIG_BUILD_ENV_LINUX_ARM64) \
 	  GOWORK=off go build -trimpath -buildmode=c-shared \
-	    -o $(CURDIR)/$(OUTPUT:.so=.linux-arm64.so) ./$(EXAMPLE)/cmd
+	    -o $(CURDIR)/$(OUTPUT:.so=.linux-arm64.so) ./$(EXAMPLE)/cmd/module
 	@echo "built: $(OUTPUT:.so=.linux-arm64.so)"
 
 test:
@@ -242,6 +243,40 @@ demo-split: build $(ENVOY_BIN)
 	 ENVOY_DYNAMIC_MODULES_SEARCH_PATH=$(CURDIR) \
 	 GODEBUG=cgocheck=0 \
 	 $(ENVOY_BIN) -c $$SPLIT_ENVOY_YAML --log-level info
+
+.PHONY: proto-deps
+proto-deps: ## Update buf module dependencies (writes buf.lock).
+	$(BUF) dep update
+
+.PHONY: proto-lint
+proto-lint: ## Run buf lint against the proto module.
+	$(BUF) lint
+
+.PHONY: proto-format
+proto-format: ## Format .proto files in place.
+	$(BUF) format -w
+
+.PHONY: proto-breaking
+proto-breaking: ## Check for breaking changes against origin/main.
+	$(BUF) breaking --against '.git#branch=origin/main'
+
+.PHONY: proto-generate
+proto-generate: ## Generate Go code (protobuf-go + connectrpc-go + vtprotobuf).
+	$(BUF) generate --template buf.gen.golang.yaml
+
+.PHONY: proto-check
+proto-check: proto-lint ## Verify generated code is up to date (CI gate).
+	@$(BUF) generate --template buf.gen.golang.yaml
+	@if [ -n "$$(git status --porcelain api/)" ]; then \
+		echo "ERROR: generated code is out of date. Run 'make proto-generate' and commit."; \
+		git --no-pager diff api/; \
+		exit 1; \
+	fi
+
+.PHONY: proto-clean
+proto-clean: ## Remove generated Go files under api/.
+	find api -type f \( -name '*.pb.go' -o -name '*_vtproto.pb.go' \) -delete
+	find api -type d -name '*connect' -empty -delete 2>/dev/null || true
 
 clean:
 	rm -f $(OUTPUT) $(OUTPUT:.so=.h) \

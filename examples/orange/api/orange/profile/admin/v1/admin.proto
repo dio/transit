@@ -1,0 +1,118 @@
+// admin.proto — ProfileAdminService: user-owned MCP tool-filter profiles.
+//
+// A Profile scopes which MCP tools a user may access from which servers,
+// and may carry per-profile auth overrides for individual MCP servers.
+//
+// Profile belongs to a User within a Workspace (same scoping as Key).
+// profile_id is server-assigned as a UUID7.
+//
+// The tool_filter and auth_override data is stored as canonical JSON
+// (tool_filter_shape, auth_shape) so the config compile pipeline can
+// re-intern shapes into the live snapshot's Pools without a DB round-trip.
+//
+// Authentication: every RPC requires AUTH_TYPE_API_KEY with scope "admin".
+//
+// Field numbers are stable and must not be reused once released.
+
+syntax = "proto3";
+
+package orange.profile.admin.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "orange/auth/v1/auth_options.proto";
+
+service ProfileAdminService {
+  rpc CreateProfile(CreateProfileRequest) returns (CreateProfileResponse) {
+    option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
+  }
+  rpc GetProfile(GetProfileRequest) returns (GetProfileResponse) {
+    option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc ListProfiles(ListProfilesRequest) returns (ListProfilesResponse) {
+    option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc UpdateProfile(UpdateProfileRequest) returns (UpdateProfileResponse) {
+    option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
+  }
+  rpc DeleteProfile(DeleteProfileRequest) returns (DeleteProfileResponse) {
+    option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
+  }
+}
+
+message CreateProfileRequest {
+  string workspace_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+  string user_id = 2 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+  string name = 3 [(buf.validate.field).string = {
+    pattern: "^[a-z0-9][a-z0-9-]*[a-z0-9]$"
+    min_len: 2
+    max_len: 63
+  }];
+  optional string description = 4 [(buf.validate.field).string.max_len = 1024];
+  repeated ToolFilter tools = 5;
+  repeated AuthOverride auth_overrides = 6;
+}
+
+message CreateProfileResponse { Profile profile = 1; }
+
+message GetProfileRequest {
+  string profile_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+}
+
+message GetProfileResponse { Profile profile = 1; }
+
+message ListProfilesRequest {
+  string workspace_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+  optional string user_id = 2 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+  optional int32 limit = 3 [(buf.validate.field).int32 = {gte: 0 lte: 1000}];
+  optional string page_token = 4;
+}
+
+message ListProfilesResponse {
+  repeated Profile profiles = 1;
+  string next_page_token = 2;
+}
+
+message UpdateProfileRequest {
+  string profile_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+  optional string description = 2 [(buf.validate.field).string.max_len = 1024];
+  repeated ToolFilter tools = 3;
+  repeated AuthOverride auth_overrides = 4;
+}
+
+message UpdateProfileResponse { Profile profile = 1; }
+
+message DeleteProfileRequest {
+  string profile_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+}
+
+message DeleteProfileResponse {}
+
+// Profile scopes MCP tool access for a User within a Workspace.
+message Profile {
+  string profile_id = 1;     // UUID7, server-assigned
+  string workspace_id = 2;   // owning workspace; immutable
+  string user_id = 3;        // owning user; immutable
+  string name = 4;           // unique within workspace+user
+  optional string description = 5;
+  repeated ToolFilter tools = 6;
+  repeated AuthOverride auth_overrides = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+}
+
+// ToolFilter controls which MCP tools a profile may access from a server.
+message ToolFilter {
+  string server = 1;           // MCP server name (matches mcp.servers map key)
+  repeated string include = 2; // empty = all tools the server allows
+  bool optional = 3;           // if true, missing server does not block the session
+}
+
+// AuthOverride substitutes a per-profile credential for a specific MCP server.
+message AuthOverride {
+  string server = 1;     // MCP server name
+  string auth_type = 2;  // "bearer" | "anthropic" | "gcp" | "aws" | "gemini"
+  string secret_ref = 3; // env:// | file:// | literal://
+}

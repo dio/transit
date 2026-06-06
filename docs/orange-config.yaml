@@ -1,0 +1,365 @@
+# ── Admin-owned: LLM subsystem ───────────────────────────────────────────────
+#
+# llm defines the upstream LLM providers and the client-facing model catalog.
+# This section is small, fully loaded into GlobalConfig at startup, and swapped
+# atomically on reload. Operators change providers or models here; no user
+# record writes are needed.
+#
+# providers: named upstream endpoints. Each provider has:
+#   kind          — wire protocol: anthropic | openai | bedrock
+#   backend_schema — optional translator override (gcpanthropic, gcpvertexai,
+#                    awsbedrock, azureopenai). Defaults to kind when absent.
+#   endpoint      — base URL of the upstream API
+#   auth          — how the gateway authenticates to the upstream
+#   extra         — arbitrary key/value pairs forwarded to the translator
+#                   (e.g. anthropic_version, gcp_project). Values beginning
+#                   with "env://" are resolved from environment variables.
+#
+# models: the client-facing model catalog. Each entry maps a model ID
+# (what clients send in the "model" field) to a provider and optional overrides.
+#   provider           — must match a key in llm.providers
+#   name               — backend model name sent to the upstream. Defaults to
+#                        the map key when absent.
+#   endpoint_overrides — per-operation provider substitution. Key is an
+#                        operation name (e.g. chat_completions); value is an
+#                        alternate provider ID. Useful for routing one operation
+#                        to a different backend (e.g. Vertex for chat, Anthropic
+#                        direct for messages).
+#   pricing            — USD cost per million tokens (mtok). Required on any
+#                        model targeted by a USD-based rate limit rule. The
+#                        enforcement layer uses these values to compute per-
+#                        request cost from the usage fields in the provider
+#                        response.
+#   metadata           — informational only; surfaced in GET /v1/models.
+
+llm:
+  providers:
+    anthropic:
+      kind: anthropic
+      endpoint: https://api.anthropic.com
+      auth:
+        type: anthropic
+        secret_ref: env://ANTHROPIC_API_KEY
+      extra:
+        anthropic_version: "2023-06-01"
+
+    vertex_anthropic:
+      kind: anthropic
+      backend_schema: gcpanthropic
+      endpoint: https://us-east5-aiplatform.googleapis.com
+      auth:
+        type: gcp
+        secret_ref: env://GCP_SERVICE_ACCOUNT_JSON
+      extra:
+        anthropic_version: "vertex-2023-10-16"
+        gcp_project: "env://GCP_PROJECT"
+
+    openai:
+      kind: openai
+      endpoint: https://api.openai.com
+      auth:
+        type: bearer
+        secret_ref: env://OPENAI_API_KEY
+
+  models:
+    claude-haiku-4-5:
+      provider: anthropic
+      name: claude-haiku-4-5-20251001
+      # chat_completions calls go to vertex_anthropic instead of anthropic.
+      # All other operations use the default provider above.
+      endpoint_overrides:
+        chat_completions: vertex_anthropic
+      pricing:
+        input_mtok: 0.80
+        output_mtok: 4.00
+        cache_read_mtok: 0.08
+        cache_write_mtok: 1.00
+
+    gpt-4o-mini:
+      provider: openai
+      pricing:
+        input_mtok: 0.15
+        output_mtok: 0.60
+      metadata:
+        context_length: 128000
+        tags:
+          - chat
+          - fast
+          - vision
+
+# ── Admin-owned: MCP subsystem ────────────────────────────────────────────────
+#
+# mcp defines the upstream MCP server catalog. Like llm, this section is
+# admin-owned and lives in GlobalConfig. It carries only server definitions;
+# per-user tool selection lives in the user-owned profiles section below.
+#
+# servers: named MCP backends. Each server has:
+#   endpoint      — URL of the MCP server
+#   namespace     — prefix applied to all tool names from this server, used to
+#                   avoid collisions when multiple servers expose similarly named
+#                   tools (e.g. "kiwi/search-flight" vs "github/search_repositories")
+#   auth          — optional auth config for the gateway → server connection.
+#                   When absent, the server is accessed without credentials.
+#   tools_include — the set of tools the gateway is allowed to expose from this
+#                   server. Acts as a server-level allowlist. Profile-level
+#                   includes must be a subset of this list.
+
+mcp:
+  servers:
+    kiwi:
+      endpoint: https://mcp.kiwi.com
+      namespace: kiwi
+      tools_include:
+        - search-flight
+
+    github:
+      endpoint: https://api.githubcopilot.com/mcp/
+      namespace: github
+      auth:
+        type: bearer
+        secret_ref: env://GITHUB_TOKEN
+      tools_include:
+        - search_repositories
+        - get_file_contents
+
+# ── User-owned: MCP profiles ──────────────────────────────────────────────────
+#
+# profiles maps workspace/user/name identifiers to MCP tool filter sets.
+# The path is the sole identity — there are no workspace or user fields inside
+# the record body.
+#
+# At production scale, profiles live in a database. Entries here are seeds or
+# examples loaded on startup.
+#
+# Each profile has:
+#   tools — per-server capability slice. Keys are server names from mcp.servers.
+#           An empty value ({}) means: expose all tools the server allows.
+#           include restricts to a named subset of the server's tools_include.
+#           optional marks the server as best-effort: if unreachable, the
+#           session initializes without it rather than failing.
+#   auth  — per-server auth overrides. Overrides the server-level auth from
+#           mcp.servers for sessions using this profile. Useful when different
+#           users supply their own credentials for the same server.
+
+profiles:
+  demo/adi/default:
+    tools:
+      kiwi:
+        include:
+          - search-flight
+      github:
+        include:
+          - search_repositories
+        optional: true   # session succeeds even if GitHub MCP is unreachable
+    auth:
+      github:            # adi supplies his own GitHub token for this profile
+        type: bearer
+        secret_ref: env://GITHUB_TOKEN
+
+  demo/adi/kiwi-only:
+    tools:
+      kiwi: {}           # expose all tools kiwi makes available (search-flight)
+
+# ── User-owned: API keys ───────────────────────────────────────────────────────
+#
+# keys maps workspace/user/name identifiers to per-key LLM routing overrides.
+# The path is the sole identity — there are no workspace or user fields inside
+# the record body.
+#
+# At production scale, keys live in a database. Entries here are seeds or
+# examples loaded on startup.
+#
+# Each key has:
+#   routing_overrides — per-model routing configuration. Keys are client-facing
+#                       model IDs from llm.models. When a model ID is absent,
+#                       the default routing from llm.models is used.
+#
+# Routing is a recursive tree. Exactly one of target / chain / split must be
+# set at each node:
+#
+#   target — a single hop to one provider and model.
+#   chain  — tries children in order; stops at the first success. Carries an
+#            optional retry policy (retry_on, per_try_timeout_ms) that maps
+#            to Envoy's retry semantics. Children may be target or split nodes.
+#   split  — samples one child per request by weight (weights must sum to 100).
+#            Children may be target or chain nodes.
+#            Nested split inside split is not supported.
+
+keys:
+  # Direct route: every request for claude-haiku-4-5 goes to anthropic.
+  demo/adi/sk-direct:
+    routing_overrides:
+      claude-haiku-4-5:
+        target:
+          provider: anthropic
+          name: claude-haiku-4-5-20251001
+
+  # Fallback chain: tries two unreachable primaries, then falls through to
+  # vertex_anthropic. Envoy retries on connection failure or 5xx; each attempt
+  # has a 10 s per-try timeout.
+  demo/adi/sk-fallback:
+    routing_overrides:
+      claude-haiku-4-5:
+        chain:
+          retry:
+            retry_on: "connect-failure,5xx"
+            per_try_timeout_ms: 10000
+          children:
+            - target:
+                provider: fallback_p1
+                name: claude-haiku-4-5
+            - target:
+                provider: vertex_anthropic
+                name: "claude-opus-4@20250514"
+
+  # Weighted split: traffic is distributed 34/33/33 across three provider
+  # instances. Useful for quota spreading or A/B testing.
+  demo/adi/sk-split:
+    routing_overrides:
+      claude-haiku-4-5:
+        split:
+          children:
+            - weight: 34
+              target:
+                provider: split_p1
+                name: claude-haiku-4-5
+            - weight: 33
+              target:
+                provider: split_p2
+                name: claude-haiku-4-5
+            - weight: 33
+              target:
+                provider: split_p3
+                name: claude-haiku-4-5
+
+  # Chain-of-split: the primary arm is a 50/50 split across two providers.
+  # If the entire split arm fails (both providers down), falls through to
+  # fallback_p1.
+  demo/adi/sk-chain-split:
+    routing_overrides:
+      claude-haiku-4-5:
+        chain:
+          retry:
+            retry_on: "connect-failure,reset,5xx"
+            per_try_timeout_ms: 5000
+          children:
+            - split:
+                children:
+                  - weight: 50
+                    target:
+                      provider: split_p1
+                  - weight: 50
+                    target:
+                      provider: split_p2
+            - target:
+                provider: fallback_p1
+
+  # Split-of-chains: each split arm is itself a fallback chain. 60 % of
+  # traffic tries split_p1 first then split_p2; 40 % tries split_p2 first
+  # then split_p3. Each arm has independent retry settings.
+  demo/adi/sk-split-chain:
+    routing_overrides:
+      claude-haiku-4-5:
+        split:
+          children:
+            - weight: 60
+              chain:
+                retry:
+                  retry_on: "connect-failure,reset,5xx"
+                  per_try_timeout_ms: 10000
+                children:
+                  - target:
+                      provider: split_p1
+                  - target:
+                      provider: split_p2
+
+            - weight: 40
+              chain:
+                retry:
+                  retry_on: "connect-failure,reset,5xx"
+                  per_try_timeout_ms: 8000
+                children:
+                  - target:
+                      provider: split_p2
+                  - target:
+                      provider: split_p3
+
+# ── Admin-owned: rate limit policies ─────────────────────────────────────────
+#
+# rate_limits defines spend and throughput policies. This section is admin-
+# owned, lives in GlobalConfig, and is swapped atomically on reload. No user
+# record writes are needed when policies change.
+#
+# Map keys are scope identifiers with 1, 2, or 3 slash-separated segments:
+#   "demo"              workspace scope — covers all keys under demo
+#   "demo/adi"          user scope      — covers all keys owned by adi
+#   "demo/adi/sk-vip"   key scope       — covers one specific key
+#
+# Accumulation: all matching rules across all three scopes are enforced
+# simultaneously. A request from demo/adi/sk-direct calling claude-haiku-4-5
+# is checked against the workspace rule, the user rule, AND the key rule.
+# Every matching rule must be satisfied; any exhausted limit triggers on_exceed.
+# An admin updating "demo:" immediately caps all workspace keys on next reload
+# with no individual key record writes.
+#
+# Each scope holds a list of rules. Every rule has:
+#   models         — client-facing model IDs this rule applies to.
+#                    ["*"] matches all models in the catalog.
+#   usd_per_hour   — max USD spend per hour (primary knob for cost control).
+#   usd_per_day    — max USD spend per day.
+#   usd_per_minute — max USD spend per minute (for burst control).
+#   rpm / rph / rpd — max requests per minute / hour / day.
+#   input_tokens_per_{minute,hour,day}        — granular input token limits.
+#   output_tokens_per_{minute,hour,day}       — granular output token limits.
+#   cache_read_tokens_per_{hour,day}          — prompt cache read limits.
+#   cache_write_tokens_per_{hour,day}         — prompt cache write limits.
+#   on_exceed      — action when any limit is hit:
+#                    reject (default) | throttle | log_only
+#
+# USD limits require a pricing block on every targeted model. Compile returns
+# an error if any explicitly listed model ID lacks pricing, or if ["*"] is used
+# and any model in the catalog lacks pricing.
+#
+# Token limits (input_tokens_*, output_tokens_*, cache_*) do not require
+# pricing and can be used independently.
+#
+# Counter storage (actual spend, request counts, token totals) is owned by the
+# enforcement layer — a sidecar, Redis cluster, or in-process atomics depending
+# on deployment. This section carries only the policy definitions.
+
+rate_limits:
+  # Workspace ceiling: no key under "demo" may exceed these totals.
+  # Updating this entry alone is sufficient to adjust the cap for the entire
+  # workspace without touching individual key records.
+  demo:
+    - models: ["*"]
+      usd_per_day: 1_000.00
+      rpm: 500
+
+  # User ceiling: adi's aggregate spend across all her keys is bounded here,
+  # independently of the workspace ceiling above. Both apply.
+  demo/adi:
+    - models: ["*"]
+      usd_per_day: 200.00
+      rpm: 100
+
+  # Key-level overrides: finer-grained limits for specific keys.
+  # These stack on top of the workspace and user rules — all three apply.
+  demo/adi/sk-direct:
+    # Tight per-model budget for the two models this key primarily uses.
+    - models: [claude-haiku-4-5, gpt-4o-mini]
+      usd_per_hour: 5.00
+      usd_per_day: 50.00
+      # Granular token knobs — set here in addition to the USD limit when
+      # throughput control is needed independent of spend.
+      input_tokens_per_hour: 800_000
+      output_tokens_per_hour: 200_000
+      cache_read_tokens_per_hour: 1_000_000
+      cache_write_tokens_per_hour: 100_000
+      on_exceed: reject
+
+    # Catch-all for any other model this key might call — rate-limited by
+    # request count only, no USD tracking needed since no pricing is required.
+    - models: ["*"]
+      rpm: 20
+      on_exceed: reject
