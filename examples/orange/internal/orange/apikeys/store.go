@@ -27,14 +27,24 @@ const (
 	ScopeAdmin = "admin"
 	ScopeProxy = "proxy"
 	ScopeUser  = "user"
+	ScopeRead  = "read"
+	ScopeWrite = "write"
+
+	// Resource-scoped action scopes (resource:action).
+	ScopeTokenIssue           = "token:issue"
+	ScopeEgressBundleDownload = "egress-bundle:download"
 )
+
+// DefaultUserScopes is the scope set issued when --scope is omitted on user create.
+var DefaultUserScopes = []string{ScopeRead, ScopeWrite}
 
 // Record is a row from api_keys.
 type Record struct {
 	KeyID       string
+	KeyPrefix   string   // first 12 chars of the plaintext token (for display)
 	OrgID       string
-	UserID      string // empty for org-level admin keys
-	WorkspaceID string // empty for non-workspace-scoped keys
+	UserID      string   // empty for org-level admin keys
+	WorkspaceID string   // empty for non-workspace-scoped keys
 	Scopes      []string
 	Description string
 	CreatedAt   time.Time
@@ -102,6 +112,7 @@ VALUES ($1, $2, $3, $4, NULLIF($5,''), NULLIF($6,''), $7, NULLIF($8,''))`
 	}
 	return plaintext, Record{
 		KeyID:       keyID,
+		KeyPrefix:   keyPrefix,
 		OrgID:       orgID,
 		UserID:      userID,
 		WorkspaceID: workspaceID,
@@ -132,6 +143,29 @@ RETURNING key_id, org_id, COALESCE(user_id,''), COALESCE(workspace_id,''), scope
 	return rec, nil
 }
 
+// List returns all active keys for an org, optionally filtered by user_id.
+func (s *Store) List(ctx context.Context, orgID, userID string) ([]Record, error) {
+	const q = `
+SELECT key_id, key_prefix, org_id, COALESCE(user_id,''), COALESCE(workspace_id,''), scopes, COALESCE(description,''), created_at
+FROM api_keys
+WHERE org_id = $1 AND ($2 = '' OR user_id = $2) AND active = TRUE
+ORDER BY created_at DESC`
+	rows, err := s.pool.Query(ctx, q, orgID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Record
+	for rows.Next() {
+		var r Record
+		if err := rows.Scan(&r.KeyID, &r.KeyPrefix, &r.OrgID, &r.UserID, &r.WorkspaceID, &r.Scopes, &r.Description, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // Revoke deactivates a key by key_id.
 func (s *Store) Revoke(ctx context.Context, keyID string) error {
 	tag, err := s.pool.Exec(ctx, `UPDATE api_keys SET active = FALSE WHERE key_id = $1`, keyID)
@@ -152,9 +186,10 @@ func HasOrgs(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
 }
 
 // HasScope reports whether the record carries the given scope.
+// A record with ScopeAdmin satisfies any scope requirement.
 func (r Record) HasScope(s string) bool {
 	for _, sc := range r.Scopes {
-		if sc == s {
+		if sc == ScopeAdmin || sc == s {
 			return true
 		}
 	}
