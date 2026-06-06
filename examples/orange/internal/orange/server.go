@@ -44,10 +44,11 @@ import (
 
 func newServerCmd() *cobra.Command {
 	var (
-		localMode     bool
-		bootstrapOrg  string
+		localMode      bool
+		purge          bool
+		bootstrapOrg   string
 		bootstrapEmail string
-		port          string
+		port           string
 	)
 
 	cmd := &cobra.Command{
@@ -55,17 +56,28 @@ func newServerCmd() *cobra.Command {
 		Short: "Run the orange management plane server",
 		Long: `Starts the orange management plane HTTP/2 server.
 
-Local development (embedded Postgres, auto-generated KEK):
+Bootstrap workflow (run once on a fresh database):
 
   orange server --local --bootstrap=acme
+  # prints: export ORANGE_API_KEY=sk-org-...
+  # then exits
 
-The first admin API key is printed once to stderr on bootstrap.
-Use it with: export ORANGE_API_KEY=sk-org-...`,
+Start the server after bootstrap:
+
+  orange server --local
+
+Reset local data and re-bootstrap:
+
+  orange server --local --purge --bootstrap=acme`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if purge && !localMode {
+				return fmt.Errorf("--purge is only available with --local")
+			}
 			logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 			return runServer(cmd.Context(), serverCfg{
 				local:          localMode,
+				purge:          purge,
 				bootstrapOrg:   bootstrapOrg,
 				bootstrapEmail: bootstrapEmail,
 				port:           port,
@@ -75,7 +87,8 @@ Use it with: export ORANGE_API_KEY=sk-org-...`,
 	}
 
 	cmd.Flags().BoolVar(&localMode, "local", false, "use embedded Postgres and auto-generate KEK in ~/.orange/")
-	cmd.Flags().StringVar(&bootstrapOrg, "bootstrap", envOr("ORANGE_BOOTSTRAP_ORG", ""), "create first org on empty database (org name)")
+	cmd.Flags().BoolVar(&purge, "purge", false, "remove ~/.orange/data/ and ~/.orange/kek before starting (requires --local)")
+	cmd.Flags().StringVar(&bootstrapOrg, "bootstrap", envOr("ORANGE_BOOTSTRAP_ORG", ""), "bootstrap first org then exit (org name)")
 	cmd.Flags().StringVar(&bootstrapEmail, "bootstrap-email", envOr("ORANGE_BOOTSTRAP_EMAIL", ""), "admin email for bootstrap (default: admin@<org>)")
 	cmd.Flags().StringVar(&port, "port", envOr("PORT", "8080"), "listen port")
 
@@ -84,6 +97,7 @@ Use it with: export ORANGE_API_KEY=sk-org-...`,
 
 type serverCfg struct {
 	local          bool
+	purge          bool
 	bootstrapOrg   string
 	bootstrapEmail string
 	port           string
@@ -97,6 +111,14 @@ func runServer(parent context.Context, cfg serverCfg) error {
 	listenAddr := cfg.port
 	if listenAddr[0] != ':' {
 		listenAddr = ":" + listenAddr
+	}
+
+	// ── Optional purge ────────────────────────────────────────────────────────
+
+	if cfg.purge {
+		if err := purgeLocalData(cfg.logger); err != nil {
+			return err
+		}
 	}
 
 	// ── KEK resolution ────────────────────────────────────────────────────────
@@ -115,7 +137,7 @@ func runServer(parent context.Context, cfg serverCfg) error {
 
 	// ── Store DSN ─────────────────────────────────────────────────────────────
 
-	storeDSN, cleanup, err := resolveStoreDSN(ctx, cfg.local, cfg.logger)
+	storeDSN, cleanup, err := startEmbeddedOrExternal(ctx, cfg.local, cfg.logger)
 	if err != nil {
 		return fmt.Errorf("store backend: %w", err)
 	}
@@ -186,14 +208,21 @@ func runServer(parent context.Context, cfg serverCfg) error {
 		return fmt.Errorf("init profile service: %w", err)
 	}
 
-	// ── API key store + bootstrap ─────────────────────────────────────────────
+	// ── API key store ─────────────────────────────────────────────────────────
 
 	keyStore, err := apikeys.NewStore(ctx, pool)
 	if err != nil {
 		return fmt.Errorf("init api key store: %w", err)
 	}
-	if err := serverBootstrap(ctx, pool, keyStore, cfg); err != nil {
+
+	// ── Bootstrap (exit immediately if it ran) ────────────────────────────────
+
+	bootstrapped, err := serverBootstrap(ctx, pool, keyStore, cfg)
+	if err != nil {
 		return fmt.Errorf("bootstrap: %w", err)
+	}
+	if bootstrapped {
+		return nil // printed key; caller should re-run without --bootstrap
 	}
 
 	// ── HTTP mux ──────────────────────────────────────────────────────────────
@@ -264,29 +293,29 @@ func runServer(parent context.Context, cfg serverCfg) error {
 }
 
 // serverBootstrap creates the first org + user + admin API key when the
-// database is empty and --bootstrap (or ORANGE_BOOTSTRAP_ORG) is set.
-func serverBootstrap(ctx context.Context, pool *pgxpool.Pool, store *apikeys.Store, cfg serverCfg) error {
+// database is empty and --bootstrap is set.
+// Returns true if bootstrap ran (caller should exit), false if skipped.
+func serverBootstrap(ctx context.Context, pool *pgxpool.Pool, store *apikeys.Store, cfg serverCfg) (bool, error) {
 	if cfg.bootstrapOrg == "" {
-		return nil
+		return false, nil
 	}
 	has, err := apikeys.HasOrgs(ctx, pool)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if has {
 		cfg.logger.Info("bootstrap: orgs already exist, skipping")
-		return nil
+		return false, nil
 	}
 
 	email := cfg.bootstrapEmail
 	if email == "" {
 		email = "admin@" + cfg.bootstrapOrg
 	}
-	cfg.logger.Info("bootstrap: creating first org and admin user", "org", cfg.bootstrapOrg, "email", email)
 
 	tx, err := pool.Begin(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
@@ -298,47 +327,49 @@ func serverBootstrap(ctx context.Context, pool *pgxpool.Pool, store *apikeys.Sto
 		`INSERT INTO orgs (org_id, name, created_at, updated_at) VALUES ($1, $2, $3, $3)`,
 		orgID, cfg.bootstrapOrg, now,
 	); err != nil {
-		return fmt.Errorf("create bootstrap org: %w", err)
+		return false, fmt.Errorf("create bootstrap org: %w", err)
 	}
 	if _, err = tx.Exec(ctx,
 		`INSERT INTO users (user_id, org_id, email, created_at, updated_at) VALUES ($1, $2, $3, $4, $4)`,
 		userID, orgID, email, now,
 	); err != nil {
-		return fmt.Errorf("create bootstrap user: %w", err)
+		return false, fmt.Errorf("create bootstrap user: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+
+	plaintext, _, err := store.Issue(ctx, orgID, userID, "", []string{apikeys.ScopeAdmin}, "bootstrap admin key")
+	if err != nil {
+		return false, fmt.Errorf("issue bootstrap key: %w", err)
+	}
+
+	// Print to stdout so the export line can be eval'd by the shell.
+	fmt.Fprintf(os.Stdout, "# org: %s  user: %s\nexport ORANGE_API_KEY=%s\n",
+		cfg.bootstrapOrg, email, plaintext)
+
+	cfg.logger.Info("bootstrap complete — server will exit; re-run without --bootstrap to start",
+		"org_id", orgID, "user_id", userID)
+	return true, nil
+}
+
+// purgeLocalData removes ~/.orange/data/ and ~/.orange/kek.
+func purgeLocalData(logger *slog.Logger) error {
+	dir, err := OrangeDir()
+	if err != nil {
 		return err
 	}
-
-	plaintext, rec, err := store.Issue(ctx, orgID, userID, "", []string{apikeys.ScopeAdmin}, "bootstrap admin key")
-	if err != nil {
-		return fmt.Errorf("issue bootstrap key: %w", err)
+	for _, target := range []string{filepath.Join(dir, "data"), filepath.Join(dir, "kek")} {
+		if err := os.RemoveAll(target); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("purge %s: %w", target, err)
+		}
+		logger.Info("purged", "path", target)
 	}
-
-	fmt.Fprintf(os.Stderr, "\n"+
-		"╔══════════════════════════════════════════════════════════╗\n"+
-		"║              ORANGE BOOTSTRAP COMPLETE                  ║\n"+
-		"╠══════════════════════════════════════════════════════════╣\n"+
-		"║  org:     %-46s ║\n"+
-		"║  org_id:  %-46s ║\n"+
-		"║  email:   %-46s ║\n"+
-		"║  user_id: %-46s ║\n"+
-		"║  key_id:  %-46s ║\n"+
-		"║                                                          ║\n"+
-		"║  ADMIN API KEY (shown only once — save it now):         ║\n"+
-		"║  %-56s ║\n"+
-		"╚══════════════════════════════════════════════════════════╝\n\n"+
-		"  export ORANGE_API_KEY=%s\n"+
-		"  orange auth login --org %s --user %s\n\n",
-		cfg.bootstrapOrg, orgID, email, userID, rec.KeyID, plaintext,
-		plaintext, cfg.bootstrapOrg, email,
-	)
-	cfg.logger.Info("bootstrap complete", "org_id", orgID, "user_id", userID, "key_id", rec.KeyID)
 	return nil
 }
 
 // resolveLocalKEK returns an env:// URI backed by a KEK persisted in ~/.orange/kek.
-// The file contains a single base64url-encoded 32-byte key (no padding).
+// The file holds a single base64url-encoded (no padding) 32-byte key.
 // It is created with mode 0600 on first call.
 func resolveLocalKEK(logger *slog.Logger) (string, error) {
 	dir, err := OrangeDir()
@@ -370,30 +401,31 @@ func resolveLocalKEK(logger *slog.Logger) (string, error) {
 	return "env://ORANGE_LOCAL_KEK", nil
 }
 
-// resolveStoreDSN returns the Postgres DSN.
-// In local mode it starts embedded Postgres with data in ~/.orange/data/.
-// Otherwise it reads STORE_DSN from the environment.
-func resolveStoreDSN(ctx context.Context, local bool, logger *slog.Logger) (dsn string, cleanup func(), err error) {
+// startEmbeddedOrExternal returns a Postgres DSN.
+// In local mode it starts embedded Postgres with Root = ~/.orange/.
+// Otherwise it reads STORE_DSN from the environment, falling back to embedded.
+func startEmbeddedOrExternal(ctx context.Context, local bool, logger *slog.Logger) (dsn string, cleanup func(), err error) {
 	if !local {
 		if dsn = os.Getenv("STORE_DSN"); dsn != "" {
 			return dsn, func() {}, nil
 		}
 	}
+	return startEmbeddedPG(ctx, local, logger)
+}
 
-	var dataDir string
-	if local {
+// startEmbeddedPG starts embedded Postgres. When local is true the data is
+// persisted under ~/.orange/; otherwise a temporary directory is used.
+func startEmbeddedPG(ctx context.Context, persistent bool, logger *slog.Logger) (dsn string, cleanup func(), err error) {
+	pgCfg := embeddedpg.Config{}
+	if persistent {
 		dir, err := OrangeDir()
 		if err != nil {
 			return "", nil, err
 		}
-		dataDir = filepath.Join(dir, "data")
-		if err := os.MkdirAll(dataDir, 0o700); err != nil {
-			return "", nil, err
-		}
+		pgCfg.Root = dir
 	}
-
-	logger.Info("starting embedded postgres", "data_dir", dataDir)
-	inst, err := embeddedpg.Start(embeddedpg.Config{})
+	logger.Info("starting embedded postgres", "persistent", persistent)
+	inst, err := embeddedpg.Start(pgCfg)
 	if err != nil {
 		return "", nil, fmt.Errorf("embedded postgres: %w", err)
 	}

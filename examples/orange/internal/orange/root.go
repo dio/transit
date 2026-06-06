@@ -63,6 +63,7 @@ Run 'orange repl' (or bare 'orange') for the interactive shell.`,
 	// Register subcommands.
 	root.AddCommand(newServerCmd())
 	root.AddCommand(newAuthCmd())
+	root.AddCommand(newLocalDataCmd())
 
 	return root
 }
