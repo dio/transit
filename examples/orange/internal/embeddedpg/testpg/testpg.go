@@ -89,7 +89,12 @@ func freePort() (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("listen :0: %w", err)
 	}
-	port := ln.Addr().(*net.TCPAddr).Port
+	addr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		_ = ln.Close()
+		return 0, fmt.Errorf("invalid address type")
+	}
+	port := addr.Port
 	if err := ln.Close(); err != nil {
 		return 0, fmt.Errorf("close listener: %w", err)
 	}

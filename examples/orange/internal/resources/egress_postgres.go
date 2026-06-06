@@ -136,17 +136,6 @@ func egressStatusFromString(s string) egressv1.EgressStatus {
 	}
 }
 
-func egressOnlineStatusToString(s egressv1.EgressOnlineStatus) string {
-	switch s {
-	case egressv1.EgressOnlineStatus_EGRESS_ONLINE_STATUS_ONLINE:
-		return "online"
-	case egressv1.EgressOnlineStatus_EGRESS_ONLINE_STATUS_OFFLINE:
-		return "offline"
-	default:
-		return "unknown"
-	}
-}
-
 func egressOnlineStatusFromString(s string) egressv1.EgressOnlineStatus {
 	switch s {
 	case "online":
@@ -1215,18 +1204,18 @@ WHERE egress_id = $1`
 
 func scanEgress(row pgx.Row) (*egressv1.Egress, error) {
 	var (
-		id               string
-		workspaceID      string
-		adminStatus      string
-		onlineStatus     string
-		lastSeenAt       *time.Time
-		identityID       string
-		keypairID        string
-		pasetoKP1ID      string
-		pasetoKP2ID      string
-		description      *string
-		createdAt        time.Time
-		updatedAt        time.Time
+		id           string
+		workspaceID  string
+		adminStatus  string
+		onlineStatus string
+		lastSeenAt   *time.Time
+		identityID   string
+		keypairID    string
+		pasetoKP1ID  string
+		pasetoKP2ID  string
+		description  *string
+		createdAt    time.Time
+		updatedAt    time.Time
 	)
 	if err := row.Scan(
 		&id, &workspaceID, &adminStatus, &onlineStatus, &lastSeenAt,

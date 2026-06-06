@@ -204,7 +204,9 @@ func pingServer(serverURL string) error {
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("healthz returned %d", resp.StatusCode)
 	}

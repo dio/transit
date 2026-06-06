@@ -155,10 +155,10 @@ func TestKey_WithRateLimitRules_RoundTrip(t *testing.T) {
 		IdIdx: 9,
 		RateLimitRules: []*RateLimitRule{
 			{
-				ModelIdxs:    []uint32{1, 2},
-				UsdPerDay:    10.0,
-				Rpm:          60,
-				OnExceed:     OnExceed_ON_EXCEED_THROTTLE,
+				ModelIdxs: []uint32{1, 2},
+				UsdPerDay: 10.0,
+				Rpm:       60,
+				OnExceed:  OnExceed_ON_EXCEED_THROTTLE,
 			},
 		},
 	}

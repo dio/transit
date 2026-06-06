@@ -232,7 +232,7 @@ type RoutingConfig struct {
 
 // ChainConfig tries children in order, stopping at the first success.
 type ChainConfig struct {
-	Retry    *RetryConfig   // nil when no retry policy is configured
+	Retry    *RetryConfig // nil when no retry policy is configured
 	Children []RoutingConfig
 }
 

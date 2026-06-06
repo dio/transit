@@ -50,7 +50,7 @@ func FromFile(ctx context.Context, path string) (*FileProvider, error) {
 		return nil, fmt.Errorf("kms/file: create watcher: %w", err)
 	}
 	if err := w.Add(filepath.Dir(abs)); err != nil {
-		w.Close()
+		_ = w.Close()
 		return nil, fmt.Errorf("kms/file: watch dir %s: %w", filepath.Dir(abs), err)
 	}
 
@@ -136,7 +136,9 @@ func parseLine(line string) (version int, key [32]byte, err error) {
 }
 
 func (p *FileProvider) watch(ctx context.Context, w *fsnotify.Watcher) {
-	defer w.Close()
+	defer func() {
+		_ = w.Close()
+	}()
 	name := filepath.Base(p.path)
 	for {
 		select {

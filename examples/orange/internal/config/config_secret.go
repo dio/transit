@@ -214,7 +214,11 @@ func (c *CachedResolver) Resolve(ctx context.Context, ref string) (string, error
 	if err != nil {
 		return "", err
 	}
-	return v.(string), nil
+	str, ok := v.(string)
+	if !ok {
+		return "", fmt.Errorf("expected string, got %T", v)
+	}
+	return str, nil
 }
 
 // Invalidate removes ref from the cache. The next Resolve call for this ref

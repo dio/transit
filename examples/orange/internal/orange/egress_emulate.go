@@ -160,12 +160,16 @@ func loadEgressBundle(path string) (*egressBundleData, error) {
 		if err != nil {
 			return nil, fmt.Errorf("open archive: %w", err)
 		}
-		defer f.Close()
+		defer func() {
+			_ = f.Close()
+		}()
 		gz, err := gzip.NewReader(f)
 		if err != nil {
 			return nil, fmt.Errorf("gzip reader: %w", err)
 		}
-		defer gz.Close()
+		defer func() {
+			_ = gz.Close()
+		}()
 		tr := tar.NewReader(gz)
 		for {
 			hdr, err := tr.Next()
@@ -256,7 +260,10 @@ func runEgressEmulate(parent context.Context, bundle *egressBundleData, interval
 	fmt.Printf("identity:     %s\n", parseCertSubject(bundle.identityCert))
 	// Print only the first 8 bytes of the public key — enough to identify the
 	// key without leaking the full value to the terminal.
-	fmt.Printf("signing key:  Ed25519 pub=%x…\n", privKey.Public().(ed25519.PublicKey)[:8])
+	pub, ok := privKey.Public().(ed25519.PublicKey)
+	if ok {
+		fmt.Printf("signing key:  Ed25519 pub=%x…\n", pub[:8])
+	}
 	if bundle.paseto1Pub != "" {
 		fmt.Printf("paseto slot1: present\n")
 	}
@@ -459,11 +466,12 @@ func parseCertSubject(pemStr string) string {
 // request. It implements the egress-to-CP handshake without mTLS.
 //
 // Why not mTLS:
-//   mTLS would bind authentication to the TLS layer, requiring the egress to
-//   hold its identity private key in a TLS context. That makes key rotation
-//   expensive (new TLS handshake on every rotation) and couples auth to the
-//   transport. Assertion signing is transport-independent and lets the signing
-//   key rotate without rebuilding TLS sessions.
+//
+//	mTLS would bind authentication to the TLS layer, requiring the egress to
+//	hold its identity private key in a TLS context. That makes key rotation
+//	expensive (new TLS handshake on every rotation) and couples auth to the
+//	transport. Assertion signing is transport-independent and lets the signing
+//	key rotate without rebuilding TLS sessions.
 //
 // Assertion format:
 //
@@ -487,7 +495,9 @@ func parseCertSubject(pemStr string) string {
 //     the header were captured in transit.
 //
 // Planned: add the identity cert's serial number to the signed message:
-//   "egress:<egress_id>:<workspace_id>:<cert_serial>:<unix_ts>"
+//
+//	"egress:<egress_id>:<workspace_id>:<cert_serial>:<unix_ts>"
+//
 // This binds the assertion to a specific issued certificate. The CP can then
 // reject assertions whose cert serial has been revoked in egress_identities —
 // even if the signing key itself has not been rotated yet. This decouples

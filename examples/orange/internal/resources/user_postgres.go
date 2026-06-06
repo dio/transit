@@ -76,9 +76,9 @@ RETURNING user_id, org_id, email, description, created_at, updated_at`
 
 	var (
 		uID, orgID, email string
-		desc               *string
-		createdAt          time.Time
-		updatedAt          time.Time
+		desc              *string
+		createdAt         time.Time
+		updatedAt         time.Time
 	)
 	err := s.pool.QueryRow(ctx, query,
 		userID,
@@ -118,9 +118,9 @@ WHERE user_id = $1`
 
 	var (
 		uID, orgID, email string
-		desc               *string
-		createdAt          time.Time
-		updatedAt          time.Time
+		desc              *string
+		createdAt         time.Time
+		updatedAt         time.Time
 	)
 	err := s.pool.QueryRow(ctx, query, req.Msg.GetUserId()).
 		Scan(&uID, &orgID, &email, &desc, &createdAt, &updatedAt)
@@ -185,9 +185,9 @@ LIMIT $2`
 	for rows.Next() {
 		var (
 			uID, orgID, email string
-			desc               *string
-			createdAt          time.Time
-			updatedAt          time.Time
+			desc              *string
+			createdAt         time.Time
+			updatedAt         time.Time
 		)
 		if err := rows.Scan(&uID, &orgID, &email, &desc, &createdAt, &updatedAt); err != nil {
 			return nil, connect.NewError(connect.CodeInternal, err)
@@ -229,9 +229,9 @@ RETURNING user_id, org_id, email, description, created_at, updated_at`
 
 	var (
 		uID, orgID, email string
-		desc               *string
-		createdAt          time.Time
-		updatedAt          time.Time
+		desc              *string
+		createdAt         time.Time
+		updatedAt         time.Time
 	)
 	err := s.pool.QueryRow(ctx, query,
 		req.Msg.Description,

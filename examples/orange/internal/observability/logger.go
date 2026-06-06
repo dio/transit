@@ -89,11 +89,11 @@ func (h *EnvoyHandler) Handle(_ context.Context, r slog.Record) error {
 		msg = fmt.Sprintf("%s %s", msg, attr)
 	}
 
-	_, _ = fmt.Fprintf(h.w, "[%s][%d][%s][%s]", ts, pid, level, component)
+	fmt.Fprintf(h.w, "[%s][%d][%s][%s]", ts, pid, level, component)
 	if file != "" {
-		_, _ = fmt.Fprintf(h.w, " [%s:%d]", file, line)
+		fmt.Fprintf(h.w, " [%s:%d]", file, line)
 	}
-	_, _ = fmt.Fprintf(h.w, " %s\n", msg)
+	fmt.Fprintf(h.w, " %s\n", msg)
 	return nil
 }
 

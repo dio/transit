@@ -20,7 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spf13/cobra"
 	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
+	"golang.org/x/net/http2/h2c" //nolint:staticcheck
 
 	apikeyconnect "github.com/dio/transit/examples/orange/api/orange/apikey/admin/v1/adminv1connect"
 	configadminconnect "github.com/dio/transit/examples/orange/api/orange/config/admin/v1/adminv1connect"
@@ -253,7 +253,7 @@ func runServer(parent context.Context, cfg serverCfg) error {
 
 	srv := &http.Server{
 		Addr:              listenAddr,
-		Handler:           h2c.NewHandler(mux, &http2.Server{}),
+		Handler:           h2c.NewHandler(mux, &http2.Server{}), //nolint:staticcheck
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
@@ -288,7 +288,6 @@ func runServer(parent context.Context, cfg serverCfg) error {
 	cfg.logger.Info("server stopped")
 	return nil
 }
-
 
 // purgeLocalData removes ~/.orange/data/ and ~/.orange/kek.
 func purgeLocalData(logger *slog.Logger) error {

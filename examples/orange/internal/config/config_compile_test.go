@@ -781,8 +781,8 @@ func TestValidateUSDDependency_NoUSDLimits(t *testing.T) {
 
 func TestValidateUSDDependency_NoPricingBlock(t *testing.T) {
 	r := RawRateLimitRule{
-		Models:     []string{"m1"},
-		USDPerDay:  decimal.RequireFromString("5.00"),
+		Models:    []string{"m1"},
+		USDPerDay: decimal.RequireFromString("5.00"),
 	}
 	models := map[string]*ModelRecord{"m1": {Pricing: nil}}
 	err := validateUSDDependency(r, models, "demo", 0)

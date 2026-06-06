@@ -3,7 +3,11 @@
 // standard google.golang.org/protobuf encoding.
 package vtprotocodec
 
-import "google.golang.org/protobuf/proto"
+import (
+	"fmt"
+
+	"google.golang.org/protobuf/proto"
+)
 
 type vtMarshaler interface{ MarshalVT() ([]byte, error) }
 type vtUnmarshaler interface{ UnmarshalVT([]byte) error }
@@ -17,12 +21,20 @@ func (Codec) Marshal(msg any) ([]byte, error) {
 	if m, ok := msg.(vtMarshaler); ok {
 		return m.MarshalVT()
 	}
-	return proto.Marshal(msg.(proto.Message))
+	pm, ok := msg.(proto.Message)
+	if !ok {
+		return nil, fmt.Errorf("expected proto.Message, got %T", msg)
+	}
+	return proto.Marshal(pm)
 }
 
 func (Codec) Unmarshal(data []byte, msg any) error {
 	if m, ok := msg.(vtUnmarshaler); ok {
 		return m.UnmarshalVT(data)
 	}
-	return proto.Unmarshal(data, msg.(proto.Message))
+	pm, ok := msg.(proto.Message)
+	if !ok {
+		return fmt.Errorf("expected proto.Message, got %T", msg)
+	}
+	return proto.Unmarshal(data, pm)
 }

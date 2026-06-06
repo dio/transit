@@ -178,10 +178,10 @@ func bundleFiles(b *egressv1.EgressBundle) []struct{ name, content string } {
 	configYAML := fmt.Sprintf("server_url: %q\negress_id: %q\nworkspace_id: %q\n",
 		b.GetServerUrl(), b.GetEgressId(), b.GetWorkspaceId())
 	return []struct{ name, content string }{
-		{"identity.crt", b.GetIdentityCertPem()},         // who this egress is (X.509 cert)
+		{"identity.crt", b.GetIdentityCertPem()},          // who this egress is (X.509 cert)
 		{"egress.key", b.GetEgressKeypairPrivateKeyPem()}, // egress→CP: egress signs tokens; CP verifies with paired public key
-		{"paseto-1.pub", b.GetPasetoPublicKey_1Pem()},    // client→egress: offline PASETO token validation, slot 1
-		{"paseto-2.pub", b.GetPasetoPublicKey_2Pem()},    // client→egress: offline PASETO token validation, slot 2
+		{"paseto-1.pub", b.GetPasetoPublicKey_1Pem()},     // client→egress: offline PASETO token validation, slot 1
+		{"paseto-2.pub", b.GetPasetoPublicKey_2Pem()},     // client→egress: offline PASETO token validation, slot 2
 		{"config.yaml", configYAML},
 	}
 }
@@ -214,7 +214,9 @@ func writeBundleTarGz(path string, files []struct{ name, content string }) error
 	if err != nil {
 		return fmt.Errorf("create archive: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	gz := gzip.NewWriter(f)
 	tw := tar.NewWriter(gz)

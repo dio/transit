@@ -118,10 +118,10 @@ func parseSSEEvent(chunk []byte) (*sseEvent, error) {
 
 func (e *sseEvent) writeAndMaybeFlush(w io.Writer) {
 	if e.Event != "" {
-		_, _ = fmt.Fprintf(w, "event: %s\n", e.Event)
+		fmt.Fprintf(w, "event: %s\n", e.Event)
 	}
 	if e.ID != "" {
-		_, _ = fmt.Fprintf(w, "id: %s\n", e.ID)
+		fmt.Fprintf(w, "id: %s\n", e.ID)
 	}
 	for _, msg := range e.Messages {
 		_, _ = w.Write([]byte("data: "))

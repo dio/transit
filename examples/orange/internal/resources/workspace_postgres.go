@@ -79,9 +79,9 @@ RETURNING workspace_id, project_id, name, description, created_at, updated_at`
 
 		var (
 			wID, pID, name string
-			desc            *string
-			createdAt       time.Time
-			updatedAt       time.Time
+			desc           *string
+			createdAt      time.Time
+			updatedAt      time.Time
 		)
 		err = tx.QueryRow(ctx, query,
 			workspaceID,
@@ -122,9 +122,9 @@ RETURNING workspace_id, project_id, name, description, created_at, updated_at`
 	// Non-transactional path (no egress provisioning).
 	var (
 		wID, pID, name string
-		desc            *string
-		createdAt       time.Time
-		updatedAt       time.Time
+		desc           *string
+		createdAt      time.Time
+		updatedAt      time.Time
 	)
 	err := s.pool.QueryRow(ctx, query,
 		workspaceID,

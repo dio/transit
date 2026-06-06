@@ -139,9 +139,9 @@ func (r *HeartbeatRegistry) flush(ctx context.Context) {
 	now := time.Now().UTC()
 
 	var (
-		onlineIDs  []string
+		onlineIDs   []string
 		onlineTimes []time.Time
-		offlineIDs []string
+		offlineIDs  []string
 	)
 	for id, lastSeen := range snapshot {
 		if now.Sub(lastSeen) > r.offlineAfter {

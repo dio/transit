@@ -41,10 +41,10 @@ var DefaultUserScopes = []string{ScopeRead, ScopeWrite}
 // Record is a row from api_keys.
 type Record struct {
 	KeyID       string
-	KeyPrefix   string   // first 12 chars of the plaintext token (for display)
+	KeyPrefix   string // first 12 chars of the plaintext token (for display)
 	OrgID       string
-	UserID      string   // empty for org-level admin keys
-	WorkspaceID string   // empty for non-workspace-scoped keys
+	UserID      string // empty for org-level admin keys
+	WorkspaceID string // empty for non-workspace-scoped keys
 	Scopes      []string
 	Description string
 	CreatedAt   time.Time
@@ -197,7 +197,7 @@ func (r Record) HasScope(s string) bool {
 }
 
 var (
-	ErrInvalidKey = errors.New("invalid or expired API key")
+	ErrInvalidKey  = errors.New("invalid or expired API key")
 	ErrKeyNotFound = errors.New("key not found")
 )
 
@@ -216,4 +216,3 @@ func splitStmts(sql string) []string {
 	}
 	return out
 }
-

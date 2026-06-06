@@ -538,10 +538,10 @@ func TestProtoToRaw_RateLimits_AdminScope(t *testing.T) {
 	p.RateLimits = []*configv1.RateLimitScope{{
 		ScopeIdx: idx("demo"),
 		Rules: []*configv1.RateLimitRule{{
-			ModelIdxs:    []uint32{idx("*")},
-			UsdPerDay:    50.0,
-			Rpm:          100,
-			OnExceed:     configv1.OnExceed_ON_EXCEED_THROTTLE,
+			ModelIdxs: []uint32{idx("*")},
+			UsdPerDay: 50.0,
+			Rpm:       100,
+			OnExceed:  configv1.OnExceed_ON_EXCEED_THROTTLE,
 		}, {
 			ModelIdxs:             []uint32{idx("claude-haiku-4-5")},
 			InputTokensPerMinute:  500000,
@@ -854,4 +854,3 @@ func zstdCompress(t *testing.T, data []byte) []byte {
 	require.NoError(t, err)
 	return enc.EncodeAll(data, nil)
 }
-

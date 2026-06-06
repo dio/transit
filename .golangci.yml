@@ -38,6 +38,9 @@ linters:
       - path: "e2e/"
         linters:
           - unparam
+      - linters:
+          - errcheck
+        text: "Error return value of `fmt\\.(Print|Println|Printf|Fprint|Fprintln|Fprintf)` is not checked"
   settings:
     errcheck:
       check-type-assertions: true

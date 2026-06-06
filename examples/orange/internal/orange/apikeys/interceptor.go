@@ -46,11 +46,7 @@ func buildPolicyMap() policyMap {
 				if method.Options() == nil {
 					continue
 				}
-				protoMsg, ok := method.Options().(proto.Message)
-				if !ok {
-					continue
-				}
-				opts, _ := proto.GetExtension(protoMsg, authv1.E_Auth).(*authv1.AuthOptions)
+				opts, _ := proto.GetExtension(method.Options(), authv1.E_Auth).(*authv1.AuthOptions)
 				if opts == nil {
 					continue
 				}

@@ -54,7 +54,7 @@ import (
 )
 
 const (
-	systemRealm     = "system"
+	systemRealm      = "system"
 	poolMemberPrefix = "svc-kek-pool-"
 )
 
@@ -207,7 +207,7 @@ func (s *Service) RotateServiceKEK(ctx context.Context, req *connect.Request[adm
 		targets = []*store.Key{latest}
 	}
 
-	var rotated []*adminv1.RotatedKEK
+	rotated := make([]*adminv1.RotatedKEK, 0, len(targets))
 
 	for _, k := range targets {
 		plain, err := s.decryptServiceKEKRecord(ctx, k)
@@ -556,7 +556,11 @@ func randIntn(n int) int {
 func (s *Service) loadOrCacheKEK(ctx context.Context, k *store.Key) (*svcKEKEntry, error) {
 	cacheKey := k.ID + ":" + strconv.Itoa(k.Version)
 	if v, ok := s.svcKEKCache.Load(cacheKey); ok {
-		return v.(*svcKEKEntry), nil
+		e, ok := v.(*svcKEKEntry)
+		if !ok {
+			return nil, fmt.Errorf("invalid cache entry type: %T", v)
+		}
+		return e, nil
 	}
 	raw, err := s.decryptServiceKEKRecord(ctx, k)
 	if err != nil {
@@ -571,7 +575,10 @@ func (s *Service) loadOrCacheKEK(ctx context.Context, k *store.Key) (*svcKEKEntr
 func (s *Service) getServiceKEKVersion(ctx context.Context, kekID string, version int) ([]byte, error) {
 	cacheKey := kekID + ":" + strconv.Itoa(version)
 	if v, ok := s.svcKEKCache.Load(cacheKey); ok {
-		e := v.(*svcKEKEntry)
+		e, ok := v.(*svcKEKEntry)
+		if !ok {
+			return nil, fmt.Errorf("invalid cache entry type: %T", v)
+		}
 		raw := make([]byte, len(e.raw))
 		copy(raw, e.raw)
 		return raw, nil

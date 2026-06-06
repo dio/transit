@@ -192,7 +192,7 @@ func (s *MemSnapshotStore) List(ctx context.Context, workspaceID string, limit i
 	defer s.mu.RUnlock()
 
 	// Collect all entries that match the cursor filter.
-	var out []*SnapshotListEntry
+	out := make([]*SnapshotListEntry, 0, len(s.entries[workspaceID]))
 	for _, e := range s.entries[workspaceID] {
 		if afterVersion > 0 && e.env.Version >= afterVersion {
 			continue
