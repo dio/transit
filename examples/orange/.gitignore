@@ -4,3 +4,4 @@ envoy.yaml
 .env
 
 /examples/orange/demos/fallback/stub
+*.tar.gz

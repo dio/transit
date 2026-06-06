@@ -15,11 +15,16 @@ type Config struct {
 	Orgs      map[string]*OrgEntry `yaml:"orgs,omitempty"`
 }
 
-// OrgEntry holds the connection details and active identity for one org.
+// OrgEntry holds connection details and a per-user credential map for one org.
 type OrgEntry struct {
-	Server     string `yaml:"server,omitempty"`
-	APIKey     string `yaml:"api_key,omitempty"`
-	ActiveUser string `yaml:"active_user,omitempty"`
+	Server     string                `yaml:"server,omitempty"`
+	ActiveUser string                `yaml:"active_user,omitempty"`
+	Users      map[string]*UserEntry `yaml:"users,omitempty"`
+}
+
+// UserEntry holds the API key for one user within an org.
+type UserEntry struct {
+	APIKey string `yaml:"api_key,omitempty"`
 }
 
 // configPath returns ~/.orange/config.
@@ -78,23 +83,45 @@ func SaveConfig(cfg *Config) error {
 	return os.WriteFile(filepath.Join(dir, "config"), data, 0o600)
 }
 
-// ActiveEntry returns the OrgEntry for the currently active org.
-func (c *Config) ActiveEntry() (*OrgEntry, error) {
+// ActiveEntry resolves the active org → active user → credentials.
+// Returns the OrgEntry (for Server) and UserEntry (for APIKey).
+func (c *Config) ActiveEntry() (*OrgEntry, *UserEntry, error) {
 	if c.ActiveOrg == "" {
-		return nil, errors.New("not logged in — run: orange auth login --org <org>")
+		return nil, nil, errors.New("not logged in — run: orange auth login --org <org> --user <user>")
 	}
-	e, ok := c.Orgs[c.ActiveOrg]
-	if !ok || e.APIKey == "" {
-		return nil, fmt.Errorf("no credentials for org %q — run: orange auth login --org %s", c.ActiveOrg, c.ActiveOrg)
+	org, ok := c.Orgs[c.ActiveOrg]
+	if !ok {
+		return nil, nil, fmt.Errorf("org %q not found — run: orange auth login --org %s --user <user>", c.ActiveOrg, c.ActiveOrg)
 	}
-	return e, nil
+	if org.ActiveUser == "" {
+		return nil, nil, fmt.Errorf("no active user for org %q — run: orange auth login --org %s --user <user>", c.ActiveOrg, c.ActiveOrg)
+	}
+	u, ok := org.Users[org.ActiveUser]
+	if !ok || u.APIKey == "" {
+		return nil, nil, fmt.Errorf("no credentials for %s/%s — run: orange auth login --org %s --user %s",
+			c.ActiveOrg, org.ActiveUser, c.ActiveOrg, org.ActiveUser)
+	}
+	return org, u, nil
 }
 
-// SetOrg upserts an OrgEntry and sets it as active.
-func (c *Config) SetOrg(org string, entry OrgEntry) {
+// SetUser upserts a UserEntry under orgSlug/userID and makes it the active
+// org+user. If server is empty the existing server for the org is kept.
+func (c *Config) SetUser(orgSlug, userID, server, apiKey string) {
 	if c.Orgs == nil {
 		c.Orgs = make(map[string]*OrgEntry)
 	}
-	c.Orgs[org] = &entry
-	c.ActiveOrg = org
+	org, ok := c.Orgs[orgSlug]
+	if !ok {
+		org = &OrgEntry{}
+		c.Orgs[orgSlug] = org
+	}
+	if server != "" {
+		org.Server = server
+	}
+	if org.Users == nil {
+		org.Users = make(map[string]*UserEntry)
+	}
+	org.Users[userID] = &UserEntry{APIKey: apiKey}
+	org.ActiveUser = userID
+	c.ActiveOrg = orgSlug
 }

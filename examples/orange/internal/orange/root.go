@@ -17,6 +17,7 @@ import (
 type globalFlags struct {
 	server  string
 	org     string
+	user    string
 	apiKey  string
 	output  string
 	quiet   bool
@@ -41,8 +42,12 @@ func NewCommand() *cobra.Command {
 		Short: "orange management plane CLI",
 		Long: `orange — unified CLI for the orange management plane.
 
-Run 'orange <command> --help' for command-specific help.
-Run 'orange repl' (or bare 'orange') for the interactive shell.`,
+  orange admin <resource> <verb>   management plane operations
+  orange auth  <verb>              authentication
+  orange server                    run the server
+  orange localdata                 access embedded Postgres (dev)
+
+Run 'orange <command> --help' for command-specific help.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -53,20 +58,21 @@ Run 'orange repl' (or bare 'orange') for the interactive shell.`,
 
 	// Persistent flags available on every subcommand.
 	pf := root.PersistentFlags()
-	pf.StringVar(&gf.server, "server", envOr("ORANGE_SERVER", "http://localhost:8080"), "management plane server URL (env: ORANGE_SERVER)")
-	pf.StringVar(&gf.org, "org", envOr("ORANGE_ORG", ""), "org slug override (env: ORANGE_ORG)")
-	pf.StringVar(&gf.apiKey, "api-key", envOr("ORANGE_API_KEY", ""), "admin API key (env: ORANGE_API_KEY)")
+	pf.StringVar(&gf.server, "server", "http://localhost:8080", "management plane server URL (env: ORANGE_SERVER)")
+	pf.StringVar(&gf.org, "org", "", "active org slug (env: ORANGE_ORG)")
+	pf.StringVar(&gf.user, "user", "", "active user within the org (env: ORANGE_USER)")
+	pf.StringVar(&gf.apiKey, "api-key", "", "API key (env: ORANGE_API_KEY)")
 	pf.StringVarP(&gf.output, "output", "o", "table", "output format: table | json | yaml")
 	pf.BoolVarP(&gf.quiet, "quiet", "q", false, "suppress headers and decorations")
 	pf.BoolVar(&gf.noColor, "no-color", false, "disable ANSI color output")
 
 	// Register subcommands.
 	root.AddCommand(newServerCmd())
+	root.AddCommand(newBootstrapCmd())
 	root.AddCommand(newAuthCmd())
 	root.AddCommand(newLocalDataCmd())
-	root.AddCommand(newOrgCmd())
-	root.AddCommand(newProjectCmd())
-	root.AddCommand(newWorkspaceCmd())
+	root.AddCommand(newAdminCmd())
+	root.AddCommand(newEgressProxyCmd())
 
 	return root
 }
@@ -75,25 +81,51 @@ Run 'orange repl' (or bare 'orange') for the interactive shell.`,
 // It falls back to ~/.orange/config when --api-key / --server are not given.
 func resolveRunCtx() (*RunCtx, error) {
 	apiKey := gf.apiKey
+	if apiKey == "" {
+		apiKey = os.Getenv("ORANGE_API_KEY")
+	}
 	serverURL := gf.server
+	if serverURL == "http://localhost:8080" {
+		if v := os.Getenv("ORANGE_SERVER"); v != "" {
+			serverURL = v
+		}
+	}
 
 	if apiKey == "" {
 		cfg, err := LoadConfig()
 		if err != nil {
 			return nil, err
 		}
-		entry, err := cfg.ActiveEntry()
+		// --org / ORANGE_ORG overrides the active org in config.
+		org := gf.org
+		if org == "" {
+			org = os.Getenv("ORANGE_ORG")
+		}
+		if org != "" {
+			cfg.ActiveOrg = org
+		}
+		// --user / ORANGE_USER overrides the active user within the resolved org.
+		user := gf.user
+		if user == "" {
+			user = os.Getenv("ORANGE_USER")
+		}
+		if user != "" && cfg.ActiveOrg != "" {
+			if e, ok := cfg.Orgs[cfg.ActiveOrg]; ok {
+				e.ActiveUser = user
+			}
+		}
+		orgEntry, userEntry, err := cfg.ActiveEntry()
 		if err != nil {
 			return nil, err
 		}
-		apiKey = entry.APIKey
-		if serverURL == "http://localhost:8080" && entry.Server != "" {
-			serverURL = entry.Server
+		apiKey = userEntry.APIKey
+		if serverURL == "http://localhost:8080" && orgEntry.Server != "" {
+			serverURL = orgEntry.Server
 		}
 	}
 
 	if apiKey == "" {
-		return nil, fmt.Errorf("no API key — set --api-key, ORANGE_API_KEY, or run: orange auth login")
+		return nil, fmt.Errorf("no API key — set --api-key, ORANGE_API_KEY, or run: orange auth login --org <org> --user <user>")
 	}
 
 	pr := &Printer{

@@ -6,9 +6,11 @@ import (
 	"io"
 	"os"
 	"text/tabwriter"
+	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"gopkg.in/yaml.v3"
 )
 
@@ -127,4 +129,34 @@ func (p *Printer) Table(header string, rows []string) {
 // OK prints a simple success confirmation.
 func (p *Printer) OK(msg string) {
 	fmt.Fprintln(p.Out, msg)
+}
+
+// age returns a compact human-readable duration since ts (e.g. "3d", "5h", "12m", "30s").
+func age(ts *timestamppb.Timestamp) string {
+	if ts == nil {
+		return "-"
+	}
+	d := time.Since(ts.AsTime())
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
+	}
+}
+
+// clip returns s truncated to n runes with a "…" suffix, or "-" when nil/empty.
+func clip(s *string, n int) string {
+	if s == nil || *s == "" {
+		return "-"
+	}
+	r := []rune(*s)
+	if len(r) > n {
+		return string(r[:n-1]) + "…"
+	}
+	return *s
 }

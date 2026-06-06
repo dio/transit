@@ -17,13 +17,16 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spf13/cobra"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 
+	apikeyconnect "github.com/dio/transit/examples/orange/api/orange/apikey/admin/v1/adminv1connect"
+	configadminconnect "github.com/dio/transit/examples/orange/api/orange/config/admin/v1/adminv1connect"
+	configv1connect "github.com/dio/transit/examples/orange/api/orange/config/v1/configv1connect"
 	egressconnect "github.com/dio/transit/examples/orange/api/orange/egress/admin/v1/adminv1connect"
+	egressv1connect "github.com/dio/transit/examples/orange/api/orange/egress/v1/egressv1connect"
 	keyconnect "github.com/dio/transit/examples/orange/api/orange/key/admin/v1/adminv1connect"
 	orgconnect "github.com/dio/transit/examples/orange/api/orange/org/admin/v1/adminv1connect"
 	policyconnect "github.com/dio/transit/examples/orange/api/orange/policy/admin/v1/adminv1connect"
@@ -32,6 +35,7 @@ import (
 	secretconnect "github.com/dio/transit/examples/orange/api/orange/secret/admin/v1/adminv1connect"
 	userconnect "github.com/dio/transit/examples/orange/api/orange/user/admin/v1/adminv1connect"
 	workspaceconnect "github.com/dio/transit/examples/orange/api/orange/workspace/admin/v1/adminv1connect"
+	"github.com/dio/transit/examples/orange/internal/config"
 	"github.com/dio/transit/examples/orange/internal/embeddedpg"
 	"github.com/dio/transit/examples/orange/internal/orange/apikeys"
 	"github.com/dio/transit/examples/orange/internal/resources"
@@ -44,11 +48,9 @@ import (
 
 func newServerCmd() *cobra.Command {
 	var (
-		localMode      bool
-		purge          bool
-		bootstrapOrg   string
-		bootstrapEmail string
-		port           string
+		localMode bool
+		port      string
+		publicURL string
 	)
 
 	cmd := &cobra.Command{
@@ -56,52 +58,38 @@ func newServerCmd() *cobra.Command {
 		Short: "Run the orange management plane server",
 		Long: `Starts the orange management plane HTTP/2 server.
 
-Bootstrap workflow (run once on a fresh database):
+Bootstrap a fresh database first:
 
-  orange server --local --bootstrap=acme
-  # prints: export ORANGE_API_KEY=sk-org-...
-  # then exits
+  orange bootstrap --local --org=acme
+  orange bootstrap --local --org=acme --include=proj,ws
 
-Start the server after bootstrap:
+Then start the server:
 
-  orange server --local
-
-Reset local data and re-bootstrap:
-
-  orange server --local --purge --bootstrap=acme`,
+  orange server --local`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if purge && !localMode {
-				return fmt.Errorf("--purge is only available with --local")
-			}
 			logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 			return runServer(cmd.Context(), serverCfg{
-				local:          localMode,
-				purge:          purge,
-				bootstrapOrg:   bootstrapOrg,
-				bootstrapEmail: bootstrapEmail,
-				port:           port,
-				logger:         logger,
+				local:     localMode,
+				port:      port,
+				publicURL: publicURL,
+				logger:    logger,
 			})
 		},
 	}
 
 	cmd.Flags().BoolVar(&localMode, "local", false, "use embedded Postgres and auto-generate KEK in ~/.orange/")
-	cmd.Flags().BoolVar(&purge, "purge", false, "remove ~/.orange/data/ and ~/.orange/kek before starting (requires --local)")
-	cmd.Flags().StringVar(&bootstrapOrg, "bootstrap", envOr("ORANGE_BOOTSTRAP_ORG", ""), "bootstrap first org then exit (org name)")
-	cmd.Flags().StringVar(&bootstrapEmail, "bootstrap-email", envOr("ORANGE_BOOTSTRAP_EMAIL", ""), "admin email for bootstrap (default: admin@<org>)")
 	cmd.Flags().StringVar(&port, "port", envOr("PORT", "8080"), "listen port")
+	cmd.Flags().StringVar(&publicURL, "public-url", envOr("ORANGE_PUBLIC_URL", ""), "public URL written into egress bundles (env: ORANGE_PUBLIC_URL; default: http://localhost:<port>)")
 
 	return cmd
 }
 
 type serverCfg struct {
-	local          bool
-	purge          bool
-	bootstrapOrg   string
-	bootstrapEmail string
-	port           string
-	logger         *slog.Logger
+	local     bool
+	port      string
+	publicURL string
+	logger    *slog.Logger
 }
 
 func runServer(parent context.Context, cfg serverCfg) error {
@@ -111,14 +99,6 @@ func runServer(parent context.Context, cfg serverCfg) error {
 	listenAddr := cfg.port
 	if listenAddr[0] != ':' {
 		listenAddr = ":" + listenAddr
-	}
-
-	// ── Optional purge ────────────────────────────────────────────────────────
-
-	if cfg.purge {
-		if err := purgeLocalData(cfg.logger); err != nil {
-			return err
-		}
 	}
 
 	// ── KEK resolution ────────────────────────────────────────────────────────
@@ -195,10 +175,16 @@ func runServer(parent context.Context, cfg serverCfg) error {
 	if err != nil {
 		return fmt.Errorf("init key service: %w", err)
 	}
-	egressSvc, err := resources.NewEgressService(pool, cfg.logger.With("component", "egress"))
+	serverURL := cfg.publicURL
+	if serverURL == "" {
+		serverURL = "http://localhost:" + cfg.port
+	}
+	egressSvc, err := resources.NewEgressService(pool, cfg.logger.With("component", "egress"), serverURL, secretSvc)
 	if err != nil {
 		return fmt.Errorf("init egress service: %w", err)
 	}
+	workspaceSvc.SetEgressService(egressSvc)
+	heartbeatRegistry := resources.NewHeartbeatRegistry(pool, cfg.logger.With("component", "heartbeat"))
 	policySvc, err := resources.NewPolicyService(pool, cfg.logger.With("component", "policy"))
 	if err != nil {
 		return fmt.Errorf("init policy service: %w", err)
@@ -215,15 +201,13 @@ func runServer(parent context.Context, cfg serverCfg) error {
 		return fmt.Errorf("init api key store: %w", err)
 	}
 
-	// ── Bootstrap (exit immediately if it ran) ────────────────────────────────
+	// ── Config snapshot store + service ───────────────────────────────────────
 
-	bootstrapped, err := serverBootstrap(ctx, pool, keyStore, cfg)
+	snapshotStore, err := config.NewPgSnapshotStore(ctx, pool)
 	if err != nil {
-		return fmt.Errorf("bootstrap: %w", err)
+		return fmt.Errorf("init snapshot store: %w", err)
 	}
-	if bootstrapped {
-		return nil // printed key; caller should re-run without --bootstrap
-	}
+	configSvc := resources.NewConfigService(snapshotStore, cfg.logger.With("component", "config"))
 
 	// ── HTTP mux ──────────────────────────────────────────────────────────────
 
@@ -241,6 +225,16 @@ func runServer(parent context.Context, cfg serverCfg) error {
 	mux.Handle(egressconnect.NewEgressAdminServiceHandler(egressSvc, opts...))
 	mux.Handle(policyconnect.NewPolicyAdminServiceHandler(policySvc, opts...))
 	mux.Handle(profileconnect.NewProfileAdminServiceHandler(profileSvc, opts...))
+	mux.Handle(apikeyconnect.NewAPIKeyAdminServiceHandler(apikeys.NewService(keyStore), opts...))
+	// Config admin: management-plane, requires API key auth.
+	mux.Handle(configadminconnect.NewConfigAdminServiceHandler(configSvc, opts...))
+	// Snapshot fetch: data-plane facing, codec only (no API key auth).
+	mux.Handle(configv1connect.NewSnapshotServiceHandler(configSvc, codecOpt))
+	// Heartbeat is egress-facing: no API key auth, codec only.
+	mux.Handle(egressv1connect.NewEgressServiceHandler(
+		resources.NewHeartbeatService(heartbeatRegistry),
+		codecOpt,
+	))
 
 	var ready atomic.Bool
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -264,6 +258,8 @@ func runServer(parent context.Context, cfg serverCfg) error {
 		IdleTimeout:       120 * time.Second,
 	}
 
+	heartbeatRegistry.Start()
+
 	cfg.logger.Info("server starting", "addr", listenAddr)
 	errCh := make(chan error, 1)
 	go func() {
@@ -282,6 +278,7 @@ func runServer(parent context.Context, cfg serverCfg) error {
 	}
 
 	ready.Store(false)
+	heartbeatRegistry.Stop()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
@@ -292,66 +289,6 @@ func runServer(parent context.Context, cfg serverCfg) error {
 	return nil
 }
 
-// serverBootstrap creates the first org + user + admin API key when the
-// database is empty and --bootstrap is set.
-// Returns true if bootstrap ran (caller should exit), false if skipped.
-func serverBootstrap(ctx context.Context, pool *pgxpool.Pool, store *apikeys.Store, cfg serverCfg) (bool, error) {
-	if cfg.bootstrapOrg == "" {
-		return false, nil
-	}
-	has, err := apikeys.HasOrgs(ctx, pool)
-	if err != nil {
-		return false, err
-	}
-	if has {
-		cfg.logger.Info("bootstrap: orgs already exist, skipping")
-		return false, nil
-	}
-
-	email := cfg.bootstrapEmail
-	if email == "" {
-		email = "admin@" + cfg.bootstrapOrg
-	}
-
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return false, err
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck
-
-	now := time.Now().UTC()
-	orgID := uuid.Must(uuid.NewV7()).String()
-	userID := uuid.Must(uuid.NewV7()).String()
-
-	if _, err = tx.Exec(ctx,
-		`INSERT INTO orgs (org_id, name, created_at, updated_at) VALUES ($1, $2, $3, $3)`,
-		orgID, cfg.bootstrapOrg, now,
-	); err != nil {
-		return false, fmt.Errorf("create bootstrap org: %w", err)
-	}
-	if _, err = tx.Exec(ctx,
-		`INSERT INTO users (user_id, org_id, email, created_at, updated_at) VALUES ($1, $2, $3, $4, $4)`,
-		userID, orgID, email, now,
-	); err != nil {
-		return false, fmt.Errorf("create bootstrap user: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return false, err
-	}
-
-	plaintext, _, err := store.Issue(ctx, orgID, userID, "", []string{apikeys.ScopeAdmin}, "bootstrap admin key")
-	if err != nil {
-		return false, fmt.Errorf("issue bootstrap key: %w", err)
-	}
-
-	// Print to stdout so the export line can be eval'd by the shell.
-	fmt.Fprintf(os.Stdout, "# org: %s  user: %s\nexport ORANGE_API_KEY=%s\n",
-		cfg.bootstrapOrg, email, plaintext)
-
-	cfg.logger.Info("bootstrap complete — server will exit; re-run without --bootstrap to start",
-		"org_id", orgID, "user_id", userID)
-	return true, nil
-}
 
 // purgeLocalData removes ~/.orange/data/ and ~/.orange/kek.
 func purgeLocalData(logger *slog.Logger) error {
