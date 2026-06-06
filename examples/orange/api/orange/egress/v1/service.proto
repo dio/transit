@@ -1,0 +1,24 @@
+// service.proto — EgressService: egress-proxy-facing (non-admin) endpoints.
+//
+// Called by running egress proxy instances, not by admin clients.
+// Authentication is by egress keypair assertion (full auth in a future step);
+// no API key required on these RPCs.
+
+syntax = "proto3";
+
+package orange.egress.v1;
+
+import "google/protobuf/timestamp.proto";
+
+service EgressService {
+  // Heartbeat is called periodically by the egress proxy to report liveness.
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse) {}
+}
+
+message HeartbeatRequest {
+  string egress_id = 1;
+}
+
+message HeartbeatResponse {
+  google.protobuf.Timestamp server_time = 1;
+}
