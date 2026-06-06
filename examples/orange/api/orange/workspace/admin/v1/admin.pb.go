@@ -529,6 +529,7 @@ type Workspace struct {
 	Description   *string                `protobuf:"bytes,4,opt,name=description,proto3,oneof" json:"description,omitempty"`
 	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	EgressId      string                 `protobuf:"bytes,7,opt,name=egress_id,json=egressId,proto3" json:"egress_id,omitempty"` // auto-provisioned on creation; empty until provisioned
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -605,6 +606,13 @@ func (x *Workspace) GetUpdatedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *Workspace) GetEgressId() string {
+	if x != nil {
+		return x.EgressId
+	}
+	return ""
+}
+
 var File_orange_workspace_admin_v1_admin_proto protoreflect.FileDescriptor
 
 const file_orange_workspace_admin_v1_admin_proto_rawDesc = "" +
@@ -644,7 +652,7 @@ const file_orange_workspace_admin_v1_admin_proto_rawDesc = "" +
 	"\tworkspace\x18\x01 \x01(\v2$.orange.workspace.admin.v1.WorkspaceR\tworkspace\"F\n" +
 	"\x16DeleteWorkspaceRequest\x12,\n" +
 	"\fworkspace_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\vworkspaceId\"\x19\n" +
-	"\x17DeleteWorkspaceResponse\"\x8e\x02\n" +
+	"\x17DeleteWorkspaceResponse\"\xab\x02\n" +
 	"\tWorkspace\x12!\n" +
 	"\fworkspace_id\x18\x01 \x01(\tR\vworkspaceId\x12\x1d\n" +
 	"\n" +
@@ -654,7 +662,8 @@ const file_orange_workspace_admin_v1_admin_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
-	"updated_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAtB\x0e\n" +
+	"updated_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12\x1b\n" +
+	"\tegress_id\x18\a \x01(\tR\begressIdB\x0e\n" +
 	"\f_description2\xc8\x05\n" +
 	"\x15WorkspaceAdminService\x12\x88\x01\n" +
 	"\x0fCreateWorkspace\x121.orange.workspace.admin.v1.CreateWorkspaceRequest\x1a2.orange.workspace.admin.v1.CreateWorkspaceResponse\"\x0e\xc2\xf3\x18\n" +

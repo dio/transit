@@ -4,13 +4,23 @@
 // A Workspace owns exactly one Egress. The Egress is the proxy instance
 // responsible for request dispatch and policy enforcement.
 //
-// EgressIdentity is the X.509 certificate attesting workspace ownership.
-// EgressKeyPair is the asymmetric key pair used for egress → control-plane auth.
-// CPValidationKey is the control-plane public key distributed to egress instances.
+// Connection model: signed assertion (not mTLS). The egress signs a
+// well-known string with its X.509 identity private key; the CP verifies the
+// signature and checks DB integrity. The same cert/key can be used for mTLS
+// later by reconfiguring the egress — no proto changes required.
+//
+// Cryptographic artefacts per egress:
+//   EgressIdentity    — X.509 cert (CN=egress.<ws>.<proj>.<org>) for signed assertion.
+//   EgressKeyPair     — Ed25519 keypair for ongoing egress→CP auth (heartbeat/telemetry).
+//   CPValidationKey   — CP public key; egress uses it to verify CP-signed config/telemetry.
+//   EgressPASETOKeyPair #1/#2 — Ed25519 keypairs; CP signs user tokens with the private key,
+//                               egress validates offline using the public key (no CP round-trip).
+//                               Two pairs allow graceful rotation.
 //
 // egress_id, identity_id, keypair_id, cpvalidation_key_id are server-assigned UUID7s.
 //
-// Authentication: every RPC requires AUTH_TYPE_API_KEY with scope "admin".
+// Authentication: every RPC requires AUTH_TYPE_API_KEY with scope "admin"
+// unless noted (GetEgressBundle requires "egress-bundle:download").
 //
 // Field numbers are stable and must not be reused once released.
 
@@ -40,6 +50,7 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// EgressStatus is the admin-controlled lifecycle state of an egress.
 type EgressStatus int32
 
 const (
@@ -89,6 +100,60 @@ func (EgressStatus) EnumDescriptor() ([]byte, []int) {
 	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{0}
 }
 
+// EgressOnlineStatus reflects whether the egress proxy is currently reachable,
+// as determined by heartbeat. Independent of EgressStatus.
+type EgressOnlineStatus int32
+
+const (
+	EgressOnlineStatus_EGRESS_ONLINE_STATUS_UNSPECIFIED EgressOnlineStatus = 0
+	EgressOnlineStatus_EGRESS_ONLINE_STATUS_UNKNOWN     EgressOnlineStatus = 1 // never connected since creation
+	EgressOnlineStatus_EGRESS_ONLINE_STATUS_ONLINE      EgressOnlineStatus = 2
+	EgressOnlineStatus_EGRESS_ONLINE_STATUS_OFFLINE     EgressOnlineStatus = 3
+)
+
+// Enum value maps for EgressOnlineStatus.
+var (
+	EgressOnlineStatus_name = map[int32]string{
+		0: "EGRESS_ONLINE_STATUS_UNSPECIFIED",
+		1: "EGRESS_ONLINE_STATUS_UNKNOWN",
+		2: "EGRESS_ONLINE_STATUS_ONLINE",
+		3: "EGRESS_ONLINE_STATUS_OFFLINE",
+	}
+	EgressOnlineStatus_value = map[string]int32{
+		"EGRESS_ONLINE_STATUS_UNSPECIFIED": 0,
+		"EGRESS_ONLINE_STATUS_UNKNOWN":     1,
+		"EGRESS_ONLINE_STATUS_ONLINE":      2,
+		"EGRESS_ONLINE_STATUS_OFFLINE":     3,
+	}
+)
+
+func (x EgressOnlineStatus) Enum() *EgressOnlineStatus {
+	p := new(EgressOnlineStatus)
+	*p = x
+	return p
+}
+
+func (x EgressOnlineStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (EgressOnlineStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_orange_egress_admin_v1_admin_proto_enumTypes[1].Descriptor()
+}
+
+func (EgressOnlineStatus) Type() protoreflect.EnumType {
+	return &file_orange_egress_admin_v1_admin_proto_enumTypes[1]
+}
+
+func (x EgressOnlineStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use EgressOnlineStatus.Descriptor instead.
+func (EgressOnlineStatus) EnumDescriptor() ([]byte, []int) {
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{1}
+}
+
 type KeyPairAlgorithm int32
 
 const (
@@ -125,11 +190,11 @@ func (x KeyPairAlgorithm) String() string {
 }
 
 func (KeyPairAlgorithm) Descriptor() protoreflect.EnumDescriptor {
-	return file_orange_egress_admin_v1_admin_proto_enumTypes[1].Descriptor()
+	return file_orange_egress_admin_v1_admin_proto_enumTypes[2].Descriptor()
 }
 
 func (KeyPairAlgorithm) Type() protoreflect.EnumType {
-	return &file_orange_egress_admin_v1_admin_proto_enumTypes[1]
+	return &file_orange_egress_admin_v1_admin_proto_enumTypes[2]
 }
 
 func (x KeyPairAlgorithm) Number() protoreflect.EnumNumber {
@@ -138,7 +203,7 @@ func (x KeyPairAlgorithm) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use KeyPairAlgorithm.Descriptor instead.
 func (KeyPairAlgorithm) EnumDescriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{1}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{2}
 }
 
 type CPValidationKeyAlgorithm int32
@@ -174,11 +239,11 @@ func (x CPValidationKeyAlgorithm) String() string {
 }
 
 func (CPValidationKeyAlgorithm) Descriptor() protoreflect.EnumDescriptor {
-	return file_orange_egress_admin_v1_admin_proto_enumTypes[2].Descriptor()
+	return file_orange_egress_admin_v1_admin_proto_enumTypes[3].Descriptor()
 }
 
 func (CPValidationKeyAlgorithm) Type() protoreflect.EnumType {
-	return &file_orange_egress_admin_v1_admin_proto_enumTypes[2]
+	return &file_orange_egress_admin_v1_admin_proto_enumTypes[3]
 }
 
 func (x CPValidationKeyAlgorithm) Number() protoreflect.EnumNumber {
@@ -187,7 +252,7 @@ func (x CPValidationKeyAlgorithm) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use CPValidationKeyAlgorithm.Descriptor instead.
 func (CPValidationKeyAlgorithm) EnumDescriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{2}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{3}
 }
 
 type CPValidationKeyPurpose int32
@@ -226,11 +291,11 @@ func (x CPValidationKeyPurpose) String() string {
 }
 
 func (CPValidationKeyPurpose) Descriptor() protoreflect.EnumDescriptor {
-	return file_orange_egress_admin_v1_admin_proto_enumTypes[3].Descriptor()
+	return file_orange_egress_admin_v1_admin_proto_enumTypes[4].Descriptor()
 }
 
 func (CPValidationKeyPurpose) Type() protoreflect.EnumType {
-	return &file_orange_egress_admin_v1_admin_proto_enumTypes[3]
+	return &file_orange_egress_admin_v1_admin_proto_enumTypes[4]
 }
 
 func (x CPValidationKeyPurpose) Number() protoreflect.EnumNumber {
@@ -239,7 +304,7 @@ func (x CPValidationKeyPurpose) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use CPValidationKeyPurpose.Descriptor instead.
 func (CPValidationKeyPurpose) EnumDescriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{3}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{4}
 }
 
 type CreateEgressRequest struct {
@@ -610,24 +675,324 @@ func (*DeleteEgressResponse) Descriptor() ([]byte, []int) {
 	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{7}
 }
 
-// Egress is the proxy instance owned by a Workspace (one-to-one).
-type Egress struct {
+type GetEgressByWorkspaceRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	EgressId      string                 `protobuf:"bytes,1,opt,name=egress_id,json=egressId,proto3" json:"egress_id,omitempty"`          // UUID7, server-assigned
-	WorkspaceId   string                 `protobuf:"bytes,2,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"` // owning workspace; immutable
-	Status        EgressStatus           `protobuf:"varint,3,opt,name=status,proto3,enum=orange.egress.admin.v1.EgressStatus" json:"status,omitempty"`
-	IdentityId    string                 `protobuf:"bytes,4,opt,name=identity_id,json=identityId,proto3" json:"identity_id,omitempty"` // active EgressIdentity; empty until issued
-	KeypairId     string                 `protobuf:"bytes,5,opt,name=keypair_id,json=keypairId,proto3" json:"keypair_id,omitempty"`    // active EgressKeyPair; empty until rotated
-	Description   *string                `protobuf:"bytes,6,opt,name=description,proto3,oneof" json:"description,omitempty"`
-	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	WorkspaceId   string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
+func (x *GetEgressByWorkspaceRequest) Reset() {
+	*x = GetEgressByWorkspaceRequest{}
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetEgressByWorkspaceRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetEgressByWorkspaceRequest) ProtoMessage() {}
+
+func (x *GetEgressByWorkspaceRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetEgressByWorkspaceRequest.ProtoReflect.Descriptor instead.
+func (*GetEgressByWorkspaceRequest) Descriptor() ([]byte, []int) {
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *GetEgressByWorkspaceRequest) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return ""
+}
+
+type GetEgressByWorkspaceResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Egress        *Egress                `protobuf:"bytes,1,opt,name=egress,proto3" json:"egress,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetEgressByWorkspaceResponse) Reset() {
+	*x = GetEgressByWorkspaceResponse{}
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetEgressByWorkspaceResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetEgressByWorkspaceResponse) ProtoMessage() {}
+
+func (x *GetEgressByWorkspaceResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetEgressByWorkspaceResponse.ProtoReflect.Descriptor instead.
+func (*GetEgressByWorkspaceResponse) Descriptor() ([]byte, []int) {
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *GetEgressByWorkspaceResponse) GetEgress() *Egress {
+	if x != nil {
+		return x.Egress
+	}
+	return nil
+}
+
+type GetEgressBundleRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	EgressId      string                 `protobuf:"bytes,1,opt,name=egress_id,json=egressId,proto3" json:"egress_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetEgressBundleRequest) Reset() {
+	*x = GetEgressBundleRequest{}
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetEgressBundleRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetEgressBundleRequest) ProtoMessage() {}
+
+func (x *GetEgressBundleRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetEgressBundleRequest.ProtoReflect.Descriptor instead.
+func (*GetEgressBundleRequest) Descriptor() ([]byte, []int) {
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *GetEgressBundleRequest) GetEgressId() string {
+	if x != nil {
+		return x.EgressId
+	}
+	return ""
+}
+
+type GetEgressBundleResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Bundle        *EgressBundle          `protobuf:"bytes,1,opt,name=bundle,proto3" json:"bundle,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetEgressBundleResponse) Reset() {
+	*x = GetEgressBundleResponse{}
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetEgressBundleResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetEgressBundleResponse) ProtoMessage() {}
+
+func (x *GetEgressBundleResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetEgressBundleResponse.ProtoReflect.Descriptor instead.
+func (*GetEgressBundleResponse) Descriptor() ([]byte, []int) {
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *GetEgressBundleResponse) GetBundle() *EgressBundle {
+	if x != nil {
+		return x.Bundle
+	}
+	return nil
+}
+
+// EgressBundle contains everything needed to boot an egress proxy instance.
+// Fields ending in _private_key_pem are sensitive — write to disk mode 0600,
+// never log or retransmit.
+//
+// Connection model: signed assertion. The egress signs the well-known string
+// "<egress_id>:<workspace_id>:initialize" with identity_private_key_pem and
+// presents identity_cert_pem for the CP to verify.
+type EgressBundle struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	EgressId    string                 `protobuf:"bytes,1,opt,name=egress_id,json=egressId,proto3" json:"egress_id,omitempty"`
+	WorkspaceId string                 `protobuf:"bytes,2,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	ServerUrl   string                 `protobuf:"bytes,3,opt,name=server_url,json=serverUrl,proto3" json:"server_url,omitempty"`
+	// Identity artefacts — used for the signed-assertion handshake with the CP.
+	IdentityCertPem       string `protobuf:"bytes,4,opt,name=identity_cert_pem,json=identityCertPem,proto3" json:"identity_cert_pem,omitempty"`
+	IdentityPrivateKeyPem string `protobuf:"bytes,5,opt,name=identity_private_key_pem,json=identityPrivateKeyPem,proto3" json:"identity_private_key_pem,omitempty"`
+	// EgressKeyPair private key — used to sign heartbeat / telemetry tokens.
+	EgressKeypairPrivateKeyPem string `protobuf:"bytes,6,opt,name=egress_keypair_private_key_pem,json=egressKeypairPrivateKeyPem,proto3" json:"egress_keypair_private_key_pem,omitempty"`
+	// CPValidationKey public key — used to verify CP-signed config and telemetry pushes.
+	CpValidationPublicKeyPem string `protobuf:"bytes,7,opt,name=cp_validation_public_key_pem,json=cpValidationPublicKeyPem,proto3" json:"cp_validation_public_key_pem,omitempty"`
+	// EgressPASETOKeyPair public keys — used to validate user PASETO tokens offline
+	// (no CP round-trip per request). Two keys allow graceful keypair rotation.
+	PasetoPublicKey_1Pem string `protobuf:"bytes,8,opt,name=paseto_public_key_1_pem,json=pasetoPublicKey1Pem,proto3" json:"paseto_public_key_1_pem,omitempty"`
+	PasetoPublicKey_2Pem string `protobuf:"bytes,9,opt,name=paseto_public_key_2_pem,json=pasetoPublicKey2Pem,proto3" json:"paseto_public_key_2_pem,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *EgressBundle) Reset() {
+	*x = EgressBundle{}
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EgressBundle) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EgressBundle) ProtoMessage() {}
+
+func (x *EgressBundle) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EgressBundle.ProtoReflect.Descriptor instead.
+func (*EgressBundle) Descriptor() ([]byte, []int) {
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *EgressBundle) GetEgressId() string {
+	if x != nil {
+		return x.EgressId
+	}
+	return ""
+}
+
+func (x *EgressBundle) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return ""
+}
+
+func (x *EgressBundle) GetServerUrl() string {
+	if x != nil {
+		return x.ServerUrl
+	}
+	return ""
+}
+
+func (x *EgressBundle) GetIdentityCertPem() string {
+	if x != nil {
+		return x.IdentityCertPem
+	}
+	return ""
+}
+
+func (x *EgressBundle) GetIdentityPrivateKeyPem() string {
+	if x != nil {
+		return x.IdentityPrivateKeyPem
+	}
+	return ""
+}
+
+func (x *EgressBundle) GetEgressKeypairPrivateKeyPem() string {
+	if x != nil {
+		return x.EgressKeypairPrivateKeyPem
+	}
+	return ""
+}
+
+func (x *EgressBundle) GetCpValidationPublicKeyPem() string {
+	if x != nil {
+		return x.CpValidationPublicKeyPem
+	}
+	return ""
+}
+
+func (x *EgressBundle) GetPasetoPublicKey_1Pem() string {
+	if x != nil {
+		return x.PasetoPublicKey_1Pem
+	}
+	return ""
+}
+
+func (x *EgressBundle) GetPasetoPublicKey_2Pem() string {
+	if x != nil {
+		return x.PasetoPublicKey_2Pem
+	}
+	return ""
+}
+
+// Egress is the proxy instance owned by a Workspace (one-to-one).
+type Egress struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	EgressId          string                 `protobuf:"bytes,1,opt,name=egress_id,json=egressId,proto3" json:"egress_id,omitempty"`                                                    // UUID7, server-assigned
+	WorkspaceId       string                 `protobuf:"bytes,2,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`                                           // owning workspace; immutable
+	AdminStatus       EgressStatus           `protobuf:"varint,3,opt,name=admin_status,json=adminStatus,proto3,enum=orange.egress.admin.v1.EgressStatus" json:"admin_status,omitempty"` // admin-controlled: is this egress allowed?
+	IdentityId        string                 `protobuf:"bytes,4,opt,name=identity_id,json=identityId,proto3" json:"identity_id,omitempty"`                                              // active EgressIdentity; empty until issued
+	KeypairId         string                 `protobuf:"bytes,5,opt,name=keypair_id,json=keypairId,proto3" json:"keypair_id,omitempty"`                                                 // active EgressKeyPair; empty until rotated
+	Description       *string                `protobuf:"bytes,6,opt,name=description,proto3,oneof" json:"description,omitempty"`
+	CreatedAt         *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	UpdatedAt         *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	OnlineStatus      EgressOnlineStatus     `protobuf:"varint,9,opt,name=online_status,json=onlineStatus,proto3,enum=orange.egress.admin.v1.EgressOnlineStatus" json:"online_status,omitempty"` // heartbeat-driven: is it up?
+	LastSeenAt        *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=last_seen_at,json=lastSeenAt,proto3" json:"last_seen_at,omitempty"`                                                    // last successful heartbeat
+	PasetoKeypair_1Id string                 `protobuf:"bytes,11,opt,name=paseto_keypair_1_id,json=pasetoKeypair1Id,proto3" json:"paseto_keypair_1_id,omitempty"`                                // active EgressPASETOKeyPair slot 1
+	PasetoKeypair_2Id string                 `protobuf:"bytes,12,opt,name=paseto_keypair_2_id,json=pasetoKeypair2Id,proto3" json:"paseto_keypair_2_id,omitempty"`                                // active EgressPASETOKeyPair slot 2
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
 func (x *Egress) Reset() {
 	*x = Egress{}
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[8]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -639,7 +1004,7 @@ func (x *Egress) String() string {
 func (*Egress) ProtoMessage() {}
 
 func (x *Egress) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[8]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -652,7 +1017,7 @@ func (x *Egress) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Egress.ProtoReflect.Descriptor instead.
 func (*Egress) Descriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{8}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *Egress) GetEgressId() string {
@@ -669,9 +1034,9 @@ func (x *Egress) GetWorkspaceId() string {
 	return ""
 }
 
-func (x *Egress) GetStatus() EgressStatus {
+func (x *Egress) GetAdminStatus() EgressStatus {
 	if x != nil {
-		return x.Status
+		return x.AdminStatus
 	}
 	return EgressStatus_EGRESS_STATUS_UNSPECIFIED
 }
@@ -711,6 +1076,34 @@ func (x *Egress) GetUpdatedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *Egress) GetOnlineStatus() EgressOnlineStatus {
+	if x != nil {
+		return x.OnlineStatus
+	}
+	return EgressOnlineStatus_EGRESS_ONLINE_STATUS_UNSPECIFIED
+}
+
+func (x *Egress) GetLastSeenAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastSeenAt
+	}
+	return nil
+}
+
+func (x *Egress) GetPasetoKeypair_1Id() string {
+	if x != nil {
+		return x.PasetoKeypair_1Id
+	}
+	return ""
+}
+
+func (x *Egress) GetPasetoKeypair_2Id() string {
+	if x != nil {
+		return x.PasetoKeypair_2Id
+	}
+	return ""
+}
+
 type IssueIdentityRequest struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	EgressId string                 `protobuf:"bytes,1,opt,name=egress_id,json=egressId,proto3" json:"egress_id,omitempty"`
@@ -722,7 +1115,7 @@ type IssueIdentityRequest struct {
 
 func (x *IssueIdentityRequest) Reset() {
 	*x = IssueIdentityRequest{}
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[9]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -734,7 +1127,7 @@ func (x *IssueIdentityRequest) String() string {
 func (*IssueIdentityRequest) ProtoMessage() {}
 
 func (x *IssueIdentityRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[9]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -747,7 +1140,7 @@ func (x *IssueIdentityRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IssueIdentityRequest.ProtoReflect.Descriptor instead.
 func (*IssueIdentityRequest) Descriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{9}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *IssueIdentityRequest) GetEgressId() string {
@@ -773,7 +1166,7 @@ type IssueIdentityResponse struct {
 
 func (x *IssueIdentityResponse) Reset() {
 	*x = IssueIdentityResponse{}
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[10]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -785,7 +1178,7 @@ func (x *IssueIdentityResponse) String() string {
 func (*IssueIdentityResponse) ProtoMessage() {}
 
 func (x *IssueIdentityResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[10]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -798,7 +1191,7 @@ func (x *IssueIdentityResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IssueIdentityResponse.ProtoReflect.Descriptor instead.
 func (*IssueIdentityResponse) Descriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{10}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *IssueIdentityResponse) GetIdentity() *EgressIdentity {
@@ -817,7 +1210,7 @@ type GetIdentityRequest struct {
 
 func (x *GetIdentityRequest) Reset() {
 	*x = GetIdentityRequest{}
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[11]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -829,7 +1222,7 @@ func (x *GetIdentityRequest) String() string {
 func (*GetIdentityRequest) ProtoMessage() {}
 
 func (x *GetIdentityRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[11]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -842,7 +1235,7 @@ func (x *GetIdentityRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetIdentityRequest.ProtoReflect.Descriptor instead.
 func (*GetIdentityRequest) Descriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{11}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *GetIdentityRequest) GetIdentityId() string {
@@ -861,7 +1254,7 @@ type GetIdentityResponse struct {
 
 func (x *GetIdentityResponse) Reset() {
 	*x = GetIdentityResponse{}
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[12]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -873,7 +1266,7 @@ func (x *GetIdentityResponse) String() string {
 func (*GetIdentityResponse) ProtoMessage() {}
 
 func (x *GetIdentityResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[12]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -886,7 +1279,7 @@ func (x *GetIdentityResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetIdentityResponse.ProtoReflect.Descriptor instead.
 func (*GetIdentityResponse) Descriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{12}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *GetIdentityResponse) GetIdentity() *EgressIdentity {
@@ -908,7 +1301,7 @@ type ListIdentitiesRequest struct {
 
 func (x *ListIdentitiesRequest) Reset() {
 	*x = ListIdentitiesRequest{}
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[13]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -920,7 +1313,7 @@ func (x *ListIdentitiesRequest) String() string {
 func (*ListIdentitiesRequest) ProtoMessage() {}
 
 func (x *ListIdentitiesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[13]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -933,7 +1326,7 @@ func (x *ListIdentitiesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListIdentitiesRequest.ProtoReflect.Descriptor instead.
 func (*ListIdentitiesRequest) Descriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{13}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ListIdentitiesRequest) GetEgressId() string {
@@ -974,7 +1367,7 @@ type ListIdentitiesResponse struct {
 
 func (x *ListIdentitiesResponse) Reset() {
 	*x = ListIdentitiesResponse{}
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[14]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -986,7 +1379,7 @@ func (x *ListIdentitiesResponse) String() string {
 func (*ListIdentitiesResponse) ProtoMessage() {}
 
 func (x *ListIdentitiesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[14]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -999,7 +1392,7 @@ func (x *ListIdentitiesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListIdentitiesResponse.ProtoReflect.Descriptor instead.
 func (*ListIdentitiesResponse) Descriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{14}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ListIdentitiesResponse) GetIdentities() []*EgressIdentity {
@@ -1025,7 +1418,7 @@ type RevokeIdentityRequest struct {
 
 func (x *RevokeIdentityRequest) Reset() {
 	*x = RevokeIdentityRequest{}
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[15]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1037,7 +1430,7 @@ func (x *RevokeIdentityRequest) String() string {
 func (*RevokeIdentityRequest) ProtoMessage() {}
 
 func (x *RevokeIdentityRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[15]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1050,7 +1443,7 @@ func (x *RevokeIdentityRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeIdentityRequest.ProtoReflect.Descriptor instead.
 func (*RevokeIdentityRequest) Descriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{15}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *RevokeIdentityRequest) GetIdentityId() string {
@@ -1068,7 +1461,7 @@ type RevokeIdentityResponse struct {
 
 func (x *RevokeIdentityResponse) Reset() {
 	*x = RevokeIdentityResponse{}
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[16]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1080,7 +1473,7 @@ func (x *RevokeIdentityResponse) String() string {
 func (*RevokeIdentityResponse) ProtoMessage() {}
 
 func (x *RevokeIdentityResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[16]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1093,7 +1486,7 @@ func (x *RevokeIdentityResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeIdentityResponse.ProtoReflect.Descriptor instead.
 func (*RevokeIdentityResponse) Descriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{16}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{21}
 }
 
 // EgressIdentity is an X.509 certificate attesting workspace ownership.
@@ -1112,7 +1505,7 @@ type EgressIdentity struct {
 
 func (x *EgressIdentity) Reset() {
 	*x = EgressIdentity{}
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[17]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1124,7 +1517,7 @@ func (x *EgressIdentity) String() string {
 func (*EgressIdentity) ProtoMessage() {}
 
 func (x *EgressIdentity) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[17]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1137,7 +1530,7 @@ func (x *EgressIdentity) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EgressIdentity.ProtoReflect.Descriptor instead.
 func (*EgressIdentity) Descriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{17}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *EgressIdentity) GetIdentityId() string {
@@ -1199,7 +1592,7 @@ type RotateKeyPairRequest struct {
 
 func (x *RotateKeyPairRequest) Reset() {
 	*x = RotateKeyPairRequest{}
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[18]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1211,7 +1604,7 @@ func (x *RotateKeyPairRequest) String() string {
 func (*RotateKeyPairRequest) ProtoMessage() {}
 
 func (x *RotateKeyPairRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[18]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1224,7 +1617,7 @@ func (x *RotateKeyPairRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RotateKeyPairRequest.ProtoReflect.Descriptor instead.
 func (*RotateKeyPairRequest) Descriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{18}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *RotateKeyPairRequest) GetEgressId() string {
@@ -1250,7 +1643,7 @@ type RotateKeyPairResponse struct {
 
 func (x *RotateKeyPairResponse) Reset() {
 	*x = RotateKeyPairResponse{}
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[19]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1262,7 +1655,7 @@ func (x *RotateKeyPairResponse) String() string {
 func (*RotateKeyPairResponse) ProtoMessage() {}
 
 func (x *RotateKeyPairResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[19]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1275,7 +1668,7 @@ func (x *RotateKeyPairResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RotateKeyPairResponse.ProtoReflect.Descriptor instead.
 func (*RotateKeyPairResponse) Descriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{19}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *RotateKeyPairResponse) GetKeypair() *EgressKeyPair {
@@ -1294,7 +1687,7 @@ type GetKeyPairRequest struct {
 
 func (x *GetKeyPairRequest) Reset() {
 	*x = GetKeyPairRequest{}
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[20]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1306,7 +1699,7 @@ func (x *GetKeyPairRequest) String() string {
 func (*GetKeyPairRequest) ProtoMessage() {}
 
 func (x *GetKeyPairRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[20]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1319,7 +1712,7 @@ func (x *GetKeyPairRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetKeyPairRequest.ProtoReflect.Descriptor instead.
 func (*GetKeyPairRequest) Descriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{20}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *GetKeyPairRequest) GetKeypairId() string {
@@ -1338,7 +1731,7 @@ type GetKeyPairResponse struct {
 
 func (x *GetKeyPairResponse) Reset() {
 	*x = GetKeyPairResponse{}
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[21]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1350,7 +1743,7 @@ func (x *GetKeyPairResponse) String() string {
 func (*GetKeyPairResponse) ProtoMessage() {}
 
 func (x *GetKeyPairResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[21]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1363,7 +1756,7 @@ func (x *GetKeyPairResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetKeyPairResponse.ProtoReflect.Descriptor instead.
 func (*GetKeyPairResponse) Descriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{21}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *GetKeyPairResponse) GetKeypair() *EgressKeyPair {
@@ -1385,7 +1778,7 @@ type ListKeyPairsRequest struct {
 
 func (x *ListKeyPairsRequest) Reset() {
 	*x = ListKeyPairsRequest{}
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[22]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1397,7 +1790,7 @@ func (x *ListKeyPairsRequest) String() string {
 func (*ListKeyPairsRequest) ProtoMessage() {}
 
 func (x *ListKeyPairsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[22]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1410,7 +1803,7 @@ func (x *ListKeyPairsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListKeyPairsRequest.ProtoReflect.Descriptor instead.
 func (*ListKeyPairsRequest) Descriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{22}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *ListKeyPairsRequest) GetEgressId() string {
@@ -1451,7 +1844,7 @@ type ListKeyPairsResponse struct {
 
 func (x *ListKeyPairsResponse) Reset() {
 	*x = ListKeyPairsResponse{}
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[23]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1463,7 +1856,7 @@ func (x *ListKeyPairsResponse) String() string {
 func (*ListKeyPairsResponse) ProtoMessage() {}
 
 func (x *ListKeyPairsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[23]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1476,7 +1869,7 @@ func (x *ListKeyPairsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListKeyPairsResponse.ProtoReflect.Descriptor instead.
 func (*ListKeyPairsResponse) Descriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{23}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *ListKeyPairsResponse) GetKeypairs() []*EgressKeyPair {
@@ -1511,7 +1904,7 @@ type EgressKeyPair struct {
 
 func (x *EgressKeyPair) Reset() {
 	*x = EgressKeyPair{}
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[24]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1523,7 +1916,7 @@ func (x *EgressKeyPair) String() string {
 func (*EgressKeyPair) ProtoMessage() {}
 
 func (x *EgressKeyPair) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[24]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1536,7 +1929,7 @@ func (x *EgressKeyPair) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EgressKeyPair.ProtoReflect.Descriptor instead.
 func (*EgressKeyPair) Descriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{24}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *EgressKeyPair) GetKeypairId() string {
@@ -1595,6 +1988,414 @@ func (x *EgressKeyPair) GetRotatedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+type RotatePASETOKeyPairRequest struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	EgressId string                 `protobuf:"bytes,1,opt,name=egress_id,json=egressId,proto3" json:"egress_id,omitempty"`
+	// slot must be 1 or 2.
+	Slot          int32 `protobuf:"varint,2,opt,name=slot,proto3" json:"slot,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RotatePASETOKeyPairRequest) Reset() {
+	*x = RotatePASETOKeyPairRequest{}
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RotatePASETOKeyPairRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RotatePASETOKeyPairRequest) ProtoMessage() {}
+
+func (x *RotatePASETOKeyPairRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RotatePASETOKeyPairRequest.ProtoReflect.Descriptor instead.
+func (*RotatePASETOKeyPairRequest) Descriptor() ([]byte, []int) {
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *RotatePASETOKeyPairRequest) GetEgressId() string {
+	if x != nil {
+		return x.EgressId
+	}
+	return ""
+}
+
+func (x *RotatePASETOKeyPairRequest) GetSlot() int32 {
+	if x != nil {
+		return x.Slot
+	}
+	return 0
+}
+
+type RotatePASETOKeyPairResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Keypair       *EgressPASETOKeyPair   `protobuf:"bytes,1,opt,name=keypair,proto3" json:"keypair,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RotatePASETOKeyPairResponse) Reset() {
+	*x = RotatePASETOKeyPairResponse{}
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RotatePASETOKeyPairResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RotatePASETOKeyPairResponse) ProtoMessage() {}
+
+func (x *RotatePASETOKeyPairResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RotatePASETOKeyPairResponse.ProtoReflect.Descriptor instead.
+func (*RotatePASETOKeyPairResponse) Descriptor() ([]byte, []int) {
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *RotatePASETOKeyPairResponse) GetKeypair() *EgressPASETOKeyPair {
+	if x != nil {
+		return x.Keypair
+	}
+	return nil
+}
+
+type GetPASETOKeyPairRequest struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	PasetoKeypairId string                 `protobuf:"bytes,1,opt,name=paseto_keypair_id,json=pasetoKeypairId,proto3" json:"paseto_keypair_id,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *GetPASETOKeyPairRequest) Reset() {
+	*x = GetPASETOKeyPairRequest{}
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetPASETOKeyPairRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetPASETOKeyPairRequest) ProtoMessage() {}
+
+func (x *GetPASETOKeyPairRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetPASETOKeyPairRequest.ProtoReflect.Descriptor instead.
+func (*GetPASETOKeyPairRequest) Descriptor() ([]byte, []int) {
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *GetPASETOKeyPairRequest) GetPasetoKeypairId() string {
+	if x != nil {
+		return x.PasetoKeypairId
+	}
+	return ""
+}
+
+type GetPASETOKeyPairResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Keypair       *EgressPASETOKeyPair   `protobuf:"bytes,1,opt,name=keypair,proto3" json:"keypair,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetPASETOKeyPairResponse) Reset() {
+	*x = GetPASETOKeyPairResponse{}
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetPASETOKeyPairResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetPASETOKeyPairResponse) ProtoMessage() {}
+
+func (x *GetPASETOKeyPairResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetPASETOKeyPairResponse.ProtoReflect.Descriptor instead.
+func (*GetPASETOKeyPairResponse) Descriptor() ([]byte, []int) {
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *GetPASETOKeyPairResponse) GetKeypair() *EgressPASETOKeyPair {
+	if x != nil {
+		return x.Keypair
+	}
+	return nil
+}
+
+type ListPASETOKeyPairsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	EgressId      string                 `protobuf:"bytes,1,opt,name=egress_id,json=egressId,proto3" json:"egress_id,omitempty"`
+	ActiveOnly    *bool                  `protobuf:"varint,2,opt,name=active_only,json=activeOnly,proto3,oneof" json:"active_only,omitempty"`
+	Limit         *int32                 `protobuf:"varint,3,opt,name=limit,proto3,oneof" json:"limit,omitempty"`
+	PageToken     *string                `protobuf:"bytes,4,opt,name=page_token,json=pageToken,proto3,oneof" json:"page_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListPASETOKeyPairsRequest) Reset() {
+	*x = ListPASETOKeyPairsRequest{}
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListPASETOKeyPairsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListPASETOKeyPairsRequest) ProtoMessage() {}
+
+func (x *ListPASETOKeyPairsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListPASETOKeyPairsRequest.ProtoReflect.Descriptor instead.
+func (*ListPASETOKeyPairsRequest) Descriptor() ([]byte, []int) {
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *ListPASETOKeyPairsRequest) GetEgressId() string {
+	if x != nil {
+		return x.EgressId
+	}
+	return ""
+}
+
+func (x *ListPASETOKeyPairsRequest) GetActiveOnly() bool {
+	if x != nil && x.ActiveOnly != nil {
+		return *x.ActiveOnly
+	}
+	return false
+}
+
+func (x *ListPASETOKeyPairsRequest) GetLimit() int32 {
+	if x != nil && x.Limit != nil {
+		return *x.Limit
+	}
+	return 0
+}
+
+func (x *ListPASETOKeyPairsRequest) GetPageToken() string {
+	if x != nil && x.PageToken != nil {
+		return *x.PageToken
+	}
+	return ""
+}
+
+type ListPASETOKeyPairsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Keypairs      []*EgressPASETOKeyPair `protobuf:"bytes,1,rep,name=keypairs,proto3" json:"keypairs,omitempty"`
+	NextPageToken string                 `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListPASETOKeyPairsResponse) Reset() {
+	*x = ListPASETOKeyPairsResponse{}
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListPASETOKeyPairsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListPASETOKeyPairsResponse) ProtoMessage() {}
+
+func (x *ListPASETOKeyPairsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListPASETOKeyPairsResponse.ProtoReflect.Descriptor instead.
+func (*ListPASETOKeyPairsResponse) Descriptor() ([]byte, []int) {
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *ListPASETOKeyPairsResponse) GetKeypairs() []*EgressPASETOKeyPair {
+	if x != nil {
+		return x.Keypairs
+	}
+	return nil
+}
+
+func (x *ListPASETOKeyPairsResponse) GetNextPageToken() string {
+	if x != nil {
+		return x.NextPageToken
+	}
+	return ""
+}
+
+// EgressPASETOKeyPair holds one Ed25519 keypair used for user token signing.
+// The CP signs PASETO v4.public tokens with the private key (stored in the
+// secret service). The egress validates tokens with the public key offline.
+type EgressPASETOKeyPair struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	PasetoKeypairId string                 `protobuf:"bytes,1,opt,name=paseto_keypair_id,json=pasetoKeypairId,proto3" json:"paseto_keypair_id,omitempty"` // UUID7, server-assigned
+	EgressId        string                 `protobuf:"bytes,2,opt,name=egress_id,json=egressId,proto3" json:"egress_id,omitempty"`                        // owning egress; immutable
+	Slot            int32                  `protobuf:"varint,3,opt,name=slot,proto3" json:"slot,omitempty"`                                               // 1 or 2
+	PublicKeyPem    string                 `protobuf:"bytes,4,opt,name=public_key_pem,json=publicKeyPem,proto3" json:"public_key_pem,omitempty"`          // Ed25519 public key — distributed to egress
+	PrivateKeyRef   string                 `protobuf:"bytes,5,opt,name=private_key_ref,json=privateKeyRef,proto3" json:"private_key_ref,omitempty"`       // opaque ref to secret service; never exposed
+	Active          bool                   `protobuf:"varint,6,opt,name=active,proto3" json:"active,omitempty"`
+	CreatedAt       *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	RotatedAt       *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=rotated_at,json=rotatedAt,proto3" json:"rotated_at,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *EgressPASETOKeyPair) Reset() {
+	*x = EgressPASETOKeyPair{}
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EgressPASETOKeyPair) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EgressPASETOKeyPair) ProtoMessage() {}
+
+func (x *EgressPASETOKeyPair) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EgressPASETOKeyPair.ProtoReflect.Descriptor instead.
+func (*EgressPASETOKeyPair) Descriptor() ([]byte, []int) {
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *EgressPASETOKeyPair) GetPasetoKeypairId() string {
+	if x != nil {
+		return x.PasetoKeypairId
+	}
+	return ""
+}
+
+func (x *EgressPASETOKeyPair) GetEgressId() string {
+	if x != nil {
+		return x.EgressId
+	}
+	return ""
+}
+
+func (x *EgressPASETOKeyPair) GetSlot() int32 {
+	if x != nil {
+		return x.Slot
+	}
+	return 0
+}
+
+func (x *EgressPASETOKeyPair) GetPublicKeyPem() string {
+	if x != nil {
+		return x.PublicKeyPem
+	}
+	return ""
+}
+
+func (x *EgressPASETOKeyPair) GetPrivateKeyRef() string {
+	if x != nil {
+		return x.PrivateKeyRef
+	}
+	return ""
+}
+
+func (x *EgressPASETOKeyPair) GetActive() bool {
+	if x != nil {
+		return x.Active
+	}
+	return false
+}
+
+func (x *EgressPASETOKeyPair) GetCreatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return nil
+}
+
+func (x *EgressPASETOKeyPair) GetRotatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.RotatedAt
+	}
+	return nil
+}
+
 type CreateCPValidationKeyRequest struct {
 	state         protoimpl.MessageState   `protogen:"open.v1"`
 	Algorithm     CPValidationKeyAlgorithm `protobuf:"varint,1,opt,name=algorithm,proto3,enum=orange.egress.admin.v1.CPValidationKeyAlgorithm" json:"algorithm,omitempty"`
@@ -1607,7 +2408,7 @@ type CreateCPValidationKeyRequest struct {
 
 func (x *CreateCPValidationKeyRequest) Reset() {
 	*x = CreateCPValidationKeyRequest{}
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[25]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1619,7 +2420,7 @@ func (x *CreateCPValidationKeyRequest) String() string {
 func (*CreateCPValidationKeyRequest) ProtoMessage() {}
 
 func (x *CreateCPValidationKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[25]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1632,7 +2433,7 @@ func (x *CreateCPValidationKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateCPValidationKeyRequest.ProtoReflect.Descriptor instead.
 func (*CreateCPValidationKeyRequest) Descriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{25}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *CreateCPValidationKeyRequest) GetAlgorithm() CPValidationKeyAlgorithm {
@@ -1672,7 +2473,7 @@ type CreateCPValidationKeyResponse struct {
 
 func (x *CreateCPValidationKeyResponse) Reset() {
 	*x = CreateCPValidationKeyResponse{}
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[26]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1684,7 +2485,7 @@ func (x *CreateCPValidationKeyResponse) String() string {
 func (*CreateCPValidationKeyResponse) ProtoMessage() {}
 
 func (x *CreateCPValidationKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[26]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1697,7 +2498,7 @@ func (x *CreateCPValidationKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateCPValidationKeyResponse.ProtoReflect.Descriptor instead.
 func (*CreateCPValidationKeyResponse) Descriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{26}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *CreateCPValidationKeyResponse) GetKey() *CPValidationKey {
@@ -1716,7 +2517,7 @@ type GetCPValidationKeyRequest struct {
 
 func (x *GetCPValidationKeyRequest) Reset() {
 	*x = GetCPValidationKeyRequest{}
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[27]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1728,7 +2529,7 @@ func (x *GetCPValidationKeyRequest) String() string {
 func (*GetCPValidationKeyRequest) ProtoMessage() {}
 
 func (x *GetCPValidationKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[27]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1741,7 +2542,7 @@ func (x *GetCPValidationKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCPValidationKeyRequest.ProtoReflect.Descriptor instead.
 func (*GetCPValidationKeyRequest) Descriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{27}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *GetCPValidationKeyRequest) GetCpvalidationKeyId() string {
@@ -1760,7 +2561,7 @@ type GetCPValidationKeyResponse struct {
 
 func (x *GetCPValidationKeyResponse) Reset() {
 	*x = GetCPValidationKeyResponse{}
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[28]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1772,7 +2573,7 @@ func (x *GetCPValidationKeyResponse) String() string {
 func (*GetCPValidationKeyResponse) ProtoMessage() {}
 
 func (x *GetCPValidationKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[28]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1785,7 +2586,7 @@ func (x *GetCPValidationKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCPValidationKeyResponse.ProtoReflect.Descriptor instead.
 func (*GetCPValidationKeyResponse) Descriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{28}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *GetCPValidationKeyResponse) GetKey() *CPValidationKey {
@@ -1807,7 +2608,7 @@ type ListCPValidationKeysRequest struct {
 
 func (x *ListCPValidationKeysRequest) Reset() {
 	*x = ListCPValidationKeysRequest{}
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[29]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1819,7 +2620,7 @@ func (x *ListCPValidationKeysRequest) String() string {
 func (*ListCPValidationKeysRequest) ProtoMessage() {}
 
 func (x *ListCPValidationKeysRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[29]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1832,7 +2633,7 @@ func (x *ListCPValidationKeysRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListCPValidationKeysRequest.ProtoReflect.Descriptor instead.
 func (*ListCPValidationKeysRequest) Descriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{29}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *ListCPValidationKeysRequest) GetActiveOnly() bool {
@@ -1873,7 +2674,7 @@ type ListCPValidationKeysResponse struct {
 
 func (x *ListCPValidationKeysResponse) Reset() {
 	*x = ListCPValidationKeysResponse{}
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[30]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1885,7 +2686,7 @@ func (x *ListCPValidationKeysResponse) String() string {
 func (*ListCPValidationKeysResponse) ProtoMessage() {}
 
 func (x *ListCPValidationKeysResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[30]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1898,7 +2699,7 @@ func (x *ListCPValidationKeysResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListCPValidationKeysResponse.ProtoReflect.Descriptor instead.
 func (*ListCPValidationKeysResponse) Descriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{30}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *ListCPValidationKeysResponse) GetKeys() []*CPValidationKey {
@@ -1924,7 +2725,7 @@ type DeactivateCPValidationKeyRequest struct {
 
 func (x *DeactivateCPValidationKeyRequest) Reset() {
 	*x = DeactivateCPValidationKeyRequest{}
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[31]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1936,7 +2737,7 @@ func (x *DeactivateCPValidationKeyRequest) String() string {
 func (*DeactivateCPValidationKeyRequest) ProtoMessage() {}
 
 func (x *DeactivateCPValidationKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[31]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1949,7 +2750,7 @@ func (x *DeactivateCPValidationKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeactivateCPValidationKeyRequest.ProtoReflect.Descriptor instead.
 func (*DeactivateCPValidationKeyRequest) Descriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{31}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *DeactivateCPValidationKeyRequest) GetCpvalidationKeyId() string {
@@ -1967,7 +2768,7 @@ type DeactivateCPValidationKeyResponse struct {
 
 func (x *DeactivateCPValidationKeyResponse) Reset() {
 	*x = DeactivateCPValidationKeyResponse{}
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[32]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1979,7 +2780,7 @@ func (x *DeactivateCPValidationKeyResponse) String() string {
 func (*DeactivateCPValidationKeyResponse) ProtoMessage() {}
 
 func (x *DeactivateCPValidationKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[32]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1992,7 +2793,7 @@ func (x *DeactivateCPValidationKeyResponse) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use DeactivateCPValidationKeyResponse.ProtoReflect.Descriptor instead.
 func (*DeactivateCPValidationKeyResponse) Descriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{32}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{44}
 }
 
 // CPValidationKey is the control-plane public key distributed to egress instances.
@@ -2011,7 +2812,7 @@ type CPValidationKey struct {
 
 func (x *CPValidationKey) Reset() {
 	*x = CPValidationKey{}
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[33]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2023,7 +2824,7 @@ func (x *CPValidationKey) String() string {
 func (*CPValidationKey) ProtoMessage() {}
 
 func (x *CPValidationKey) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[33]
+	mi := &file_orange_egress_admin_v1_admin_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2036,7 +2837,7 @@ func (x *CPValidationKey) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CPValidationKey.ProtoReflect.Descriptor instead.
 func (*CPValidationKey) Descriptor() ([]byte, []int) {
-	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{33}
+	return file_orange_egress_admin_v1_admin_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *CPValidationKey) GetCpvalidationKeyId() string {
@@ -2113,11 +2914,30 @@ const file_orange_egress_admin_v1_admin_proto_rawDesc = "" +
 	"\x06egress\x18\x01 \x01(\v2\x1e.orange.egress.admin.v1.EgressR\x06egress\"=\n" +
 	"\x13DeleteEgressRequest\x12&\n" +
 	"\tegress_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\begressId\"\x16\n" +
-	"\x14DeleteEgressResponse\"\xf3\x02\n" +
+	"\x14DeleteEgressResponse\"K\n" +
+	"\x1bGetEgressByWorkspaceRequest\x12,\n" +
+	"\fworkspace_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\vworkspaceId\"V\n" +
+	"\x1cGetEgressByWorkspaceResponse\x126\n" +
+	"\x06egress\x18\x01 \x01(\v2\x1e.orange.egress.admin.v1.EgressR\x06egress\"@\n" +
+	"\x16GetEgressBundleRequest\x12&\n" +
+	"\tegress_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\begressId\"W\n" +
+	"\x17GetEgressBundleResponse\x12<\n" +
+	"\x06bundle\x18\x01 \x01(\v2$.orange.egress.admin.v1.EgressBundleR\x06bundle\"\xc2\x03\n" +
+	"\fEgressBundle\x12\x1b\n" +
+	"\tegress_id\x18\x01 \x01(\tR\begressId\x12!\n" +
+	"\fworkspace_id\x18\x02 \x01(\tR\vworkspaceId\x12\x1d\n" +
+	"\n" +
+	"server_url\x18\x03 \x01(\tR\tserverUrl\x12*\n" +
+	"\x11identity_cert_pem\x18\x04 \x01(\tR\x0fidentityCertPem\x127\n" +
+	"\x18identity_private_key_pem\x18\x05 \x01(\tR\x15identityPrivateKeyPem\x12B\n" +
+	"\x1eegress_keypair_private_key_pem\x18\x06 \x01(\tR\x1aegressKeypairPrivateKeyPem\x12>\n" +
+	"\x1ccp_validation_public_key_pem\x18\a \x01(\tR\x18cpValidationPublicKeyPem\x124\n" +
+	"\x17paseto_public_key_1_pem\x18\b \x01(\tR\x13pasetoPublicKey1Pem\x124\n" +
+	"\x17paseto_public_key_2_pem\x18\t \x01(\tR\x13pasetoPublicKey2Pem\"\xeb\x04\n" +
 	"\x06Egress\x12\x1b\n" +
 	"\tegress_id\x18\x01 \x01(\tR\begressId\x12!\n" +
-	"\fworkspace_id\x18\x02 \x01(\tR\vworkspaceId\x12<\n" +
-	"\x06status\x18\x03 \x01(\x0e2$.orange.egress.admin.v1.EgressStatusR\x06status\x12\x1f\n" +
+	"\fworkspace_id\x18\x02 \x01(\tR\vworkspaceId\x12G\n" +
+	"\fadmin_status\x18\x03 \x01(\x0e2$.orange.egress.admin.v1.EgressStatusR\vadminStatus\x12\x1f\n" +
 	"\videntity_id\x18\x04 \x01(\tR\n" +
 	"identityId\x12\x1d\n" +
 	"\n" +
@@ -2126,7 +2946,13 @@ const file_orange_egress_admin_v1_admin_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
-	"updated_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAtB\x0e\n" +
+	"updated_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12O\n" +
+	"\ronline_status\x18\t \x01(\x0e2*.orange.egress.admin.v1.EgressOnlineStatusR\fonlineStatus\x12<\n" +
+	"\flast_seen_at\x18\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"lastSeenAt\x12-\n" +
+	"\x13paseto_keypair_1_id\x18\v \x01(\tR\x10pasetoKeypair1Id\x12-\n" +
+	"\x13paseto_keypair_2_id\x18\f \x01(\tR\x10pasetoKeypair2IdB\x0e\n" +
 	"\f_description\"e\n" +
 	"\x14IssueIdentityRequest\x12&\n" +
 	"\tegress_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\begressId\x12%\n" +
@@ -2204,6 +3030,40 @@ const file_orange_egress_admin_v1_admin_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
+	"rotated_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\trotatedAt\"c\n" +
+	"\x1aRotatePASETOKeyPairRequest\x12&\n" +
+	"\tegress_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\begressId\x12\x1d\n" +
+	"\x04slot\x18\x02 \x01(\x05B\t\xbaH\x06\x1a\x04\x18\x02(\x01R\x04slot\"d\n" +
+	"\x1bRotatePASETOKeyPairResponse\x12E\n" +
+	"\akeypair\x18\x01 \x01(\v2+.orange.egress.admin.v1.EgressPASETOKeyPairR\akeypair\"P\n" +
+	"\x17GetPASETOKeyPairRequest\x125\n" +
+	"\x11paseto_keypair_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\x0fpasetoKeypairId\"a\n" +
+	"\x18GetPASETOKeyPairResponse\x12E\n" +
+	"\akeypair\x18\x01 \x01(\v2+.orange.egress.admin.v1.EgressPASETOKeyPairR\akeypair\"\xdd\x01\n" +
+	"\x19ListPASETOKeyPairsRequest\x12&\n" +
+	"\tegress_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\begressId\x12$\n" +
+	"\vactive_only\x18\x02 \x01(\bH\x00R\n" +
+	"activeOnly\x88\x01\x01\x12%\n" +
+	"\x05limit\x18\x03 \x01(\x05B\n" +
+	"\xbaH\a\x1a\x05\x18\xe8\a(\x00H\x01R\x05limit\x88\x01\x01\x12\"\n" +
+	"\n" +
+	"page_token\x18\x04 \x01(\tH\x02R\tpageToken\x88\x01\x01B\x0e\n" +
+	"\f_active_onlyB\b\n" +
+	"\x06_limitB\r\n" +
+	"\v_page_token\"\x8d\x01\n" +
+	"\x1aListPASETOKeyPairsResponse\x12G\n" +
+	"\bkeypairs\x18\x01 \x03(\v2+.orange.egress.admin.v1.EgressPASETOKeyPairR\bkeypairs\x12&\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\xce\x02\n" +
+	"\x13EgressPASETOKeyPair\x12*\n" +
+	"\x11paseto_keypair_id\x18\x01 \x01(\tR\x0fpasetoKeypairId\x12\x1b\n" +
+	"\tegress_id\x18\x02 \x01(\tR\begressId\x12\x12\n" +
+	"\x04slot\x18\x03 \x01(\x05R\x04slot\x12$\n" +
+	"\x0epublic_key_pem\x18\x04 \x01(\tR\fpublicKeyPem\x12&\n" +
+	"\x0fprivate_key_ref\x18\x05 \x01(\tR\rprivateKeyRef\x12\x16\n" +
+	"\x06active\x18\x06 \x01(\bR\x06active\x129\n" +
+	"\n" +
+	"created_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
+	"\n" +
 	"rotated_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\trotatedAt\"\xa5\x02\n" +
 	"\x1cCreateCPValidationKeyRequest\x12N\n" +
 	"\talgorithm\x18\x01 \x01(\x0e20.orange.egress.admin.v1.CPValidationKeyAlgorithmR\talgorithm\x120\n" +
@@ -2250,7 +3110,12 @@ const file_orange_egress_admin_v1_admin_proto_rawDesc = "" +
 	"\fEgressStatus\x12\x1d\n" +
 	"\x19EGRESS_STATUS_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14EGRESS_STATUS_ACTIVE\x10\x01\x12\x1a\n" +
-	"\x16EGRESS_STATUS_INACTIVE\x10\x02*\x9a\x01\n" +
+	"\x16EGRESS_STATUS_INACTIVE\x10\x02*\x9f\x01\n" +
+	"\x12EgressOnlineStatus\x12$\n" +
+	" EGRESS_ONLINE_STATUS_UNSPECIFIED\x10\x00\x12 \n" +
+	"\x1cEGRESS_ONLINE_STATUS_UNKNOWN\x10\x01\x12\x1f\n" +
+	"\x1bEGRESS_ONLINE_STATUS_ONLINE\x10\x02\x12 \n" +
+	"\x1cEGRESS_ONLINE_STATUS_OFFLINE\x10\x03*\x9a\x01\n" +
 	"\x10KeyPairAlgorithm\x12\"\n" +
 	"\x1eKEY_PAIR_ALGORITHM_UNSPECIFIED\x10\x00\x12\x1e\n" +
 	"\x1aKEY_PAIR_ALGORITHM_ED25519\x10\x01\x12!\n" +
@@ -2264,7 +3129,7 @@ const file_orange_egress_admin_v1_admin_proto_rawDesc = "" +
 	"%CP_VALIDATION_KEY_PURPOSE_UNSPECIFIED\x10\x00\x12'\n" +
 	"#CP_VALIDATION_KEY_PURPOSE_TELEMETRY\x10\x01\x120\n" +
 	",CP_VALIDATION_KEY_PURPOSE_REQUEST_VALIDATION\x10\x02\x12\"\n" +
-	"\x1eCP_VALIDATION_KEY_PURPOSE_BOTH\x10\x032\xcf\x0f\n" +
+	"\x1eCP_VALIDATION_KEY_PURPOSE_BOTH\x10\x032\xac\x15\n" +
 	"\x12EgressAdminService\x12y\n" +
 	"\fCreateEgress\x12+.orange.egress.admin.v1.CreateEgressRequest\x1a,.orange.egress.admin.v1.CreateEgressResponse\"\x0e\xc2\xf3\x18\n" +
 	"\n" +
@@ -2277,7 +3142,12 @@ const file_orange_egress_admin_v1_admin_proto_rawDesc = "" +
 	"\x01\x01\x12\x05admin\x12y\n" +
 	"\fDeleteEgress\x12+.orange.egress.admin.v1.DeleteEgressRequest\x1a,.orange.egress.admin.v1.DeleteEgressResponse\"\x0e\xc2\xf3\x18\n" +
 	"\n" +
-	"\x01\x01\x12\x05admin\x12|\n" +
+	"\x01\x01\x12\x05admin\x12\x96\x01\n" +
+	"\x0fGetEgressBundle\x12..orange.egress.admin.v1.GetEgressBundleRequest\x1a/.orange.egress.admin.v1.GetEgressBundleResponse\"\"\xc2\xf3\x18\x1b\n" +
+	"\x01\x01\x12\x16egress-bundle:download\x90\x02\x01\x12\x94\x01\n" +
+	"\x14GetEgressByWorkspace\x123.orange.egress.admin.v1.GetEgressByWorkspaceRequest\x1a4.orange.egress.admin.v1.GetEgressByWorkspaceResponse\"\x11\xc2\xf3\x18\n" +
+	"\n" +
+	"\x01\x01\x12\x05admin\x90\x02\x01\x12|\n" +
 	"\rIssueIdentity\x12,.orange.egress.admin.v1.IssueIdentityRequest\x1a-.orange.egress.admin.v1.IssueIdentityResponse\"\x0e\xc2\xf3\x18\n" +
 	"\n" +
 	"\x01\x01\x12\x05admin\x12y\n" +
@@ -2298,6 +3168,15 @@ const file_orange_egress_admin_v1_admin_proto_rawDesc = "" +
 	"\n" +
 	"\x01\x01\x12\x05admin\x90\x02\x01\x12|\n" +
 	"\fListKeyPairs\x12+.orange.egress.admin.v1.ListKeyPairsRequest\x1a,.orange.egress.admin.v1.ListKeyPairsResponse\"\x11\xc2\xf3\x18\n" +
+	"\n" +
+	"\x01\x01\x12\x05admin\x90\x02\x01\x12\x8e\x01\n" +
+	"\x13RotatePASETOKeyPair\x122.orange.egress.admin.v1.RotatePASETOKeyPairRequest\x1a3.orange.egress.admin.v1.RotatePASETOKeyPairResponse\"\x0e\xc2\xf3\x18\n" +
+	"\n" +
+	"\x01\x01\x12\x05admin\x12\x88\x01\n" +
+	"\x10GetPASETOKeyPair\x12/.orange.egress.admin.v1.GetPASETOKeyPairRequest\x1a0.orange.egress.admin.v1.GetPASETOKeyPairResponse\"\x11\xc2\xf3\x18\n" +
+	"\n" +
+	"\x01\x01\x12\x05admin\x90\x02\x01\x12\x8e\x01\n" +
+	"\x12ListPASETOKeyPairs\x121.orange.egress.admin.v1.ListPASETOKeyPairsRequest\x1a2.orange.egress.admin.v1.ListPASETOKeyPairsResponse\"\x11\xc2\xf3\x18\n" +
 	"\n" +
 	"\x01\x01\x12\x05admin\x90\x02\x01\x12\x94\x01\n" +
 	"\x15CreateCPValidationKey\x124.orange.egress.admin.v1.CreateCPValidationKeyRequest\x1a5.orange.egress.admin.v1.CreateCPValidationKeyResponse\"\x0e\xc2\xf3\x18\n" +
@@ -2327,115 +3206,147 @@ func file_orange_egress_admin_v1_admin_proto_rawDescGZIP() []byte {
 	return file_orange_egress_admin_v1_admin_proto_rawDescData
 }
 
-var file_orange_egress_admin_v1_admin_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_orange_egress_admin_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
+var file_orange_egress_admin_v1_admin_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
+var file_orange_egress_admin_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 46)
 var file_orange_egress_admin_v1_admin_proto_goTypes = []any{
 	(EgressStatus)(0),                         // 0: orange.egress.admin.v1.EgressStatus
-	(KeyPairAlgorithm)(0),                     // 1: orange.egress.admin.v1.KeyPairAlgorithm
-	(CPValidationKeyAlgorithm)(0),             // 2: orange.egress.admin.v1.CPValidationKeyAlgorithm
-	(CPValidationKeyPurpose)(0),               // 3: orange.egress.admin.v1.CPValidationKeyPurpose
-	(*CreateEgressRequest)(nil),               // 4: orange.egress.admin.v1.CreateEgressRequest
-	(*CreateEgressResponse)(nil),              // 5: orange.egress.admin.v1.CreateEgressResponse
-	(*GetEgressRequest)(nil),                  // 6: orange.egress.admin.v1.GetEgressRequest
-	(*GetEgressResponse)(nil),                 // 7: orange.egress.admin.v1.GetEgressResponse
-	(*UpdateEgressRequest)(nil),               // 8: orange.egress.admin.v1.UpdateEgressRequest
-	(*UpdateEgressResponse)(nil),              // 9: orange.egress.admin.v1.UpdateEgressResponse
-	(*DeleteEgressRequest)(nil),               // 10: orange.egress.admin.v1.DeleteEgressRequest
-	(*DeleteEgressResponse)(nil),              // 11: orange.egress.admin.v1.DeleteEgressResponse
-	(*Egress)(nil),                            // 12: orange.egress.admin.v1.Egress
-	(*IssueIdentityRequest)(nil),              // 13: orange.egress.admin.v1.IssueIdentityRequest
-	(*IssueIdentityResponse)(nil),             // 14: orange.egress.admin.v1.IssueIdentityResponse
-	(*GetIdentityRequest)(nil),                // 15: orange.egress.admin.v1.GetIdentityRequest
-	(*GetIdentityResponse)(nil),               // 16: orange.egress.admin.v1.GetIdentityResponse
-	(*ListIdentitiesRequest)(nil),             // 17: orange.egress.admin.v1.ListIdentitiesRequest
-	(*ListIdentitiesResponse)(nil),            // 18: orange.egress.admin.v1.ListIdentitiesResponse
-	(*RevokeIdentityRequest)(nil),             // 19: orange.egress.admin.v1.RevokeIdentityRequest
-	(*RevokeIdentityResponse)(nil),            // 20: orange.egress.admin.v1.RevokeIdentityResponse
-	(*EgressIdentity)(nil),                    // 21: orange.egress.admin.v1.EgressIdentity
-	(*RotateKeyPairRequest)(nil),              // 22: orange.egress.admin.v1.RotateKeyPairRequest
-	(*RotateKeyPairResponse)(nil),             // 23: orange.egress.admin.v1.RotateKeyPairResponse
-	(*GetKeyPairRequest)(nil),                 // 24: orange.egress.admin.v1.GetKeyPairRequest
-	(*GetKeyPairResponse)(nil),                // 25: orange.egress.admin.v1.GetKeyPairResponse
-	(*ListKeyPairsRequest)(nil),               // 26: orange.egress.admin.v1.ListKeyPairsRequest
-	(*ListKeyPairsResponse)(nil),              // 27: orange.egress.admin.v1.ListKeyPairsResponse
-	(*EgressKeyPair)(nil),                     // 28: orange.egress.admin.v1.EgressKeyPair
-	(*CreateCPValidationKeyRequest)(nil),      // 29: orange.egress.admin.v1.CreateCPValidationKeyRequest
-	(*CreateCPValidationKeyResponse)(nil),     // 30: orange.egress.admin.v1.CreateCPValidationKeyResponse
-	(*GetCPValidationKeyRequest)(nil),         // 31: orange.egress.admin.v1.GetCPValidationKeyRequest
-	(*GetCPValidationKeyResponse)(nil),        // 32: orange.egress.admin.v1.GetCPValidationKeyResponse
-	(*ListCPValidationKeysRequest)(nil),       // 33: orange.egress.admin.v1.ListCPValidationKeysRequest
-	(*ListCPValidationKeysResponse)(nil),      // 34: orange.egress.admin.v1.ListCPValidationKeysResponse
-	(*DeactivateCPValidationKeyRequest)(nil),  // 35: orange.egress.admin.v1.DeactivateCPValidationKeyRequest
-	(*DeactivateCPValidationKeyResponse)(nil), // 36: orange.egress.admin.v1.DeactivateCPValidationKeyResponse
-	(*CPValidationKey)(nil),                   // 37: orange.egress.admin.v1.CPValidationKey
-	(*timestamppb.Timestamp)(nil),             // 38: google.protobuf.Timestamp
+	(EgressOnlineStatus)(0),                   // 1: orange.egress.admin.v1.EgressOnlineStatus
+	(KeyPairAlgorithm)(0),                     // 2: orange.egress.admin.v1.KeyPairAlgorithm
+	(CPValidationKeyAlgorithm)(0),             // 3: orange.egress.admin.v1.CPValidationKeyAlgorithm
+	(CPValidationKeyPurpose)(0),               // 4: orange.egress.admin.v1.CPValidationKeyPurpose
+	(*CreateEgressRequest)(nil),               // 5: orange.egress.admin.v1.CreateEgressRequest
+	(*CreateEgressResponse)(nil),              // 6: orange.egress.admin.v1.CreateEgressResponse
+	(*GetEgressRequest)(nil),                  // 7: orange.egress.admin.v1.GetEgressRequest
+	(*GetEgressResponse)(nil),                 // 8: orange.egress.admin.v1.GetEgressResponse
+	(*UpdateEgressRequest)(nil),               // 9: orange.egress.admin.v1.UpdateEgressRequest
+	(*UpdateEgressResponse)(nil),              // 10: orange.egress.admin.v1.UpdateEgressResponse
+	(*DeleteEgressRequest)(nil),               // 11: orange.egress.admin.v1.DeleteEgressRequest
+	(*DeleteEgressResponse)(nil),              // 12: orange.egress.admin.v1.DeleteEgressResponse
+	(*GetEgressByWorkspaceRequest)(nil),       // 13: orange.egress.admin.v1.GetEgressByWorkspaceRequest
+	(*GetEgressByWorkspaceResponse)(nil),      // 14: orange.egress.admin.v1.GetEgressByWorkspaceResponse
+	(*GetEgressBundleRequest)(nil),            // 15: orange.egress.admin.v1.GetEgressBundleRequest
+	(*GetEgressBundleResponse)(nil),           // 16: orange.egress.admin.v1.GetEgressBundleResponse
+	(*EgressBundle)(nil),                      // 17: orange.egress.admin.v1.EgressBundle
+	(*Egress)(nil),                            // 18: orange.egress.admin.v1.Egress
+	(*IssueIdentityRequest)(nil),              // 19: orange.egress.admin.v1.IssueIdentityRequest
+	(*IssueIdentityResponse)(nil),             // 20: orange.egress.admin.v1.IssueIdentityResponse
+	(*GetIdentityRequest)(nil),                // 21: orange.egress.admin.v1.GetIdentityRequest
+	(*GetIdentityResponse)(nil),               // 22: orange.egress.admin.v1.GetIdentityResponse
+	(*ListIdentitiesRequest)(nil),             // 23: orange.egress.admin.v1.ListIdentitiesRequest
+	(*ListIdentitiesResponse)(nil),            // 24: orange.egress.admin.v1.ListIdentitiesResponse
+	(*RevokeIdentityRequest)(nil),             // 25: orange.egress.admin.v1.RevokeIdentityRequest
+	(*RevokeIdentityResponse)(nil),            // 26: orange.egress.admin.v1.RevokeIdentityResponse
+	(*EgressIdentity)(nil),                    // 27: orange.egress.admin.v1.EgressIdentity
+	(*RotateKeyPairRequest)(nil),              // 28: orange.egress.admin.v1.RotateKeyPairRequest
+	(*RotateKeyPairResponse)(nil),             // 29: orange.egress.admin.v1.RotateKeyPairResponse
+	(*GetKeyPairRequest)(nil),                 // 30: orange.egress.admin.v1.GetKeyPairRequest
+	(*GetKeyPairResponse)(nil),                // 31: orange.egress.admin.v1.GetKeyPairResponse
+	(*ListKeyPairsRequest)(nil),               // 32: orange.egress.admin.v1.ListKeyPairsRequest
+	(*ListKeyPairsResponse)(nil),              // 33: orange.egress.admin.v1.ListKeyPairsResponse
+	(*EgressKeyPair)(nil),                     // 34: orange.egress.admin.v1.EgressKeyPair
+	(*RotatePASETOKeyPairRequest)(nil),        // 35: orange.egress.admin.v1.RotatePASETOKeyPairRequest
+	(*RotatePASETOKeyPairResponse)(nil),       // 36: orange.egress.admin.v1.RotatePASETOKeyPairResponse
+	(*GetPASETOKeyPairRequest)(nil),           // 37: orange.egress.admin.v1.GetPASETOKeyPairRequest
+	(*GetPASETOKeyPairResponse)(nil),          // 38: orange.egress.admin.v1.GetPASETOKeyPairResponse
+	(*ListPASETOKeyPairsRequest)(nil),         // 39: orange.egress.admin.v1.ListPASETOKeyPairsRequest
+	(*ListPASETOKeyPairsResponse)(nil),        // 40: orange.egress.admin.v1.ListPASETOKeyPairsResponse
+	(*EgressPASETOKeyPair)(nil),               // 41: orange.egress.admin.v1.EgressPASETOKeyPair
+	(*CreateCPValidationKeyRequest)(nil),      // 42: orange.egress.admin.v1.CreateCPValidationKeyRequest
+	(*CreateCPValidationKeyResponse)(nil),     // 43: orange.egress.admin.v1.CreateCPValidationKeyResponse
+	(*GetCPValidationKeyRequest)(nil),         // 44: orange.egress.admin.v1.GetCPValidationKeyRequest
+	(*GetCPValidationKeyResponse)(nil),        // 45: orange.egress.admin.v1.GetCPValidationKeyResponse
+	(*ListCPValidationKeysRequest)(nil),       // 46: orange.egress.admin.v1.ListCPValidationKeysRequest
+	(*ListCPValidationKeysResponse)(nil),      // 47: orange.egress.admin.v1.ListCPValidationKeysResponse
+	(*DeactivateCPValidationKeyRequest)(nil),  // 48: orange.egress.admin.v1.DeactivateCPValidationKeyRequest
+	(*DeactivateCPValidationKeyResponse)(nil), // 49: orange.egress.admin.v1.DeactivateCPValidationKeyResponse
+	(*CPValidationKey)(nil),                   // 50: orange.egress.admin.v1.CPValidationKey
+	(*timestamppb.Timestamp)(nil),             // 51: google.protobuf.Timestamp
 }
 var file_orange_egress_admin_v1_admin_proto_depIdxs = []int32{
-	12, // 0: orange.egress.admin.v1.CreateEgressResponse.egress:type_name -> orange.egress.admin.v1.Egress
-	12, // 1: orange.egress.admin.v1.GetEgressResponse.egress:type_name -> orange.egress.admin.v1.Egress
+	18, // 0: orange.egress.admin.v1.CreateEgressResponse.egress:type_name -> orange.egress.admin.v1.Egress
+	18, // 1: orange.egress.admin.v1.GetEgressResponse.egress:type_name -> orange.egress.admin.v1.Egress
 	0,  // 2: orange.egress.admin.v1.UpdateEgressRequest.status:type_name -> orange.egress.admin.v1.EgressStatus
-	12, // 3: orange.egress.admin.v1.UpdateEgressResponse.egress:type_name -> orange.egress.admin.v1.Egress
-	0,  // 4: orange.egress.admin.v1.Egress.status:type_name -> orange.egress.admin.v1.EgressStatus
-	38, // 5: orange.egress.admin.v1.Egress.created_at:type_name -> google.protobuf.Timestamp
-	38, // 6: orange.egress.admin.v1.Egress.updated_at:type_name -> google.protobuf.Timestamp
-	21, // 7: orange.egress.admin.v1.IssueIdentityResponse.identity:type_name -> orange.egress.admin.v1.EgressIdentity
-	21, // 8: orange.egress.admin.v1.GetIdentityResponse.identity:type_name -> orange.egress.admin.v1.EgressIdentity
-	21, // 9: orange.egress.admin.v1.ListIdentitiesResponse.identities:type_name -> orange.egress.admin.v1.EgressIdentity
-	38, // 10: orange.egress.admin.v1.EgressIdentity.issued_at:type_name -> google.protobuf.Timestamp
-	38, // 11: orange.egress.admin.v1.EgressIdentity.expires_at:type_name -> google.protobuf.Timestamp
-	1,  // 12: orange.egress.admin.v1.RotateKeyPairRequest.algorithm:type_name -> orange.egress.admin.v1.KeyPairAlgorithm
-	28, // 13: orange.egress.admin.v1.RotateKeyPairResponse.keypair:type_name -> orange.egress.admin.v1.EgressKeyPair
-	28, // 14: orange.egress.admin.v1.GetKeyPairResponse.keypair:type_name -> orange.egress.admin.v1.EgressKeyPair
-	28, // 15: orange.egress.admin.v1.ListKeyPairsResponse.keypairs:type_name -> orange.egress.admin.v1.EgressKeyPair
-	1,  // 16: orange.egress.admin.v1.EgressKeyPair.algorithm:type_name -> orange.egress.admin.v1.KeyPairAlgorithm
-	38, // 17: orange.egress.admin.v1.EgressKeyPair.created_at:type_name -> google.protobuf.Timestamp
-	38, // 18: orange.egress.admin.v1.EgressKeyPair.rotated_at:type_name -> google.protobuf.Timestamp
-	2,  // 19: orange.egress.admin.v1.CreateCPValidationKeyRequest.algorithm:type_name -> orange.egress.admin.v1.CPValidationKeyAlgorithm
-	3,  // 20: orange.egress.admin.v1.CreateCPValidationKeyRequest.purpose:type_name -> orange.egress.admin.v1.CPValidationKeyPurpose
-	38, // 21: orange.egress.admin.v1.CreateCPValidationKeyRequest.expires_at:type_name -> google.protobuf.Timestamp
-	37, // 22: orange.egress.admin.v1.CreateCPValidationKeyResponse.key:type_name -> orange.egress.admin.v1.CPValidationKey
-	37, // 23: orange.egress.admin.v1.GetCPValidationKeyResponse.key:type_name -> orange.egress.admin.v1.CPValidationKey
-	3,  // 24: orange.egress.admin.v1.ListCPValidationKeysRequest.purpose:type_name -> orange.egress.admin.v1.CPValidationKeyPurpose
-	37, // 25: orange.egress.admin.v1.ListCPValidationKeysResponse.keys:type_name -> orange.egress.admin.v1.CPValidationKey
-	2,  // 26: orange.egress.admin.v1.CPValidationKey.algorithm:type_name -> orange.egress.admin.v1.CPValidationKeyAlgorithm
-	3,  // 27: orange.egress.admin.v1.CPValidationKey.purpose:type_name -> orange.egress.admin.v1.CPValidationKeyPurpose
-	38, // 28: orange.egress.admin.v1.CPValidationKey.created_at:type_name -> google.protobuf.Timestamp
-	38, // 29: orange.egress.admin.v1.CPValidationKey.expires_at:type_name -> google.protobuf.Timestamp
-	4,  // 30: orange.egress.admin.v1.EgressAdminService.CreateEgress:input_type -> orange.egress.admin.v1.CreateEgressRequest
-	6,  // 31: orange.egress.admin.v1.EgressAdminService.GetEgress:input_type -> orange.egress.admin.v1.GetEgressRequest
-	8,  // 32: orange.egress.admin.v1.EgressAdminService.UpdateEgress:input_type -> orange.egress.admin.v1.UpdateEgressRequest
-	10, // 33: orange.egress.admin.v1.EgressAdminService.DeleteEgress:input_type -> orange.egress.admin.v1.DeleteEgressRequest
-	13, // 34: orange.egress.admin.v1.EgressAdminService.IssueIdentity:input_type -> orange.egress.admin.v1.IssueIdentityRequest
-	15, // 35: orange.egress.admin.v1.EgressAdminService.GetIdentity:input_type -> orange.egress.admin.v1.GetIdentityRequest
-	17, // 36: orange.egress.admin.v1.EgressAdminService.ListIdentities:input_type -> orange.egress.admin.v1.ListIdentitiesRequest
-	19, // 37: orange.egress.admin.v1.EgressAdminService.RevokeIdentity:input_type -> orange.egress.admin.v1.RevokeIdentityRequest
-	22, // 38: orange.egress.admin.v1.EgressAdminService.RotateKeyPair:input_type -> orange.egress.admin.v1.RotateKeyPairRequest
-	24, // 39: orange.egress.admin.v1.EgressAdminService.GetKeyPair:input_type -> orange.egress.admin.v1.GetKeyPairRequest
-	26, // 40: orange.egress.admin.v1.EgressAdminService.ListKeyPairs:input_type -> orange.egress.admin.v1.ListKeyPairsRequest
-	29, // 41: orange.egress.admin.v1.EgressAdminService.CreateCPValidationKey:input_type -> orange.egress.admin.v1.CreateCPValidationKeyRequest
-	31, // 42: orange.egress.admin.v1.EgressAdminService.GetCPValidationKey:input_type -> orange.egress.admin.v1.GetCPValidationKeyRequest
-	33, // 43: orange.egress.admin.v1.EgressAdminService.ListCPValidationKeys:input_type -> orange.egress.admin.v1.ListCPValidationKeysRequest
-	35, // 44: orange.egress.admin.v1.EgressAdminService.DeactivateCPValidationKey:input_type -> orange.egress.admin.v1.DeactivateCPValidationKeyRequest
-	5,  // 45: orange.egress.admin.v1.EgressAdminService.CreateEgress:output_type -> orange.egress.admin.v1.CreateEgressResponse
-	7,  // 46: orange.egress.admin.v1.EgressAdminService.GetEgress:output_type -> orange.egress.admin.v1.GetEgressResponse
-	9,  // 47: orange.egress.admin.v1.EgressAdminService.UpdateEgress:output_type -> orange.egress.admin.v1.UpdateEgressResponse
-	11, // 48: orange.egress.admin.v1.EgressAdminService.DeleteEgress:output_type -> orange.egress.admin.v1.DeleteEgressResponse
-	14, // 49: orange.egress.admin.v1.EgressAdminService.IssueIdentity:output_type -> orange.egress.admin.v1.IssueIdentityResponse
-	16, // 50: orange.egress.admin.v1.EgressAdminService.GetIdentity:output_type -> orange.egress.admin.v1.GetIdentityResponse
-	18, // 51: orange.egress.admin.v1.EgressAdminService.ListIdentities:output_type -> orange.egress.admin.v1.ListIdentitiesResponse
-	20, // 52: orange.egress.admin.v1.EgressAdminService.RevokeIdentity:output_type -> orange.egress.admin.v1.RevokeIdentityResponse
-	23, // 53: orange.egress.admin.v1.EgressAdminService.RotateKeyPair:output_type -> orange.egress.admin.v1.RotateKeyPairResponse
-	25, // 54: orange.egress.admin.v1.EgressAdminService.GetKeyPair:output_type -> orange.egress.admin.v1.GetKeyPairResponse
-	27, // 55: orange.egress.admin.v1.EgressAdminService.ListKeyPairs:output_type -> orange.egress.admin.v1.ListKeyPairsResponse
-	30, // 56: orange.egress.admin.v1.EgressAdminService.CreateCPValidationKey:output_type -> orange.egress.admin.v1.CreateCPValidationKeyResponse
-	32, // 57: orange.egress.admin.v1.EgressAdminService.GetCPValidationKey:output_type -> orange.egress.admin.v1.GetCPValidationKeyResponse
-	34, // 58: orange.egress.admin.v1.EgressAdminService.ListCPValidationKeys:output_type -> orange.egress.admin.v1.ListCPValidationKeysResponse
-	36, // 59: orange.egress.admin.v1.EgressAdminService.DeactivateCPValidationKey:output_type -> orange.egress.admin.v1.DeactivateCPValidationKeyResponse
-	45, // [45:60] is the sub-list for method output_type
-	30, // [30:45] is the sub-list for method input_type
-	30, // [30:30] is the sub-list for extension type_name
-	30, // [30:30] is the sub-list for extension extendee
-	0,  // [0:30] is the sub-list for field type_name
+	18, // 3: orange.egress.admin.v1.UpdateEgressResponse.egress:type_name -> orange.egress.admin.v1.Egress
+	18, // 4: orange.egress.admin.v1.GetEgressByWorkspaceResponse.egress:type_name -> orange.egress.admin.v1.Egress
+	17, // 5: orange.egress.admin.v1.GetEgressBundleResponse.bundle:type_name -> orange.egress.admin.v1.EgressBundle
+	0,  // 6: orange.egress.admin.v1.Egress.admin_status:type_name -> orange.egress.admin.v1.EgressStatus
+	51, // 7: orange.egress.admin.v1.Egress.created_at:type_name -> google.protobuf.Timestamp
+	51, // 8: orange.egress.admin.v1.Egress.updated_at:type_name -> google.protobuf.Timestamp
+	1,  // 9: orange.egress.admin.v1.Egress.online_status:type_name -> orange.egress.admin.v1.EgressOnlineStatus
+	51, // 10: orange.egress.admin.v1.Egress.last_seen_at:type_name -> google.protobuf.Timestamp
+	27, // 11: orange.egress.admin.v1.IssueIdentityResponse.identity:type_name -> orange.egress.admin.v1.EgressIdentity
+	27, // 12: orange.egress.admin.v1.GetIdentityResponse.identity:type_name -> orange.egress.admin.v1.EgressIdentity
+	27, // 13: orange.egress.admin.v1.ListIdentitiesResponse.identities:type_name -> orange.egress.admin.v1.EgressIdentity
+	51, // 14: orange.egress.admin.v1.EgressIdentity.issued_at:type_name -> google.protobuf.Timestamp
+	51, // 15: orange.egress.admin.v1.EgressIdentity.expires_at:type_name -> google.protobuf.Timestamp
+	2,  // 16: orange.egress.admin.v1.RotateKeyPairRequest.algorithm:type_name -> orange.egress.admin.v1.KeyPairAlgorithm
+	34, // 17: orange.egress.admin.v1.RotateKeyPairResponse.keypair:type_name -> orange.egress.admin.v1.EgressKeyPair
+	34, // 18: orange.egress.admin.v1.GetKeyPairResponse.keypair:type_name -> orange.egress.admin.v1.EgressKeyPair
+	34, // 19: orange.egress.admin.v1.ListKeyPairsResponse.keypairs:type_name -> orange.egress.admin.v1.EgressKeyPair
+	2,  // 20: orange.egress.admin.v1.EgressKeyPair.algorithm:type_name -> orange.egress.admin.v1.KeyPairAlgorithm
+	51, // 21: orange.egress.admin.v1.EgressKeyPair.created_at:type_name -> google.protobuf.Timestamp
+	51, // 22: orange.egress.admin.v1.EgressKeyPair.rotated_at:type_name -> google.protobuf.Timestamp
+	41, // 23: orange.egress.admin.v1.RotatePASETOKeyPairResponse.keypair:type_name -> orange.egress.admin.v1.EgressPASETOKeyPair
+	41, // 24: orange.egress.admin.v1.GetPASETOKeyPairResponse.keypair:type_name -> orange.egress.admin.v1.EgressPASETOKeyPair
+	41, // 25: orange.egress.admin.v1.ListPASETOKeyPairsResponse.keypairs:type_name -> orange.egress.admin.v1.EgressPASETOKeyPair
+	51, // 26: orange.egress.admin.v1.EgressPASETOKeyPair.created_at:type_name -> google.protobuf.Timestamp
+	51, // 27: orange.egress.admin.v1.EgressPASETOKeyPair.rotated_at:type_name -> google.protobuf.Timestamp
+	3,  // 28: orange.egress.admin.v1.CreateCPValidationKeyRequest.algorithm:type_name -> orange.egress.admin.v1.CPValidationKeyAlgorithm
+	4,  // 29: orange.egress.admin.v1.CreateCPValidationKeyRequest.purpose:type_name -> orange.egress.admin.v1.CPValidationKeyPurpose
+	51, // 30: orange.egress.admin.v1.CreateCPValidationKeyRequest.expires_at:type_name -> google.protobuf.Timestamp
+	50, // 31: orange.egress.admin.v1.CreateCPValidationKeyResponse.key:type_name -> orange.egress.admin.v1.CPValidationKey
+	50, // 32: orange.egress.admin.v1.GetCPValidationKeyResponse.key:type_name -> orange.egress.admin.v1.CPValidationKey
+	4,  // 33: orange.egress.admin.v1.ListCPValidationKeysRequest.purpose:type_name -> orange.egress.admin.v1.CPValidationKeyPurpose
+	50, // 34: orange.egress.admin.v1.ListCPValidationKeysResponse.keys:type_name -> orange.egress.admin.v1.CPValidationKey
+	3,  // 35: orange.egress.admin.v1.CPValidationKey.algorithm:type_name -> orange.egress.admin.v1.CPValidationKeyAlgorithm
+	4,  // 36: orange.egress.admin.v1.CPValidationKey.purpose:type_name -> orange.egress.admin.v1.CPValidationKeyPurpose
+	51, // 37: orange.egress.admin.v1.CPValidationKey.created_at:type_name -> google.protobuf.Timestamp
+	51, // 38: orange.egress.admin.v1.CPValidationKey.expires_at:type_name -> google.protobuf.Timestamp
+	5,  // 39: orange.egress.admin.v1.EgressAdminService.CreateEgress:input_type -> orange.egress.admin.v1.CreateEgressRequest
+	7,  // 40: orange.egress.admin.v1.EgressAdminService.GetEgress:input_type -> orange.egress.admin.v1.GetEgressRequest
+	9,  // 41: orange.egress.admin.v1.EgressAdminService.UpdateEgress:input_type -> orange.egress.admin.v1.UpdateEgressRequest
+	11, // 42: orange.egress.admin.v1.EgressAdminService.DeleteEgress:input_type -> orange.egress.admin.v1.DeleteEgressRequest
+	15, // 43: orange.egress.admin.v1.EgressAdminService.GetEgressBundle:input_type -> orange.egress.admin.v1.GetEgressBundleRequest
+	13, // 44: orange.egress.admin.v1.EgressAdminService.GetEgressByWorkspace:input_type -> orange.egress.admin.v1.GetEgressByWorkspaceRequest
+	19, // 45: orange.egress.admin.v1.EgressAdminService.IssueIdentity:input_type -> orange.egress.admin.v1.IssueIdentityRequest
+	21, // 46: orange.egress.admin.v1.EgressAdminService.GetIdentity:input_type -> orange.egress.admin.v1.GetIdentityRequest
+	23, // 47: orange.egress.admin.v1.EgressAdminService.ListIdentities:input_type -> orange.egress.admin.v1.ListIdentitiesRequest
+	25, // 48: orange.egress.admin.v1.EgressAdminService.RevokeIdentity:input_type -> orange.egress.admin.v1.RevokeIdentityRequest
+	28, // 49: orange.egress.admin.v1.EgressAdminService.RotateKeyPair:input_type -> orange.egress.admin.v1.RotateKeyPairRequest
+	30, // 50: orange.egress.admin.v1.EgressAdminService.GetKeyPair:input_type -> orange.egress.admin.v1.GetKeyPairRequest
+	32, // 51: orange.egress.admin.v1.EgressAdminService.ListKeyPairs:input_type -> orange.egress.admin.v1.ListKeyPairsRequest
+	35, // 52: orange.egress.admin.v1.EgressAdminService.RotatePASETOKeyPair:input_type -> orange.egress.admin.v1.RotatePASETOKeyPairRequest
+	37, // 53: orange.egress.admin.v1.EgressAdminService.GetPASETOKeyPair:input_type -> orange.egress.admin.v1.GetPASETOKeyPairRequest
+	39, // 54: orange.egress.admin.v1.EgressAdminService.ListPASETOKeyPairs:input_type -> orange.egress.admin.v1.ListPASETOKeyPairsRequest
+	42, // 55: orange.egress.admin.v1.EgressAdminService.CreateCPValidationKey:input_type -> orange.egress.admin.v1.CreateCPValidationKeyRequest
+	44, // 56: orange.egress.admin.v1.EgressAdminService.GetCPValidationKey:input_type -> orange.egress.admin.v1.GetCPValidationKeyRequest
+	46, // 57: orange.egress.admin.v1.EgressAdminService.ListCPValidationKeys:input_type -> orange.egress.admin.v1.ListCPValidationKeysRequest
+	48, // 58: orange.egress.admin.v1.EgressAdminService.DeactivateCPValidationKey:input_type -> orange.egress.admin.v1.DeactivateCPValidationKeyRequest
+	6,  // 59: orange.egress.admin.v1.EgressAdminService.CreateEgress:output_type -> orange.egress.admin.v1.CreateEgressResponse
+	8,  // 60: orange.egress.admin.v1.EgressAdminService.GetEgress:output_type -> orange.egress.admin.v1.GetEgressResponse
+	10, // 61: orange.egress.admin.v1.EgressAdminService.UpdateEgress:output_type -> orange.egress.admin.v1.UpdateEgressResponse
+	12, // 62: orange.egress.admin.v1.EgressAdminService.DeleteEgress:output_type -> orange.egress.admin.v1.DeleteEgressResponse
+	16, // 63: orange.egress.admin.v1.EgressAdminService.GetEgressBundle:output_type -> orange.egress.admin.v1.GetEgressBundleResponse
+	14, // 64: orange.egress.admin.v1.EgressAdminService.GetEgressByWorkspace:output_type -> orange.egress.admin.v1.GetEgressByWorkspaceResponse
+	20, // 65: orange.egress.admin.v1.EgressAdminService.IssueIdentity:output_type -> orange.egress.admin.v1.IssueIdentityResponse
+	22, // 66: orange.egress.admin.v1.EgressAdminService.GetIdentity:output_type -> orange.egress.admin.v1.GetIdentityResponse
+	24, // 67: orange.egress.admin.v1.EgressAdminService.ListIdentities:output_type -> orange.egress.admin.v1.ListIdentitiesResponse
+	26, // 68: orange.egress.admin.v1.EgressAdminService.RevokeIdentity:output_type -> orange.egress.admin.v1.RevokeIdentityResponse
+	29, // 69: orange.egress.admin.v1.EgressAdminService.RotateKeyPair:output_type -> orange.egress.admin.v1.RotateKeyPairResponse
+	31, // 70: orange.egress.admin.v1.EgressAdminService.GetKeyPair:output_type -> orange.egress.admin.v1.GetKeyPairResponse
+	33, // 71: orange.egress.admin.v1.EgressAdminService.ListKeyPairs:output_type -> orange.egress.admin.v1.ListKeyPairsResponse
+	36, // 72: orange.egress.admin.v1.EgressAdminService.RotatePASETOKeyPair:output_type -> orange.egress.admin.v1.RotatePASETOKeyPairResponse
+	38, // 73: orange.egress.admin.v1.EgressAdminService.GetPASETOKeyPair:output_type -> orange.egress.admin.v1.GetPASETOKeyPairResponse
+	40, // 74: orange.egress.admin.v1.EgressAdminService.ListPASETOKeyPairs:output_type -> orange.egress.admin.v1.ListPASETOKeyPairsResponse
+	43, // 75: orange.egress.admin.v1.EgressAdminService.CreateCPValidationKey:output_type -> orange.egress.admin.v1.CreateCPValidationKeyResponse
+	45, // 76: orange.egress.admin.v1.EgressAdminService.GetCPValidationKey:output_type -> orange.egress.admin.v1.GetCPValidationKeyResponse
+	47, // 77: orange.egress.admin.v1.EgressAdminService.ListCPValidationKeys:output_type -> orange.egress.admin.v1.ListCPValidationKeysResponse
+	49, // 78: orange.egress.admin.v1.EgressAdminService.DeactivateCPValidationKey:output_type -> orange.egress.admin.v1.DeactivateCPValidationKeyResponse
+	59, // [59:79] is the sub-list for method output_type
+	39, // [39:59] is the sub-list for method input_type
+	39, // [39:39] is the sub-list for extension type_name
+	39, // [39:39] is the sub-list for extension extendee
+	0,  // [0:39] is the sub-list for field type_name
 }
 
 func init() { file_orange_egress_admin_v1_admin_proto_init() }
@@ -2445,17 +3356,18 @@ func file_orange_egress_admin_v1_admin_proto_init() {
 	}
 	file_orange_egress_admin_v1_admin_proto_msgTypes[0].OneofWrappers = []any{}
 	file_orange_egress_admin_v1_admin_proto_msgTypes[4].OneofWrappers = []any{}
-	file_orange_egress_admin_v1_admin_proto_msgTypes[8].OneofWrappers = []any{}
 	file_orange_egress_admin_v1_admin_proto_msgTypes[13].OneofWrappers = []any{}
-	file_orange_egress_admin_v1_admin_proto_msgTypes[22].OneofWrappers = []any{}
-	file_orange_egress_admin_v1_admin_proto_msgTypes[29].OneofWrappers = []any{}
+	file_orange_egress_admin_v1_admin_proto_msgTypes[18].OneofWrappers = []any{}
+	file_orange_egress_admin_v1_admin_proto_msgTypes[27].OneofWrappers = []any{}
+	file_orange_egress_admin_v1_admin_proto_msgTypes[34].OneofWrappers = []any{}
+	file_orange_egress_admin_v1_admin_proto_msgTypes[41].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orange_egress_admin_v1_admin_proto_rawDesc), len(file_orange_egress_admin_v1_admin_proto_rawDesc)),
-			NumEnums:      4,
-			NumMessages:   34,
+			NumEnums:      5,
+			NumMessages:   46,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

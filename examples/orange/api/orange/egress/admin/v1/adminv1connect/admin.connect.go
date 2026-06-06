@@ -4,13 +4,23 @@
 // A Workspace owns exactly one Egress. The Egress is the proxy instance
 // responsible for request dispatch and policy enforcement.
 //
-// EgressIdentity is the X.509 certificate attesting workspace ownership.
-// EgressKeyPair is the asymmetric key pair used for egress → control-plane auth.
-// CPValidationKey is the control-plane public key distributed to egress instances.
+// Connection model: signed assertion (not mTLS). The egress signs a
+// well-known string with its X.509 identity private key; the CP verifies the
+// signature and checks DB integrity. The same cert/key can be used for mTLS
+// later by reconfiguring the egress — no proto changes required.
+//
+// Cryptographic artefacts per egress:
+//   EgressIdentity    — X.509 cert (CN=egress.<ws>.<proj>.<org>) for signed assertion.
+//   EgressKeyPair     — Ed25519 keypair for ongoing egress→CP auth (heartbeat/telemetry).
+//   CPValidationKey   — CP public key; egress uses it to verify CP-signed config/telemetry.
+//   EgressPASETOKeyPair #1/#2 — Ed25519 keypairs; CP signs user tokens with the private key,
+//                               egress validates offline using the public key (no CP round-trip).
+//                               Two pairs allow graceful rotation.
 //
 // egress_id, identity_id, keypair_id, cpvalidation_key_id are server-assigned UUID7s.
 //
-// Authentication: every RPC requires AUTH_TYPE_API_KEY with scope "admin".
+// Authentication: every RPC requires AUTH_TYPE_API_KEY with scope "admin"
+// unless noted (GetEgressBundle requires "egress-bundle:download").
 //
 // Field numbers are stable and must not be reused once released.
 
@@ -61,6 +71,12 @@ const (
 	// EgressAdminServiceDeleteEgressProcedure is the fully-qualified name of the EgressAdminService's
 	// DeleteEgress RPC.
 	EgressAdminServiceDeleteEgressProcedure = "/orange.egress.admin.v1.EgressAdminService/DeleteEgress"
+	// EgressAdminServiceGetEgressBundleProcedure is the fully-qualified name of the
+	// EgressAdminService's GetEgressBundle RPC.
+	EgressAdminServiceGetEgressBundleProcedure = "/orange.egress.admin.v1.EgressAdminService/GetEgressBundle"
+	// EgressAdminServiceGetEgressByWorkspaceProcedure is the fully-qualified name of the
+	// EgressAdminService's GetEgressByWorkspace RPC.
+	EgressAdminServiceGetEgressByWorkspaceProcedure = "/orange.egress.admin.v1.EgressAdminService/GetEgressByWorkspace"
 	// EgressAdminServiceIssueIdentityProcedure is the fully-qualified name of the EgressAdminService's
 	// IssueIdentity RPC.
 	EgressAdminServiceIssueIdentityProcedure = "/orange.egress.admin.v1.EgressAdminService/IssueIdentity"
@@ -82,6 +98,15 @@ const (
 	// EgressAdminServiceListKeyPairsProcedure is the fully-qualified name of the EgressAdminService's
 	// ListKeyPairs RPC.
 	EgressAdminServiceListKeyPairsProcedure = "/orange.egress.admin.v1.EgressAdminService/ListKeyPairs"
+	// EgressAdminServiceRotatePASETOKeyPairProcedure is the fully-qualified name of the
+	// EgressAdminService's RotatePASETOKeyPair RPC.
+	EgressAdminServiceRotatePASETOKeyPairProcedure = "/orange.egress.admin.v1.EgressAdminService/RotatePASETOKeyPair"
+	// EgressAdminServiceGetPASETOKeyPairProcedure is the fully-qualified name of the
+	// EgressAdminService's GetPASETOKeyPair RPC.
+	EgressAdminServiceGetPASETOKeyPairProcedure = "/orange.egress.admin.v1.EgressAdminService/GetPASETOKeyPair"
+	// EgressAdminServiceListPASETOKeyPairsProcedure is the fully-qualified name of the
+	// EgressAdminService's ListPASETOKeyPairs RPC.
+	EgressAdminServiceListPASETOKeyPairsProcedure = "/orange.egress.admin.v1.EgressAdminService/ListPASETOKeyPairs"
 	// EgressAdminServiceCreateCPValidationKeyProcedure is the fully-qualified name of the
 	// EgressAdminService's CreateCPValidationKey RPC.
 	EgressAdminServiceCreateCPValidationKeyProcedure = "/orange.egress.admin.v1.EgressAdminService/CreateCPValidationKey"
@@ -102,6 +127,12 @@ type EgressAdminServiceClient interface {
 	GetEgress(context.Context, *connect.Request[v1.GetEgressRequest]) (*connect.Response[v1.GetEgressResponse], error)
 	UpdateEgress(context.Context, *connect.Request[v1.UpdateEgressRequest]) (*connect.Response[v1.UpdateEgressResponse], error)
 	DeleteEgress(context.Context, *connect.Request[v1.DeleteEgressRequest]) (*connect.Response[v1.DeleteEgressResponse], error)
+	// GetEgressBundle returns all files needed to boot an egress proxy: identity
+	// cert, private key (returned once), and the CP validation public key.
+	// Requires scope "egress-bundle:download".
+	GetEgressBundle(context.Context, *connect.Request[v1.GetEgressBundleRequest]) (*connect.Response[v1.GetEgressBundleResponse], error)
+	// GetEgressByWorkspace returns the egress record for a workspace (1:1).
+	GetEgressByWorkspace(context.Context, *connect.Request[v1.GetEgressByWorkspaceRequest]) (*connect.Response[v1.GetEgressByWorkspaceResponse], error)
 	// IssueIdentity provisions a new X.509 identity certificate for an Egress.
 	IssueIdentity(context.Context, *connect.Request[v1.IssueIdentityRequest]) (*connect.Response[v1.IssueIdentityResponse], error)
 	// GetIdentity returns the identity record for an Egress.
@@ -116,6 +147,11 @@ type EgressAdminServiceClient interface {
 	GetKeyPair(context.Context, *connect.Request[v1.GetKeyPairRequest]) (*connect.Response[v1.GetKeyPairResponse], error)
 	// ListKeyPairs lists all key pair records for an Egress.
 	ListKeyPairs(context.Context, *connect.Request[v1.ListKeyPairsRequest]) (*connect.Response[v1.ListKeyPairsResponse], error)
+	// RotatePASETOKeyPair generates a new Ed25519 PASETO keypair for the given
+	// slot (1 or 2). The old public key remains valid during a grace window.
+	RotatePASETOKeyPair(context.Context, *connect.Request[v1.RotatePASETOKeyPairRequest]) (*connect.Response[v1.RotatePASETOKeyPairResponse], error)
+	GetPASETOKeyPair(context.Context, *connect.Request[v1.GetPASETOKeyPairRequest]) (*connect.Response[v1.GetPASETOKeyPairResponse], error)
+	ListPASETOKeyPairs(context.Context, *connect.Request[v1.ListPASETOKeyPairsRequest]) (*connect.Response[v1.ListPASETOKeyPairsResponse], error)
 	// CreateCPValidationKey registers a control-plane public key for distribution.
 	CreateCPValidationKey(context.Context, *connect.Request[v1.CreateCPValidationKeyRequest]) (*connect.Response[v1.CreateCPValidationKeyResponse], error)
 	// GetCPValidationKey returns a control-plane validation key.
@@ -160,6 +196,20 @@ func NewEgressAdminServiceClient(httpClient connect.HTTPClient, baseURL string, 
 			httpClient,
 			baseURL+EgressAdminServiceDeleteEgressProcedure,
 			connect.WithSchema(egressAdminServiceMethods.ByName("DeleteEgress")),
+			connect.WithClientOptions(opts...),
+		),
+		getEgressBundle: connect.NewClient[v1.GetEgressBundleRequest, v1.GetEgressBundleResponse](
+			httpClient,
+			baseURL+EgressAdminServiceGetEgressBundleProcedure,
+			connect.WithSchema(egressAdminServiceMethods.ByName("GetEgressBundle")),
+			connect.WithIdempotency(connect.IdempotencyNoSideEffects),
+			connect.WithClientOptions(opts...),
+		),
+		getEgressByWorkspace: connect.NewClient[v1.GetEgressByWorkspaceRequest, v1.GetEgressByWorkspaceResponse](
+			httpClient,
+			baseURL+EgressAdminServiceGetEgressByWorkspaceProcedure,
+			connect.WithSchema(egressAdminServiceMethods.ByName("GetEgressByWorkspace")),
+			connect.WithIdempotency(connect.IdempotencyNoSideEffects),
 			connect.WithClientOptions(opts...),
 		),
 		issueIdentity: connect.NewClient[v1.IssueIdentityRequest, v1.IssueIdentityResponse](
@@ -208,6 +258,26 @@ func NewEgressAdminServiceClient(httpClient connect.HTTPClient, baseURL string, 
 			connect.WithIdempotency(connect.IdempotencyNoSideEffects),
 			connect.WithClientOptions(opts...),
 		),
+		rotatePASETOKeyPair: connect.NewClient[v1.RotatePASETOKeyPairRequest, v1.RotatePASETOKeyPairResponse](
+			httpClient,
+			baseURL+EgressAdminServiceRotatePASETOKeyPairProcedure,
+			connect.WithSchema(egressAdminServiceMethods.ByName("RotatePASETOKeyPair")),
+			connect.WithClientOptions(opts...),
+		),
+		getPASETOKeyPair: connect.NewClient[v1.GetPASETOKeyPairRequest, v1.GetPASETOKeyPairResponse](
+			httpClient,
+			baseURL+EgressAdminServiceGetPASETOKeyPairProcedure,
+			connect.WithSchema(egressAdminServiceMethods.ByName("GetPASETOKeyPair")),
+			connect.WithIdempotency(connect.IdempotencyNoSideEffects),
+			connect.WithClientOptions(opts...),
+		),
+		listPASETOKeyPairs: connect.NewClient[v1.ListPASETOKeyPairsRequest, v1.ListPASETOKeyPairsResponse](
+			httpClient,
+			baseURL+EgressAdminServiceListPASETOKeyPairsProcedure,
+			connect.WithSchema(egressAdminServiceMethods.ByName("ListPASETOKeyPairs")),
+			connect.WithIdempotency(connect.IdempotencyNoSideEffects),
+			connect.WithClientOptions(opts...),
+		),
 		createCPValidationKey: connect.NewClient[v1.CreateCPValidationKeyRequest, v1.CreateCPValidationKeyResponse](
 			httpClient,
 			baseURL+EgressAdminServiceCreateCPValidationKeyProcedure,
@@ -243,6 +313,8 @@ type egressAdminServiceClient struct {
 	getEgress                 *connect.Client[v1.GetEgressRequest, v1.GetEgressResponse]
 	updateEgress              *connect.Client[v1.UpdateEgressRequest, v1.UpdateEgressResponse]
 	deleteEgress              *connect.Client[v1.DeleteEgressRequest, v1.DeleteEgressResponse]
+	getEgressBundle           *connect.Client[v1.GetEgressBundleRequest, v1.GetEgressBundleResponse]
+	getEgressByWorkspace      *connect.Client[v1.GetEgressByWorkspaceRequest, v1.GetEgressByWorkspaceResponse]
 	issueIdentity             *connect.Client[v1.IssueIdentityRequest, v1.IssueIdentityResponse]
 	getIdentity               *connect.Client[v1.GetIdentityRequest, v1.GetIdentityResponse]
 	listIdentities            *connect.Client[v1.ListIdentitiesRequest, v1.ListIdentitiesResponse]
@@ -250,6 +322,9 @@ type egressAdminServiceClient struct {
 	rotateKeyPair             *connect.Client[v1.RotateKeyPairRequest, v1.RotateKeyPairResponse]
 	getKeyPair                *connect.Client[v1.GetKeyPairRequest, v1.GetKeyPairResponse]
 	listKeyPairs              *connect.Client[v1.ListKeyPairsRequest, v1.ListKeyPairsResponse]
+	rotatePASETOKeyPair       *connect.Client[v1.RotatePASETOKeyPairRequest, v1.RotatePASETOKeyPairResponse]
+	getPASETOKeyPair          *connect.Client[v1.GetPASETOKeyPairRequest, v1.GetPASETOKeyPairResponse]
+	listPASETOKeyPairs        *connect.Client[v1.ListPASETOKeyPairsRequest, v1.ListPASETOKeyPairsResponse]
 	createCPValidationKey     *connect.Client[v1.CreateCPValidationKeyRequest, v1.CreateCPValidationKeyResponse]
 	getCPValidationKey        *connect.Client[v1.GetCPValidationKeyRequest, v1.GetCPValidationKeyResponse]
 	listCPValidationKeys      *connect.Client[v1.ListCPValidationKeysRequest, v1.ListCPValidationKeysResponse]
@@ -274,6 +349,16 @@ func (c *egressAdminServiceClient) UpdateEgress(ctx context.Context, req *connec
 // DeleteEgress calls orange.egress.admin.v1.EgressAdminService.DeleteEgress.
 func (c *egressAdminServiceClient) DeleteEgress(ctx context.Context, req *connect.Request[v1.DeleteEgressRequest]) (*connect.Response[v1.DeleteEgressResponse], error) {
 	return c.deleteEgress.CallUnary(ctx, req)
+}
+
+// GetEgressBundle calls orange.egress.admin.v1.EgressAdminService.GetEgressBundle.
+func (c *egressAdminServiceClient) GetEgressBundle(ctx context.Context, req *connect.Request[v1.GetEgressBundleRequest]) (*connect.Response[v1.GetEgressBundleResponse], error) {
+	return c.getEgressBundle.CallUnary(ctx, req)
+}
+
+// GetEgressByWorkspace calls orange.egress.admin.v1.EgressAdminService.GetEgressByWorkspace.
+func (c *egressAdminServiceClient) GetEgressByWorkspace(ctx context.Context, req *connect.Request[v1.GetEgressByWorkspaceRequest]) (*connect.Response[v1.GetEgressByWorkspaceResponse], error) {
+	return c.getEgressByWorkspace.CallUnary(ctx, req)
 }
 
 // IssueIdentity calls orange.egress.admin.v1.EgressAdminService.IssueIdentity.
@@ -311,6 +396,21 @@ func (c *egressAdminServiceClient) ListKeyPairs(ctx context.Context, req *connec
 	return c.listKeyPairs.CallUnary(ctx, req)
 }
 
+// RotatePASETOKeyPair calls orange.egress.admin.v1.EgressAdminService.RotatePASETOKeyPair.
+func (c *egressAdminServiceClient) RotatePASETOKeyPair(ctx context.Context, req *connect.Request[v1.RotatePASETOKeyPairRequest]) (*connect.Response[v1.RotatePASETOKeyPairResponse], error) {
+	return c.rotatePASETOKeyPair.CallUnary(ctx, req)
+}
+
+// GetPASETOKeyPair calls orange.egress.admin.v1.EgressAdminService.GetPASETOKeyPair.
+func (c *egressAdminServiceClient) GetPASETOKeyPair(ctx context.Context, req *connect.Request[v1.GetPASETOKeyPairRequest]) (*connect.Response[v1.GetPASETOKeyPairResponse], error) {
+	return c.getPASETOKeyPair.CallUnary(ctx, req)
+}
+
+// ListPASETOKeyPairs calls orange.egress.admin.v1.EgressAdminService.ListPASETOKeyPairs.
+func (c *egressAdminServiceClient) ListPASETOKeyPairs(ctx context.Context, req *connect.Request[v1.ListPASETOKeyPairsRequest]) (*connect.Response[v1.ListPASETOKeyPairsResponse], error) {
+	return c.listPASETOKeyPairs.CallUnary(ctx, req)
+}
+
 // CreateCPValidationKey calls orange.egress.admin.v1.EgressAdminService.CreateCPValidationKey.
 func (c *egressAdminServiceClient) CreateCPValidationKey(ctx context.Context, req *connect.Request[v1.CreateCPValidationKeyRequest]) (*connect.Response[v1.CreateCPValidationKeyResponse], error) {
 	return c.createCPValidationKey.CallUnary(ctx, req)
@@ -339,6 +439,12 @@ type EgressAdminServiceHandler interface {
 	GetEgress(context.Context, *connect.Request[v1.GetEgressRequest]) (*connect.Response[v1.GetEgressResponse], error)
 	UpdateEgress(context.Context, *connect.Request[v1.UpdateEgressRequest]) (*connect.Response[v1.UpdateEgressResponse], error)
 	DeleteEgress(context.Context, *connect.Request[v1.DeleteEgressRequest]) (*connect.Response[v1.DeleteEgressResponse], error)
+	// GetEgressBundle returns all files needed to boot an egress proxy: identity
+	// cert, private key (returned once), and the CP validation public key.
+	// Requires scope "egress-bundle:download".
+	GetEgressBundle(context.Context, *connect.Request[v1.GetEgressBundleRequest]) (*connect.Response[v1.GetEgressBundleResponse], error)
+	// GetEgressByWorkspace returns the egress record for a workspace (1:1).
+	GetEgressByWorkspace(context.Context, *connect.Request[v1.GetEgressByWorkspaceRequest]) (*connect.Response[v1.GetEgressByWorkspaceResponse], error)
 	// IssueIdentity provisions a new X.509 identity certificate for an Egress.
 	IssueIdentity(context.Context, *connect.Request[v1.IssueIdentityRequest]) (*connect.Response[v1.IssueIdentityResponse], error)
 	// GetIdentity returns the identity record for an Egress.
@@ -353,6 +459,11 @@ type EgressAdminServiceHandler interface {
 	GetKeyPair(context.Context, *connect.Request[v1.GetKeyPairRequest]) (*connect.Response[v1.GetKeyPairResponse], error)
 	// ListKeyPairs lists all key pair records for an Egress.
 	ListKeyPairs(context.Context, *connect.Request[v1.ListKeyPairsRequest]) (*connect.Response[v1.ListKeyPairsResponse], error)
+	// RotatePASETOKeyPair generates a new Ed25519 PASETO keypair for the given
+	// slot (1 or 2). The old public key remains valid during a grace window.
+	RotatePASETOKeyPair(context.Context, *connect.Request[v1.RotatePASETOKeyPairRequest]) (*connect.Response[v1.RotatePASETOKeyPairResponse], error)
+	GetPASETOKeyPair(context.Context, *connect.Request[v1.GetPASETOKeyPairRequest]) (*connect.Response[v1.GetPASETOKeyPairResponse], error)
+	ListPASETOKeyPairs(context.Context, *connect.Request[v1.ListPASETOKeyPairsRequest]) (*connect.Response[v1.ListPASETOKeyPairsResponse], error)
 	// CreateCPValidationKey registers a control-plane public key for distribution.
 	CreateCPValidationKey(context.Context, *connect.Request[v1.CreateCPValidationKeyRequest]) (*connect.Response[v1.CreateCPValidationKeyResponse], error)
 	// GetCPValidationKey returns a control-plane validation key.
@@ -393,6 +504,20 @@ func NewEgressAdminServiceHandler(svc EgressAdminServiceHandler, opts ...connect
 		EgressAdminServiceDeleteEgressProcedure,
 		svc.DeleteEgress,
 		connect.WithSchema(egressAdminServiceMethods.ByName("DeleteEgress")),
+		connect.WithHandlerOptions(opts...),
+	)
+	egressAdminServiceGetEgressBundleHandler := connect.NewUnaryHandler(
+		EgressAdminServiceGetEgressBundleProcedure,
+		svc.GetEgressBundle,
+		connect.WithSchema(egressAdminServiceMethods.ByName("GetEgressBundle")),
+		connect.WithIdempotency(connect.IdempotencyNoSideEffects),
+		connect.WithHandlerOptions(opts...),
+	)
+	egressAdminServiceGetEgressByWorkspaceHandler := connect.NewUnaryHandler(
+		EgressAdminServiceGetEgressByWorkspaceProcedure,
+		svc.GetEgressByWorkspace,
+		connect.WithSchema(egressAdminServiceMethods.ByName("GetEgressByWorkspace")),
+		connect.WithIdempotency(connect.IdempotencyNoSideEffects),
 		connect.WithHandlerOptions(opts...),
 	)
 	egressAdminServiceIssueIdentityHandler := connect.NewUnaryHandler(
@@ -441,6 +566,26 @@ func NewEgressAdminServiceHandler(svc EgressAdminServiceHandler, opts ...connect
 		connect.WithIdempotency(connect.IdempotencyNoSideEffects),
 		connect.WithHandlerOptions(opts...),
 	)
+	egressAdminServiceRotatePASETOKeyPairHandler := connect.NewUnaryHandler(
+		EgressAdminServiceRotatePASETOKeyPairProcedure,
+		svc.RotatePASETOKeyPair,
+		connect.WithSchema(egressAdminServiceMethods.ByName("RotatePASETOKeyPair")),
+		connect.WithHandlerOptions(opts...),
+	)
+	egressAdminServiceGetPASETOKeyPairHandler := connect.NewUnaryHandler(
+		EgressAdminServiceGetPASETOKeyPairProcedure,
+		svc.GetPASETOKeyPair,
+		connect.WithSchema(egressAdminServiceMethods.ByName("GetPASETOKeyPair")),
+		connect.WithIdempotency(connect.IdempotencyNoSideEffects),
+		connect.WithHandlerOptions(opts...),
+	)
+	egressAdminServiceListPASETOKeyPairsHandler := connect.NewUnaryHandler(
+		EgressAdminServiceListPASETOKeyPairsProcedure,
+		svc.ListPASETOKeyPairs,
+		connect.WithSchema(egressAdminServiceMethods.ByName("ListPASETOKeyPairs")),
+		connect.WithIdempotency(connect.IdempotencyNoSideEffects),
+		connect.WithHandlerOptions(opts...),
+	)
 	egressAdminServiceCreateCPValidationKeyHandler := connect.NewUnaryHandler(
 		EgressAdminServiceCreateCPValidationKeyProcedure,
 		svc.CreateCPValidationKey,
@@ -477,6 +622,10 @@ func NewEgressAdminServiceHandler(svc EgressAdminServiceHandler, opts ...connect
 			egressAdminServiceUpdateEgressHandler.ServeHTTP(w, r)
 		case EgressAdminServiceDeleteEgressProcedure:
 			egressAdminServiceDeleteEgressHandler.ServeHTTP(w, r)
+		case EgressAdminServiceGetEgressBundleProcedure:
+			egressAdminServiceGetEgressBundleHandler.ServeHTTP(w, r)
+		case EgressAdminServiceGetEgressByWorkspaceProcedure:
+			egressAdminServiceGetEgressByWorkspaceHandler.ServeHTTP(w, r)
 		case EgressAdminServiceIssueIdentityProcedure:
 			egressAdminServiceIssueIdentityHandler.ServeHTTP(w, r)
 		case EgressAdminServiceGetIdentityProcedure:
@@ -491,6 +640,12 @@ func NewEgressAdminServiceHandler(svc EgressAdminServiceHandler, opts ...connect
 			egressAdminServiceGetKeyPairHandler.ServeHTTP(w, r)
 		case EgressAdminServiceListKeyPairsProcedure:
 			egressAdminServiceListKeyPairsHandler.ServeHTTP(w, r)
+		case EgressAdminServiceRotatePASETOKeyPairProcedure:
+			egressAdminServiceRotatePASETOKeyPairHandler.ServeHTTP(w, r)
+		case EgressAdminServiceGetPASETOKeyPairProcedure:
+			egressAdminServiceGetPASETOKeyPairHandler.ServeHTTP(w, r)
+		case EgressAdminServiceListPASETOKeyPairsProcedure:
+			egressAdminServiceListPASETOKeyPairsHandler.ServeHTTP(w, r)
 		case EgressAdminServiceCreateCPValidationKeyProcedure:
 			egressAdminServiceCreateCPValidationKeyHandler.ServeHTTP(w, r)
 		case EgressAdminServiceGetCPValidationKeyProcedure:
@@ -524,6 +679,14 @@ func (UnimplementedEgressAdminServiceHandler) DeleteEgress(context.Context, *con
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orange.egress.admin.v1.EgressAdminService.DeleteEgress is not implemented"))
 }
 
+func (UnimplementedEgressAdminServiceHandler) GetEgressBundle(context.Context, *connect.Request[v1.GetEgressBundleRequest]) (*connect.Response[v1.GetEgressBundleResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orange.egress.admin.v1.EgressAdminService.GetEgressBundle is not implemented"))
+}
+
+func (UnimplementedEgressAdminServiceHandler) GetEgressByWorkspace(context.Context, *connect.Request[v1.GetEgressByWorkspaceRequest]) (*connect.Response[v1.GetEgressByWorkspaceResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orange.egress.admin.v1.EgressAdminService.GetEgressByWorkspace is not implemented"))
+}
+
 func (UnimplementedEgressAdminServiceHandler) IssueIdentity(context.Context, *connect.Request[v1.IssueIdentityRequest]) (*connect.Response[v1.IssueIdentityResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orange.egress.admin.v1.EgressAdminService.IssueIdentity is not implemented"))
 }
@@ -550,6 +713,18 @@ func (UnimplementedEgressAdminServiceHandler) GetKeyPair(context.Context, *conne
 
 func (UnimplementedEgressAdminServiceHandler) ListKeyPairs(context.Context, *connect.Request[v1.ListKeyPairsRequest]) (*connect.Response[v1.ListKeyPairsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orange.egress.admin.v1.EgressAdminService.ListKeyPairs is not implemented"))
+}
+
+func (UnimplementedEgressAdminServiceHandler) RotatePASETOKeyPair(context.Context, *connect.Request[v1.RotatePASETOKeyPairRequest]) (*connect.Response[v1.RotatePASETOKeyPairResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orange.egress.admin.v1.EgressAdminService.RotatePASETOKeyPair is not implemented"))
+}
+
+func (UnimplementedEgressAdminServiceHandler) GetPASETOKeyPair(context.Context, *connect.Request[v1.GetPASETOKeyPairRequest]) (*connect.Response[v1.GetPASETOKeyPairResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orange.egress.admin.v1.EgressAdminService.GetPASETOKeyPair is not implemented"))
+}
+
+func (UnimplementedEgressAdminServiceHandler) ListPASETOKeyPairs(context.Context, *connect.Request[v1.ListPASETOKeyPairsRequest]) (*connect.Response[v1.ListPASETOKeyPairsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orange.egress.admin.v1.EgressAdminService.ListPASETOKeyPairs is not implemented"))
 }
 
 func (UnimplementedEgressAdminServiceHandler) CreateCPValidationKey(context.Context, *connect.Request[v1.CreateCPValidationKeyRequest]) (*connect.Response[v1.CreateCPValidationKeyResponse], error) {

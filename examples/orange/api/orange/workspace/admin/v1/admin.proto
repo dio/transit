@@ -134,4 +134,5 @@ message Workspace {
   optional string description = 4;
   google.protobuf.Timestamp created_at = 5;
   google.protobuf.Timestamp updated_at = 6;
+  string egress_id = 7;    // auto-provisioned on creation; empty until provisioned
 }
