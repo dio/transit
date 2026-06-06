@@ -1,0 +1,84 @@
+// admin.proto — APIKeyAdminService: management plane for orange API key lifecycle.
+//
+// API keys are the primary credential for authenticating CLI and service-to-service
+// calls against the orange management plane.
+//
+// Key format:
+//   admin scope  → sk-org-<base64url-raw-32bytes>
+//   other scopes → sk-<base64url-raw-32bytes>
+//
+// The plaintext key is returned exactly once (IssueKey response).
+// Only the SHA-256 hash is persisted; plaintext is never stored.
+//
+// Authentication: every RPC requires AUTH_TYPE_API_KEY with scope "admin".
+//
+// Field numbers are stable and must not be reused once released.
+
+syntax = "proto3";
+
+package orange.apikey.admin.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "orange/auth/v1/auth_options.proto";
+
+service APIKeyAdminService {
+  rpc IssueKey(IssueKeyRequest) returns (IssueKeyResponse) {
+    option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
+  }
+  rpc ListKeys(ListKeysRequest) returns (ListKeysResponse) {
+    option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc RevokeKey(RevokeKeyRequest) returns (RevokeKeyResponse) {
+    option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
+  }
+}
+
+message IssueKeyRequest {
+  string org_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+  // user_id associates the key with a specific user. Empty = org-level key.
+  string user_id = 2 [(buf.validate.field).string.max_len = 36];
+  // workspace_id scopes the key to a workspace. Empty = org-wide.
+  string workspace_id = 3 [(buf.validate.field).string.max_len = 36];
+  // scopes controls what the key can do. Defaults to ["read","write"] when empty.
+  repeated string scopes = 4;
+  optional string description = 5 [(buf.validate.field).string.max_len = 1024];
+}
+
+message IssueKeyResponse {
+  ApiKey key = 1;
+  // plaintext is the full API key token. Returned exactly once — never stored.
+  string plaintext = 2;
+}
+
+message ListKeysRequest {
+  string org_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+  // user_id filters to keys belonging to a specific user. Empty = all keys in org.
+  string user_id = 2 [(buf.validate.field).string.max_len = 36];
+  optional int32 limit = 3 [(buf.validate.field).int32 = {gte: 0 lte: 1000}];
+  optional string page_token = 4;
+}
+
+message ListKeysResponse {
+  repeated ApiKey keys = 1;
+  string next_page_token = 2;
+}
+
+message RevokeKeyRequest {
+  string key_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+}
+
+message RevokeKeyResponse {}
+
+// ApiKey is the stored metadata for an API key. Plaintext is never included.
+message ApiKey {
+  string key_id = 1;       // UUID7, server-assigned
+  string key_prefix = 2;   // first 12 chars of the plaintext (for identification)
+  string org_id = 3;
+  string user_id = 4;      // empty for org-level keys
+  string workspace_id = 5; // empty for org-wide keys
+  repeated string scopes = 6;
+  optional string description = 7;
+  google.protobuf.Timestamp created_at = 8;
+}
