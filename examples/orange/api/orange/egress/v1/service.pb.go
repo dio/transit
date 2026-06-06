@@ -13,6 +13,7 @@
 package egressv1
 
 import (
+	_ "github.com/dio/transit/examples/orange/api/orange/auth/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
@@ -31,6 +32,7 @@ const (
 type HeartbeatRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	EgressId      string                 `protobuf:"bytes,1,opt,name=egress_id,json=egressId,proto3" json:"egress_id,omitempty"`
+	WorkspaceId   string                 `protobuf:"bytes,2,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -68,6 +70,13 @@ func (*HeartbeatRequest) Descriptor() ([]byte, []int) {
 func (x *HeartbeatRequest) GetEgressId() string {
 	if x != nil {
 		return x.EgressId
+	}
+	return ""
+}
+
+func (x *HeartbeatRequest) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
 	}
 	return ""
 }
@@ -120,14 +129,16 @@ var File_orange_egress_v1_service_proto protoreflect.FileDescriptor
 
 const file_orange_egress_v1_service_proto_rawDesc = "" +
 	"\n" +
-	"\x1eorange/egress/v1/service.proto\x12\x10orange.egress.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"/\n" +
+	"\x1eorange/egress/v1/service.proto\x12\x10orange.egress.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a!orange/auth/v1/auth_options.proto\"R\n" +
 	"\x10HeartbeatRequest\x12\x1b\n" +
-	"\tegress_id\x18\x01 \x01(\tR\begressId\"P\n" +
+	"\tegress_id\x18\x01 \x01(\tR\begressId\x12!\n" +
+	"\fworkspace_id\x18\x02 \x01(\tR\vworkspaceId\"P\n" +
 	"\x11HeartbeatResponse\x12;\n" +
 	"\vserver_time\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"serverTime2g\n" +
-	"\rEgressService\x12V\n" +
-	"\tHeartbeat\x12\".orange.egress.v1.HeartbeatRequest\x1a#.orange.egress.v1.HeartbeatResponse\"\x00B\xcc\x01\n" +
+	"serverTime2n\n" +
+	"\rEgressService\x12]\n" +
+	"\tHeartbeat\x12\".orange.egress.v1.HeartbeatRequest\x1a#.orange.egress.v1.HeartbeatResponse\"\a\xc2\xf3\x18\x03\n" +
+	"\x01\x03B\xcc\x01\n" +
 	"\x14com.orange.egress.v1B\fServiceProtoP\x01ZDgithub.com/dio/transit/examples/orange/api/orange/egress/v1;egressv1\xa2\x02\x03OEX\xaa\x02\x10Orange.Egress.V1\xca\x02\x10Orange\\Egress\\V1\xe2\x02\x1cOrange\\Egress\\V1\\GPBMetadata\xea\x02\x12Orange::Egress::V1b\x06proto3"
 
 var (

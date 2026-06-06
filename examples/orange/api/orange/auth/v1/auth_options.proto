@@ -25,6 +25,7 @@ enum AuthType {
   AUTH_TYPE_UNSPECIFIED = 0;
   AUTH_TYPE_API_KEY = 1; // static API key issued by the admin plane
   AUTH_TYPE_SERVICE_ACCOUNT = 2; // short-lived JWT from a service account
+  AUTH_TYPE_EGRESS_ASSERTION = 3; // Ed25519-signed assertion from an egress keypair
 }
 
 // AuthOptions declares authentication requirements for a single RPC method.

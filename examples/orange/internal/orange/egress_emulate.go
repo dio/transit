@@ -301,7 +301,7 @@ func runEgressEmulate(parent context.Context, bundle *egressBundleData, interval
 	tick := func() {
 		ts := time.Now().Format(time.RFC3339)
 
-		hbResp, err := heartbeatClient.Heartbeat(ctx, connect.NewRequest(&egressv1.HeartbeatRequest{EgressId: bundle.egressID}))
+		hbResp, err := heartbeatClient.Heartbeat(ctx, connect.NewRequest(&egressv1.HeartbeatRequest{EgressId: bundle.egressID, WorkspaceId: bundle.workspaceID}))
 		if err != nil {
 			fmt.Printf("[%s] heartbeat  ERROR %v\n", ts, err)
 		} else {

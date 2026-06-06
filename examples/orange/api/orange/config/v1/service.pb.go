@@ -26,6 +26,7 @@ package configv1
 
 import (
 	_ "buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
+	_ "github.com/dio/transit/examples/orange/api/orange/auth/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -420,7 +421,7 @@ var File_orange_config_v1_service_proto protoreflect.FileDescriptor
 
 const file_orange_config_v1_service_proto_rawDesc = "" +
 	"\n" +
-	"\x1eorange/config/v1/service.proto\x12\x10orange.config.v1\x1a\x1bbuf/validate/validate.proto\x1a\x1forange/config/v1/snapshot.proto\"_\n" +
+	"\x1eorange/config/v1/service.proto\x12\x10orange.config.v1\x1a\x1bbuf/validate/validate.proto\x1a\x1forange/config/v1/snapshot.proto\x1a!orange/auth/v1/auth_options.proto\"_\n" +
 	"\fWatchRequest\x12,\n" +
 	"\fworkspace_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\vworkspaceId\x12!\n" +
 	"\flast_version\x18\x02 \x01(\x04R\vlastVersion\"\x9e\x01\n" +
@@ -439,10 +440,12 @@ const file_orange_config_v1_service_proto_rawDesc = "" +
 	"\x06result\x12\x05\xbaH\x02\b\x01\"2\n" +
 	"\tHeartbeat\x12%\n" +
 	"\x0eserver_version\x18\x01 \x01(\x04R\rserverVersion\"\v\n" +
-	"\tUnchanged2\xa7\x01\n" +
-	"\x0fSnapshotService\x12J\n" +
-	"\x05Watch\x12\x1e.orange.config.v1.WatchRequest\x1a\x1f.orange.config.v1.WatchResponse0\x01\x12H\n" +
-	"\x05Fetch\x12\x1e.orange.config.v1.FetchRequest\x1a\x1f.orange.config.v1.FetchResponseB\xcc\x01\n" +
+	"\tUnchanged2\xb9\x01\n" +
+	"\x0fSnapshotService\x12S\n" +
+	"\x05Watch\x12\x1e.orange.config.v1.WatchRequest\x1a\x1f.orange.config.v1.WatchResponse\"\a\xc2\xf3\x18\x03\n" +
+	"\x01\x030\x01\x12Q\n" +
+	"\x05Fetch\x12\x1e.orange.config.v1.FetchRequest\x1a\x1f.orange.config.v1.FetchResponse\"\a\xc2\xf3\x18\x03\n" +
+	"\x01\x03B\xcc\x01\n" +
 	"\x14com.orange.config.v1B\fServiceProtoP\x01ZDgithub.com/dio/transit/examples/orange/api/orange/config/v1;configv1\xa2\x02\x03OCX\xaa\x02\x10Orange.Config.V1\xca\x02\x10Orange\\Config\\V1\xe2\x02\x1cOrange\\Config\\V1\\GPBMetadata\xea\x02\x12Orange::Config::V1b\x06proto3"
 
 var (

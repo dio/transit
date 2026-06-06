@@ -9,14 +9,20 @@ syntax = "proto3";
 package orange.egress.v1;
 
 import "google/protobuf/timestamp.proto";
+import "orange/auth/v1/auth_options.proto";
 
 service EgressService {
   // Heartbeat is called periodically by the egress proxy to report liveness.
-  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse) {}
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse) {
+    option (orange.auth.v1.auth) = {
+      auth_types: [AUTH_TYPE_EGRESS_ASSERTION]
+    };
+  }
 }
 
 message HeartbeatRequest {
   string egress_id = 1;
+  string workspace_id = 2;
 }
 
 message HeartbeatResponse {

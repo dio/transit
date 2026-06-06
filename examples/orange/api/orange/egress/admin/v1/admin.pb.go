@@ -852,26 +852,31 @@ func (x *GetEgressBundleResponse) GetBundle() *EgressBundle {
 }
 
 // EgressBundle contains everything needed to boot an egress proxy instance.
+//
+// Key roles:
+//
+//	identity_cert_pem               — who this egress is (X.509 cert, CN=egress.<ws>.<proj>.<org>)
+//	egress_keypair_private_key_pem  — egress→CP direction: egress signs tokens with this private
+//	                                  key; CP verifies using the paired public key stored server-side
+//	paseto_public_key_{1,2}_pem     — client→egress direction: egress validates user PASETO tokens
+//	                                  offline (no CP round-trip); two keys allow graceful rotation;
+//	                                  the CP holds the corresponding private keys for token signing
+//
 // Fields ending in _private_key_pem are sensitive — write to disk mode 0600,
 // never log or retransmit.
-//
-// Connection model: signed assertion. The egress signs the well-known string
-// "<egress_id>:<workspace_id>:initialize" with identity_private_key_pem and
-// presents identity_cert_pem for the CP to verify.
 type EgressBundle struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
 	EgressId    string                 `protobuf:"bytes,1,opt,name=egress_id,json=egressId,proto3" json:"egress_id,omitempty"`
 	WorkspaceId string                 `protobuf:"bytes,2,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
 	ServerUrl   string                 `protobuf:"bytes,3,opt,name=server_url,json=serverUrl,proto3" json:"server_url,omitempty"`
-	// Identity artefacts — used for the signed-assertion handshake with the CP.
-	IdentityCertPem       string `protobuf:"bytes,4,opt,name=identity_cert_pem,json=identityCertPem,proto3" json:"identity_cert_pem,omitempty"`
-	IdentityPrivateKeyPem string `protobuf:"bytes,5,opt,name=identity_private_key_pem,json=identityPrivateKeyPem,proto3" json:"identity_private_key_pem,omitempty"`
-	// EgressKeyPair private key — used to sign heartbeat / telemetry tokens.
+	// identity_cert_pem identifies this egress to the CP (X.509 cert, public only).
+	IdentityCertPem string `protobuf:"bytes,4,opt,name=identity_cert_pem,json=identityCertPem,proto3" json:"identity_cert_pem,omitempty"`
+	// EgressKeyPair private key — egress→CP: egress signs heartbeat/telemetry tokens.
+	// CP verifies with the corresponding public key stored in egress_keypairs.
 	EgressKeypairPrivateKeyPem string `protobuf:"bytes,6,opt,name=egress_keypair_private_key_pem,json=egressKeypairPrivateKeyPem,proto3" json:"egress_keypair_private_key_pem,omitempty"`
-	// CPValidationKey public key — used to verify CP-signed config and telemetry pushes.
-	CpValidationPublicKeyPem string `protobuf:"bytes,7,opt,name=cp_validation_public_key_pem,json=cpValidationPublicKeyPem,proto3" json:"cp_validation_public_key_pem,omitempty"`
-	// EgressPASETOKeyPair public keys — used to validate user PASETO tokens offline
+	// EgressPASETOKeyPair public keys — client→egress: egress validates user PASETO tokens offline
 	// (no CP round-trip per request). Two keys allow graceful keypair rotation.
+	// The CP holds the corresponding private keys and uses them to sign user tokens.
 	PasetoPublicKey_1Pem string `protobuf:"bytes,8,opt,name=paseto_public_key_1_pem,json=pasetoPublicKey1Pem,proto3" json:"paseto_public_key_1_pem,omitempty"`
 	PasetoPublicKey_2Pem string `protobuf:"bytes,9,opt,name=paseto_public_key_2_pem,json=pasetoPublicKey2Pem,proto3" json:"paseto_public_key_2_pem,omitempty"`
 	unknownFields        protoimpl.UnknownFields
@@ -936,23 +941,9 @@ func (x *EgressBundle) GetIdentityCertPem() string {
 	return ""
 }
 
-func (x *EgressBundle) GetIdentityPrivateKeyPem() string {
-	if x != nil {
-		return x.IdentityPrivateKeyPem
-	}
-	return ""
-}
-
 func (x *EgressBundle) GetEgressKeypairPrivateKeyPem() string {
 	if x != nil {
 		return x.EgressKeypairPrivateKeyPem
-	}
-	return ""
-}
-
-func (x *EgressBundle) GetCpValidationPublicKeyPem() string {
-	if x != nil {
-		return x.CpValidationPublicKeyPem
 	}
 	return ""
 }
@@ -2922,18 +2913,16 @@ const file_orange_egress_admin_v1_admin_proto_rawDesc = "" +
 	"\x16GetEgressBundleRequest\x12&\n" +
 	"\tegress_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\begressId\"W\n" +
 	"\x17GetEgressBundleResponse\x12<\n" +
-	"\x06bundle\x18\x01 \x01(\v2$.orange.egress.admin.v1.EgressBundleR\x06bundle\"\xc2\x03\n" +
+	"\x06bundle\x18\x01 \x01(\v2$.orange.egress.admin.v1.EgressBundleR\x06bundle\"\xd5\x02\n" +
 	"\fEgressBundle\x12\x1b\n" +
 	"\tegress_id\x18\x01 \x01(\tR\begressId\x12!\n" +
 	"\fworkspace_id\x18\x02 \x01(\tR\vworkspaceId\x12\x1d\n" +
 	"\n" +
 	"server_url\x18\x03 \x01(\tR\tserverUrl\x12*\n" +
-	"\x11identity_cert_pem\x18\x04 \x01(\tR\x0fidentityCertPem\x127\n" +
-	"\x18identity_private_key_pem\x18\x05 \x01(\tR\x15identityPrivateKeyPem\x12B\n" +
-	"\x1eegress_keypair_private_key_pem\x18\x06 \x01(\tR\x1aegressKeypairPrivateKeyPem\x12>\n" +
-	"\x1ccp_validation_public_key_pem\x18\a \x01(\tR\x18cpValidationPublicKeyPem\x124\n" +
+	"\x11identity_cert_pem\x18\x04 \x01(\tR\x0fidentityCertPem\x12B\n" +
+	"\x1eegress_keypair_private_key_pem\x18\x06 \x01(\tR\x1aegressKeypairPrivateKeyPem\x124\n" +
 	"\x17paseto_public_key_1_pem\x18\b \x01(\tR\x13pasetoPublicKey1Pem\x124\n" +
-	"\x17paseto_public_key_2_pem\x18\t \x01(\tR\x13pasetoPublicKey2Pem\"\xeb\x04\n" +
+	"\x17paseto_public_key_2_pem\x18\t \x01(\tR\x13pasetoPublicKey2PemJ\x04\b\x05\x10\x06J\x04\b\a\x10\b\"\xeb\x04\n" +
 	"\x06Egress\x12\x1b\n" +
 	"\tegress_id\x18\x01 \x01(\tR\begressId\x12!\n" +
 	"\fworkspace_id\x18\x02 \x01(\tR\vworkspaceId\x12G\n" +

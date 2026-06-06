@@ -38,6 +38,7 @@ import (
 	"github.com/dio/transit/examples/orange/internal/config"
 	"github.com/dio/transit/examples/orange/internal/embeddedpg"
 	"github.com/dio/transit/examples/orange/internal/orange/apikeys"
+	"github.com/dio/transit/examples/orange/internal/orange/egressauth"
 	"github.com/dio/transit/examples/orange/internal/resources"
 	"github.com/dio/transit/examples/orange/internal/secret"
 	"github.com/dio/transit/examples/orange/internal/secret/crypto"
@@ -213,6 +214,8 @@ func runServer(parent context.Context, cfg serverCfg) error {
 
 	codecOpt := connect.WithCodec(vtprotocodec.Codec{})
 	authOpt := connect.WithInterceptors(apikeys.Interceptor(keyStore))
+	egressAuthStore := egressauth.NewStore(pool)
+	egressAuthOpt := connect.WithInterceptors(egressauth.Interceptor(egressAuthStore))
 	opts := []connect.HandlerOption{codecOpt, authOpt}
 
 	mux := http.NewServeMux()
@@ -228,12 +231,12 @@ func runServer(parent context.Context, cfg serverCfg) error {
 	mux.Handle(apikeyconnect.NewAPIKeyAdminServiceHandler(apikeys.NewService(keyStore), opts...))
 	// Config admin: management-plane, requires API key auth.
 	mux.Handle(configadminconnect.NewConfigAdminServiceHandler(configSvc, opts...))
-	// Snapshot fetch: data-plane facing, codec only (no API key auth).
-	mux.Handle(configv1connect.NewSnapshotServiceHandler(configSvc, codecOpt))
-	// Heartbeat is egress-facing: no API key auth, codec only.
+	// Snapshot fetch: data-plane facing, requires egress assertion auth.
+	mux.Handle(configv1connect.NewSnapshotServiceHandler(configSvc, codecOpt, egressAuthOpt))
+	// Heartbeat is egress-facing: requires egress assertion auth.
 	mux.Handle(egressv1connect.NewEgressServiceHandler(
 		resources.NewHeartbeatService(heartbeatRegistry),
-		codecOpt,
+		codecOpt, egressAuthOpt,
 	))
 
 	var ready atomic.Bool

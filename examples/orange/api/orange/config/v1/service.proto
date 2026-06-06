@@ -22,6 +22,7 @@ package orange.config.v1;
 
 import "buf/validate/validate.proto";
 import "orange/config/v1/snapshot.proto";
+import "orange/auth/v1/auth_options.proto";
 
 
 // ── Service ───────────────────────────────────────────────────────────────────
@@ -30,12 +31,20 @@ service SnapshotService {
   // Watch is the steady-state live-update channel.
   // The client keeps the stream open; the server pushes a new SnapshotEnvelope
   // on every config change and emits a Heartbeat on the idle timer.
-  rpc Watch(WatchRequest) returns (stream WatchResponse);
+  rpc Watch(WatchRequest) returns (stream WatchResponse) {
+    option (orange.auth.v1.auth) = {
+      auth_types: [AUTH_TYPE_EGRESS_ASSERTION]
+    };
+  }
 
   // Fetch is the unary cold-start or reconnect path.
   // When last_version and last_checksum both still match the current snapshot,
   // the server returns Unchanged. Otherwise it returns the current envelope.
-  rpc Fetch(FetchRequest) returns (FetchResponse);
+  rpc Fetch(FetchRequest) returns (FetchResponse) {
+    option (orange.auth.v1.auth) = {
+      auth_types: [AUTH_TYPE_EGRESS_ASSERTION]
+    };
+  }
 }
 
 // ── Watch ─────────────────────────────────────────────────────────────────────

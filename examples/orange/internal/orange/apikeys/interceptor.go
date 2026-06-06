@@ -7,11 +7,9 @@ import (
 	"strings"
 
 	"connectrpc.com/connect"
-	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/reflect/protoreflect"
-	"google.golang.org/protobuf/reflect/protoregistry"
 
 	authv1 "github.com/dio/transit/examples/orange/api/orange/auth/v1"
+	"github.com/dio/transit/examples/orange/internal/orange/auth"
 )
 
 type contextKey struct{}
@@ -27,45 +25,13 @@ func RecordFromContext(ctx context.Context) (Record, bool) {
 	return rec, ok
 }
 
-// policyMap maps Connect procedure path (e.g. "/orange.org.admin.v1.OrgAdminService/CreateOrg")
-// to the auth options declared on that method via (orange.auth.v1.auth).
-// Methods without the annotation are absent from the map (public).
-type policyMap map[string]*authv1.AuthOptions
-
-// buildPolicyMap walks all globally registered proto files once and extracts
-// every (orange.auth.v1.auth) annotation. Called once at interceptor creation.
-func buildPolicyMap() policyMap {
-	m := make(policyMap)
-	protoregistry.GlobalFiles.RangeFiles(func(fd protoreflect.FileDescriptor) bool {
-		svcs := fd.Services()
-		for i := range svcs.Len() {
-			svc := svcs.Get(i)
-			methods := svc.Methods()
-			for j := range methods.Len() {
-				method := methods.Get(j)
-				if method.Options() == nil {
-					continue
-				}
-				opts, _ := proto.GetExtension(method.Options(), authv1.E_Auth).(*authv1.AuthOptions)
-				if opts == nil {
-					continue
-				}
-				procedure := "/" + string(svc.FullName()) + "/" + string(method.Name())
-				m[procedure] = opts
-			}
-		}
-		return true
-	})
-	return m
-}
-
 // Interceptor returns a Connect unary interceptor that validates API keys and
 // enforces the scopes declared via (orange.auth.v1.auth) on each RPC method.
 //
 // The policy map is built once from the global proto registry at interceptor
 // creation (static, not lazy). Methods without an auth annotation are public.
 func Interceptor(store *Store) connect.UnaryInterceptorFunc {
-	policy := buildPolicyMap()
+	policy := auth.BuildPolicyMap()
 
 	return func(next connect.UnaryFunc) connect.UnaryFunc {
 		return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {

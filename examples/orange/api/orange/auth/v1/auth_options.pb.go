@@ -41,9 +41,10 @@ const (
 type AuthType int32
 
 const (
-	AuthType_AUTH_TYPE_UNSPECIFIED     AuthType = 0
-	AuthType_AUTH_TYPE_API_KEY         AuthType = 1 // static API key issued by the admin plane
-	AuthType_AUTH_TYPE_SERVICE_ACCOUNT AuthType = 2 // short-lived JWT from a service account
+	AuthType_AUTH_TYPE_UNSPECIFIED      AuthType = 0
+	AuthType_AUTH_TYPE_API_KEY          AuthType = 1 // static API key issued by the admin plane
+	AuthType_AUTH_TYPE_SERVICE_ACCOUNT  AuthType = 2 // short-lived JWT from a service account
+	AuthType_AUTH_TYPE_EGRESS_ASSERTION AuthType = 3 // Ed25519-signed assertion from an egress keypair
 )
 
 // Enum value maps for AuthType.
@@ -52,11 +53,13 @@ var (
 		0: "AUTH_TYPE_UNSPECIFIED",
 		1: "AUTH_TYPE_API_KEY",
 		2: "AUTH_TYPE_SERVICE_ACCOUNT",
+		3: "AUTH_TYPE_EGRESS_ASSERTION",
 	}
 	AuthType_value = map[string]int32{
-		"AUTH_TYPE_UNSPECIFIED":     0,
-		"AUTH_TYPE_API_KEY":         1,
-		"AUTH_TYPE_SERVICE_ACCOUNT": 2,
+		"AUTH_TYPE_UNSPECIFIED":      0,
+		"AUTH_TYPE_API_KEY":          1,
+		"AUTH_TYPE_SERVICE_ACCOUNT":  2,
+		"AUTH_TYPE_EGRESS_ASSERTION": 3,
 	}
 )
 
@@ -172,11 +175,12 @@ const file_orange_auth_v1_auth_options_proto_rawDesc = "" +
 	"\vAuthOptions\x127\n" +
 	"\n" +
 	"auth_types\x18\x01 \x03(\x0e2\x18.orange.auth.v1.AuthTypeR\tauthTypes\x12\x16\n" +
-	"\x06scopes\x18\x02 \x03(\tR\x06scopes*[\n" +
+	"\x06scopes\x18\x02 \x03(\tR\x06scopes*{\n" +
 	"\bAuthType\x12\x19\n" +
 	"\x15AUTH_TYPE_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11AUTH_TYPE_API_KEY\x10\x01\x12\x1d\n" +
-	"\x19AUTH_TYPE_SERVICE_ACCOUNT\x10\x02:Q\n" +
+	"\x19AUTH_TYPE_SERVICE_ACCOUNT\x10\x02\x12\x1e\n" +
+	"\x1aAUTH_TYPE_EGRESS_ASSERTION\x10\x03:Q\n" +
 	"\x04auth\x12\x1e.google.protobuf.MethodOptions\x18\xb8\x8e\x03 \x01(\v2\x1b.orange.auth.v1.AuthOptionsR\x04authB\xc2\x01\n" +
 	"\x12com.orange.auth.v1B\x10AuthOptionsProtoP\x01Z@github.com/dio/transit/examples/orange/api/orange/auth/v1;authv1\xa2\x02\x03OAX\xaa\x02\x0eOrange.Auth.V1\xca\x02\x0eOrange\\Auth\\V1\xe2\x02\x1aOrange\\Auth\\V1\\GPBMetadata\xea\x02\x10Orange::Auth::V1b\x06proto3"
 
