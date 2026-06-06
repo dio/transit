@@ -64,6 +64,25 @@ func decodeRawConfig(env SnapshotEnvelope) (*RawConfig, error) {
 	}
 }
 
+// DecodeRawFromProtoEnvelope converts a wire-level configv1.SnapshotEnvelope
+// into a RawConfig. It is the exported decode path for callers outside the
+// config package (e.g. the egress emulator CLI).
+//
+// Why exported separately from the rest of the pipeline:
+//   envelopeFromProto and decodeRawConfig are intentionally unexported — callers
+//   inside the package always go through the full AppState.Apply path, which
+//   handles version gating, user-table seeding, and atomic snapshot swap. Exporting
+//   a combined one-shot function gives external callers (tooling, tests, the
+//   emulator) a clean entry point without exposing the intermediate types or
+//   inviting callers to bypass the AppState contract in production code.
+func DecodeRawFromProtoEnvelope(pb *configv1.SnapshotEnvelope) (*RawConfig, error) {
+	env, err := envelopeFromProto(pb)
+	if err != nil {
+		return nil, err
+	}
+	return decodeRawConfig(env)
+}
+
 // ── Checksum ──────────────────────────────────────────────────────────────────
 
 // verifyChecksum computes SHA-256(payload) and compares it byte-for-byte with

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -13,8 +14,9 @@ import (
 // ── PgSnapshotStore ───────────────────────────────────────────────────────────
 
 // PgSnapshotStore is a Postgres-backed SnapshotStore backed by pgx v5.
-// It stores compiled SnapshotEnvelopes in a single table and supports
-// FetchLatest, FetchVersion, and idempotent Store.
+// It stores compiled SnapshotEnvelopes in a single table keyed by
+// (workspace_id, version) and supports FetchLatest, FetchVersion, List,
+// NextVersion, and idempotent Store.
 //
 // Production usage: NewPgSnapshotStore(ctx, pool) creates the table and index
 // using CREATE TABLE / INDEX IF NOT EXISTS, so it is safe to call on startup.
@@ -65,6 +67,7 @@ func (s *PgSnapshotStore) Migrate(ctx context.Context) error {
 
 	ddl := fmt.Sprintf(`
 CREATE TABLE IF NOT EXISTS %s (
+    workspace_id  TEXT        NOT NULL,
     version       BIGINT      NOT NULL,
     format        TEXT        NOT NULL,
     compression   TEXT        NOT NULL,
@@ -75,13 +78,13 @@ CREATE TABLE IF NOT EXISTS %s (
     byte_size     INTEGER     NOT NULL,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_by    TEXT        NOT NULL,
-    PRIMARY KEY (version),
+    PRIMARY KEY (workspace_id, version),
     CHECK (version > 0),
     CHECK (format IN ('proto','yaml','json','msgpack')),
     CHECK (compression IN ('zstd','none')),
     CHECK (compiled_ok OR compile_error IS NOT NULL)
 );
-CREATE INDEX IF NOT EXISTS %s ON %s (version DESC) WHERE compiled_ok = true;`,
+CREATE INDEX IF NOT EXISTS %s ON %s (workspace_id, version DESC) WHERE compiled_ok = true;`,
 		t, idx, t)
 
 	_, err := s.pool.Exec(ctx, ddl)
@@ -91,19 +94,19 @@ CREATE INDEX IF NOT EXISTS %s ON %s (version DESC) WHERE compiled_ok = true;`,
 	return nil
 }
 
-// FetchLatest returns the highest-version compiled envelope whose version is
-// strictly greater than sinceVersion. Returns (nil, nil) when the caller is
-// already up to date or no compiled snapshots exist yet.
-func (s *PgSnapshotStore) FetchLatest(ctx context.Context, sinceVersion uint64) (*SnapshotEnvelope, error) {
+// FetchLatest returns the highest-version compiled envelope for workspaceID
+// whose version is strictly greater than sinceVersion. Returns (nil, nil) when
+// the caller is already up to date or no compiled snapshots exist yet.
+func (s *PgSnapshotStore) FetchLatest(ctx context.Context, workspaceID string, sinceVersion uint64) (*SnapshotEnvelope, error) {
 	t := pgx.Identifier{s.table}.Sanitize()
 	q := fmt.Sprintf(`
 SELECT version, format, compression, payload, checksum
 FROM %s
-WHERE compiled_ok = true AND version > $1
+WHERE workspace_id = $1 AND compiled_ok = true AND version > $2
 ORDER BY version DESC
 LIMIT 1`, t)
 
-	row := s.pool.QueryRow(ctx, q, int64(sinceVersion))
+	row := s.pool.QueryRow(ctx, q, workspaceID, int64(sinceVersion))
 	env, err := scanEnvelope(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -111,16 +114,17 @@ LIMIT 1`, t)
 	return env, err
 }
 
-// FetchVersion returns the compiled envelope for the exact version. Returns
-// ErrSnapshotNotFound if the version does not exist or has compiled_ok = false.
-func (s *PgSnapshotStore) FetchVersion(ctx context.Context, version uint64) (*SnapshotEnvelope, error) {
+// FetchVersion returns the compiled envelope for the exact (workspaceID, version)
+// pair. Returns ErrSnapshotNotFound if the version does not exist or has
+// compiled_ok = false.
+func (s *PgSnapshotStore) FetchVersion(ctx context.Context, workspaceID string, version uint64) (*SnapshotEnvelope, error) {
 	t := pgx.Identifier{s.table}.Sanitize()
 	q := fmt.Sprintf(`
 SELECT version, format, compression, payload, checksum
 FROM %s
-WHERE version = $1 AND compiled_ok = true`, t)
+WHERE workspace_id = $1 AND version = $2 AND compiled_ok = true`, t)
 
-	row := s.pool.QueryRow(ctx, q, int64(version))
+	row := s.pool.QueryRow(ctx, q, workspaceID, int64(version))
 	env, err := scanEnvelope(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("%w: %d", ErrSnapshotNotFound, version)
@@ -128,12 +132,12 @@ WHERE version = $1 AND compiled_ok = true`, t)
 	return env, err
 }
 
-// Store persists env to the backing table. compiledBy identifies the caller
-// for audit purposes. A non-nil compileErr marks the row compiled_ok = false
-// (stored for audit; never returned by Fetch queries).
-// Duplicate version writes are silently ignored (ON CONFLICT DO NOTHING).
+// Store persists env to the backing table under workspaceID. compiledBy
+// identifies the caller for audit purposes. A non-nil compileErr marks the row
+// compiled_ok = false (stored for audit; never returned by Fetch queries).
+// Duplicate (workspaceID, version) writes are silently ignored (ON CONFLICT DO NOTHING).
 // Returns an error for nil envelopes or version == 0.
-func (s *PgSnapshotStore) Store(ctx context.Context, env *SnapshotEnvelope, compiledBy string, compileErr error) error {
+func (s *PgSnapshotStore) Store(ctx context.Context, env *SnapshotEnvelope, workspaceID string, compiledBy string, compileErr error) error {
 	if env == nil {
 		return errors.New("store: nil envelope")
 	}
@@ -143,10 +147,10 @@ func (s *PgSnapshotStore) Store(ctx context.Context, env *SnapshotEnvelope, comp
 
 	t := pgx.Identifier{s.table}.Sanitize()
 	q := fmt.Sprintf(`
-INSERT INTO %s (version, format, compression, payload, checksum,
+INSERT INTO %s (workspace_id, version, format, compression, payload, checksum,
                 compiled_ok, compile_error, byte_size, created_by)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-ON CONFLICT (version) DO NOTHING`, t)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+ON CONFLICT (workspace_id, version) DO NOTHING`, t)
 
 	compiledOK := compileErr == nil
 	var compileErrStr *string
@@ -161,6 +165,7 @@ ON CONFLICT (version) DO NOTHING`, t)
 	}
 
 	_, err := s.pool.Exec(ctx, q,
+		workspaceID,
 		int64(env.Version),
 		string(env.Format),
 		string(env.Compression),
@@ -175,6 +180,90 @@ ON CONFLICT (version) DO NOTHING`, t)
 		return fmt.Errorf("store: insert version %d: %w", env.Version, err)
 	}
 	return nil
+}
+
+// List returns up to limit snapshot metadata entries for workspaceID in
+// descending version order. afterVersion, if > 0, restricts to versions
+// strictly less than afterVersion (cursor-based pagination).
+func (s *PgSnapshotStore) List(ctx context.Context, workspaceID string, limit int, afterVersion uint64) ([]*SnapshotListEntry, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	t := pgx.Identifier{s.table}.Sanitize()
+
+	var (
+		q    string
+		args []any
+	)
+	if afterVersion > 0 {
+		q = fmt.Sprintf(`
+SELECT version, format, compression, payload, checksum,
+       compiled_ok, COALESCE(compile_error,''), created_at, created_by
+FROM %s
+WHERE workspace_id = $1 AND version < $2
+ORDER BY version DESC
+LIMIT $3`, t)
+		args = []any{workspaceID, int64(afterVersion), limit}
+	} else {
+		q = fmt.Sprintf(`
+SELECT version, format, compression, payload, checksum,
+       compiled_ok, COALESCE(compile_error,''), created_at, created_by
+FROM %s
+WHERE workspace_id = $1
+ORDER BY version DESC
+LIMIT $2`, t)
+		args = []any{workspaceID, limit}
+	}
+
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: list: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*SnapshotListEntry
+	for rows.Next() {
+		var (
+			version     int64
+			format      string
+			compression string
+			payload     []byte
+			checksum    []byte
+			compiledOK  bool
+			compileErr  string
+			createdAt   time.Time
+			createdBy   string
+		)
+		if err := rows.Scan(&version, &format, &compression, &payload, &checksum,
+			&compiledOK, &compileErr, &createdAt, &createdBy); err != nil {
+			return nil, fmt.Errorf("store: list scan: %w", err)
+		}
+		out = append(out, &SnapshotListEntry{
+			Envelope: SnapshotEnvelope{
+				Version:     uint64(version),
+				Format:      SnapshotFormat(format),
+				Compression: CompressionKind(compression),
+				Payload:     payload,
+				Checksum:    checksum,
+			},
+			CompiledOK: compiledOK,
+			CompileErr: compileErr,
+			CreatedAt:  createdAt,
+			CreatedBy:  createdBy,
+		})
+	}
+	return out, rows.Err()
+}
+
+// NextVersion returns COALESCE(MAX(version), 0) + 1 for the workspace.
+func (s *PgSnapshotStore) NextVersion(ctx context.Context, workspaceID string) (uint64, error) {
+	t := pgx.Identifier{s.table}.Sanitize()
+	q := fmt.Sprintf(`SELECT COALESCE(MAX(version), 0) + 1 FROM %s WHERE workspace_id = $1`, t)
+	var next int64
+	if err := s.pool.QueryRow(ctx, q, workspaceID).Scan(&next); err != nil {
+		return 0, fmt.Errorf("store: next version: %w", err)
+	}
+	return uint64(next), nil
 }
 
 // scanEnvelope reads one row from a QueryRow result into a SnapshotEnvelope.
