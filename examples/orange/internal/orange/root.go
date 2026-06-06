@@ -64,6 +64,9 @@ Run 'orange repl' (or bare 'orange') for the interactive shell.`,
 	root.AddCommand(newServerCmd())
 	root.AddCommand(newAuthCmd())
 	root.AddCommand(newLocalDataCmd())
+	root.AddCommand(newOrgCmd())
+	root.AddCommand(newProjectCmd())
+	root.AddCommand(newWorkspaceCmd())
 
 	return root
 }
