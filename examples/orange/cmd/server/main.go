@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
@@ -26,6 +27,7 @@ import (
 	secretconnect "github.com/dio/transit/examples/orange/api/orange/secret/admin/v1/adminv1connect"
 	userconnect "github.com/dio/transit/examples/orange/api/orange/user/admin/v1/adminv1connect"
 	workspaceconnect "github.com/dio/transit/examples/orange/api/orange/workspace/admin/v1/adminv1connect"
+	"github.com/dio/transit/examples/orange/internal/adminauth"
 	"github.com/dio/transit/examples/orange/internal/embeddedpg"
 	"github.com/dio/transit/examples/orange/internal/resources"
 	"github.com/dio/transit/examples/orange/internal/secret"
@@ -107,8 +109,14 @@ func run(logger *slog.Logger) error {
 	}
 
 	workspaceSvc := resources.NewWorkspaceService(pool, logger.With("component", "workspace"))
+	if err := workspaceSvc.EnsureSchema(ctx); err != nil {
+		return fmt.Errorf("init workspace schema: %w", err)
+	}
 
 	userSvc := resources.NewUserService(pool, logger.With("component", "user"))
+	if err := userSvc.EnsureSchema(ctx); err != nil {
+		return fmt.Errorf("init user schema: %w", err)
+	}
 
 	keySvc, err := resources.NewKeyService(pool, logger.With("component", "key"))
 	if err != nil {
@@ -130,9 +138,23 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("init profile service: %w", err)
 	}
 
+	// ── Admin auth ────────────────────────────────────────────────────────────
+
+	authStore, err := adminauth.NewStore(ctx, pool)
+	if err != nil {
+		return fmt.Errorf("init admin auth store: %w", err)
+	}
+
+	if err := bootstrap(ctx, pool, authStore, logger); err != nil {
+		return fmt.Errorf("bootstrap: %w", err)
+	}
+
 	// ── HTTP mux ──────────────────────────────────────────────────────────────
 
-	opts := []connect.HandlerOption{connect.WithCodec(vtprotocodec.Codec{})}
+	codecOpt := connect.WithCodec(vtprotocodec.Codec{})
+	authInterceptor := connect.WithInterceptors(adminauth.Interceptor(authStore))
+	opts := []connect.HandlerOption{codecOpt, authInterceptor}
+
 	mux := http.NewServeMux()
 
 	mux.Handle(secretconnect.NewSecretAdminServiceHandler(secretSvc, opts...))
@@ -193,6 +215,81 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	logger.Info("server stopped")
+	return nil
+}
+
+// bootstrap creates the first org + user + admin API key when
+// ORANGE_BOOTSTRAP_ORG and ORANGE_BOOTSTRAP_EMAIL are set and no orgs exist.
+// The generated API key is written once to stderr; it is never stored in plaintext.
+func bootstrap(ctx context.Context, pool *pgxpool.Pool, store *adminauth.Store, logger *slog.Logger) error {
+	org := os.Getenv("ORANGE_BOOTSTRAP_ORG")
+	email := os.Getenv("ORANGE_BOOTSTRAP_EMAIL")
+	if org == "" || email == "" {
+		return nil
+	}
+
+	has, err := adminauth.HasOrgs(ctx, pool)
+	if err != nil {
+		return err
+	}
+	if has {
+		logger.Info("bootstrap: orgs already exist, skipping")
+		return nil
+	}
+
+	logger.Info("bootstrap: creating first org and admin user", "org", org, "email", email)
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	now := time.Now().UTC()
+	orgID := uuid.Must(uuid.NewV7()).String()
+	userID := uuid.Must(uuid.NewV7()).String()
+
+	// Insert org.
+	if _, err = tx.Exec(ctx,
+		`INSERT INTO orgs (org_id, name, created_at, updated_at) VALUES ($1, $2, $3, $3)`,
+		orgID, org, now,
+	); err != nil {
+		return fmt.Errorf("create bootstrap org: %w", err)
+	}
+
+	// Insert user.
+	if _, err = tx.Exec(ctx,
+		`INSERT INTO users (user_id, org_id, email, created_at, updated_at) VALUES ($1, $2, $3, $4, $4)`,
+		userID, orgID, email, now,
+	); err != nil {
+		return fmt.Errorf("create bootstrap user: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	// Issue admin API key outside the transaction (Store uses the pool).
+	plaintext, rec, err := store.Issue(ctx, orgID, userID, []string{"admin"})
+	if err != nil {
+		return fmt.Errorf("issue bootstrap admin key: %w", err)
+	}
+
+	// Print the key once; operator must save it.
+	fmt.Fprintf(os.Stderr, "\n"+
+		"╔══════════════════════════════════════════════════════════╗\n"+
+		"║              ORANGE BOOTSTRAP COMPLETE                  ║\n"+
+		"╠══════════════════════════════════════════════════════════╣\n"+
+		"║  org_id  : %-44s ║\n"+
+		"║  user_id : %-44s ║\n"+
+		"║  key_id  : %-44s ║\n"+
+		"║                                                          ║\n"+
+		"║  ADMIN API KEY (save this — shown only once):           ║\n"+
+		"║  %-56s ║\n"+
+		"╚══════════════════════════════════════════════════════════╝\n\n",
+		orgID, userID, rec.KeyID, plaintext,
+	)
+	logger.Info("bootstrap complete", "org_id", orgID, "user_id", userID, "key_id", rec.KeyID)
 	return nil
 }
 
