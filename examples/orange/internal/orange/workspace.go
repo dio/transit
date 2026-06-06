@@ -3,13 +3,14 @@ package orange
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/proto"
 
-	workspaceconnect "github.com/dio/transit/examples/orange/api/orange/workspace/admin/v1/adminv1connect"
 	workspacev1 "github.com/dio/transit/examples/orange/api/orange/workspace/admin/v1"
+	workspaceconnect "github.com/dio/transit/examples/orange/api/orange/workspace/admin/v1/adminv1connect"
 )
 
 func newWorkspaceCmd() *cobra.Command {
@@ -34,7 +35,10 @@ func newWorkspaceCreateCmd() *cobra.Command {
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if projectID == "" {
-				return fmt.Errorf("--project-id is required")
+				projectID = os.Getenv("ORANGE_PROJ_ID")
+			}
+			if projectID == "" {
+				return fmt.Errorf("--project-id is required (or set ORANGE_PROJ_ID)")
 			}
 			if name == "" {
 				return fmt.Errorf("--name is required")
@@ -52,10 +56,10 @@ func newWorkspaceCreateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return rc.Printer.Proto(resp.Msg.GetWorkspace())
+			return printWorkspaces(rc.Printer, resp.Msg.GetWorkspace())
 		},
 	}
-	cmd.Flags().StringVar(&projectID, "project-id", "", "project ID")
+	cmd.Flags().StringVar(&projectID, "project-id", "", "project ID (env: ORANGE_PROJ_ID)")
 	cmd.Flags().StringVar(&name, "name", "", "workspace name")
 	cmd.Flags().StringVar(&description, "description", "", "workspace description")
 	return cmd
@@ -69,7 +73,10 @@ func newWorkspaceGetCmd() *cobra.Command {
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if workspaceID == "" {
-				return fmt.Errorf("--workspace-id is required")
+				workspaceID = os.Getenv("ORANGE_WS_ID")
+			}
+			if workspaceID == "" {
+				return fmt.Errorf("--workspace-id is required (or set ORANGE_WS_ID)")
 			}
 			rc, err := resolveRunCtx()
 			if err != nil {
@@ -80,10 +87,10 @@ func newWorkspaceGetCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return rc.Printer.Proto(resp.Msg.GetWorkspace())
+			return printWorkspaces(rc.Printer, resp.Msg.GetWorkspace())
 		},
 	}
-	cmd.Flags().StringVar(&workspaceID, "workspace-id", "", "workspace ID")
+	cmd.Flags().StringVar(&workspaceID, "workspace-id", "", "workspace ID (env: ORANGE_WS_ID)")
 	return cmd
 }
 
@@ -96,7 +103,10 @@ func newWorkspaceListCmd() *cobra.Command {
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if projectID == "" {
-				return fmt.Errorf("--project-id is required")
+				projectID = os.Getenv("ORANGE_PROJ_ID")
+			}
+			if projectID == "" {
+				return fmt.Errorf("--project-id is required (or set ORANGE_PROJ_ID)")
 			}
 			rc, err := resolveRunCtx()
 			if err != nil {
@@ -114,14 +124,10 @@ func newWorkspaceListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			items := make([]proto.Message, len(resp.Msg.GetWorkspaces()))
-			for i, w := range resp.Msg.GetWorkspaces() {
-				items[i] = w
-			}
-			return rc.Printer.ProtoList(items)
+			return printWorkspaces(rc.Printer, resp.Msg.GetWorkspaces()...)
 		},
 	}
-	cmd.Flags().StringVar(&projectID, "project-id", "", "project ID")
+	cmd.Flags().StringVar(&projectID, "project-id", "", "project ID (env: ORANGE_PROJ_ID)")
 	cmd.Flags().Int32Var(&limit, "limit", 50, "max results")
 	cmd.Flags().StringVar(&pageToken, "page-token", "", "pagination token")
 	return cmd
@@ -135,7 +141,10 @@ func newWorkspaceUpdateCmd() *cobra.Command {
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if workspaceID == "" {
-				return fmt.Errorf("--workspace-id is required")
+				workspaceID = os.Getenv("ORANGE_WS_ID")
+			}
+			if workspaceID == "" {
+				return fmt.Errorf("--workspace-id is required (or set ORANGE_WS_ID)")
 			}
 			rc, err := resolveRunCtx()
 			if err != nil {
@@ -150,10 +159,10 @@ func newWorkspaceUpdateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return rc.Printer.Proto(resp.Msg.GetWorkspace())
+			return printWorkspaces(rc.Printer, resp.Msg.GetWorkspace())
 		},
 	}
-	cmd.Flags().StringVar(&workspaceID, "workspace-id", "", "workspace ID")
+	cmd.Flags().StringVar(&workspaceID, "workspace-id", "", "workspace ID (env: ORANGE_WS_ID)")
 	cmd.Flags().StringVar(&description, "description", "", "new description")
 	return cmd
 }
@@ -166,7 +175,10 @@ func newWorkspaceDeleteCmd() *cobra.Command {
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if workspaceID == "" {
-				return fmt.Errorf("--workspace-id is required")
+				workspaceID = os.Getenv("ORANGE_WS_ID")
+			}
+			if workspaceID == "" {
+				return fmt.Errorf("--workspace-id is required (or set ORANGE_WS_ID)")
 			}
 			rc, err := resolveRunCtx()
 			if err != nil {
@@ -181,6 +193,29 @@ func newWorkspaceDeleteCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&workspaceID, "workspace-id", "", "workspace ID")
+	cmd.Flags().StringVar(&workspaceID, "workspace-id", "", "workspace ID (env: ORANGE_WS_ID)")
 	return cmd
+}
+
+func printWorkspaces(p *Printer, workspaces ...*workspacev1.Workspace) error {
+	switch p.Format {
+	case FormatJSON, FormatYAML:
+		msgs := make([]proto.Message, len(workspaces))
+		for i, w := range workspaces {
+			msgs[i] = w
+		}
+		if len(msgs) == 1 {
+			return p.Proto(msgs[0])
+		}
+		return p.ProtoList(msgs)
+	default:
+		rows := make([]string, len(workspaces))
+		for i, w := range workspaces {
+			rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s\t%s",
+				w.GetName(), w.GetWorkspaceId(), w.GetProjectId(),
+				clip(w.Description, 40), age(w.GetCreatedAt()))
+		}
+		p.Table("NAME\tID\tPROJECT-ID\tDESCRIPTION\tAGE", rows)
+		return nil
+	}
 }
