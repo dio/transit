@@ -1,0 +1,11 @@
+llm:
+  providers:
+    anthropic:
+      kind: anthropic
+      endpoint: https://api.anthropic.com
+      auth:
+        type: anthropic
+        secret_ref: env://ANTHROPIC_API_KEY
+  models:
+    claude-3-5-sonnet:
+      provider: anthropic

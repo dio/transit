@@ -64,62 +64,68 @@ The server listens on `:8080` by default. Change the port with `--port`.
 
 ## 5. Core admin operations
 
+All management plane operations live under `orange admin`.
+Aliases work at every level: `org`=`organization`, `proj`=`project`, `ws`=`workspace`, `sec`=`secret`.
+
 ### A1 — Create org, project, and workspace
 
 The bootstrap already created the `acme` org. Retrieve it:
 
 ```bash
-orange org list
+orange admin org list
 ```
 
-Create a project:
+Create a project (set `ORANGE_ORG_ID` once to avoid repeating the flag):
 
 ```bash
-orange project create --org-id <org_id> --name platform
+export ORANGE_ORG_ID=<org_id>
+orange admin project create --name platform
 ```
 
 Create a workspace:
 
 ```bash
-orange workspace create --project-id <project_id> --name production
+export ORANGE_PROJ_ID=<project_id>
+orange admin workspace create --name production
 ```
 
 ### A2 — Create users
 
 ```bash
-orange user create --org-id <org_id> --email alice@acme.com
-orange user create --org-id <org_id> --email bob@acme.com
+orange admin user create --email alice@acme.com
+orange admin user create --email bob@acme.com
 ```
 
 ### A5 — Add workspace members
 
 ```bash
-orange member add --workspace-id <workspace_id> --user-id <alice_user_id>
-orange member add --workspace-id <workspace_id> --user-id <bob_user_id>
+export ORANGE_WS_ID=<workspace_id>
+orange admin member add --user-id <alice_user_id>
+orange admin member add --user-id <bob_user_id>
 ```
 
 ### A6 — Remove a workspace member
 
 ```bash
-orange member remove --workspace-id <workspace_id> --user-id <bob_user_id>
+orange admin member remove --user-id <bob_user_id>
 ```
 
 ### Inspect resources
 
 ```bash
-orange org        get  --org-id        <id>
-orange project    get  --project-id    <id>
-orange workspace  get  --workspace-id  <id>
-orange user       get  --user-id       <id>
+orange admin org        get  --org-id        <id>
+orange admin project    get  --project-id    <id>
+orange admin workspace  get  --workspace-id  <id>
+orange admin user       get  --user-id       <id>
 
-orange org       list
-orange project   list  --org-id      <id>
-orange workspace list  --project-id  <id>
-orange user      list  --org-id      <id>
-orange member    list  --workspace-id <id>
+orange admin org       list
+orange admin project   list
+orange admin workspace list
+orange admin user      list
+orange admin member    list
 ```
 
-All output is JSON by default. Pass `--output yaml` for YAML.
+All output is table format by default. Pass `-o json` or `-o yaml` for structured output.
 
 ## 6. Inspect local data with psql
 
