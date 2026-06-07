@@ -36,7 +36,6 @@ CREATE TABLE IF NOT EXISTS secret_keys (
 CREATE INDEX IF NOT EXISTS idx_secret_keys_prefix_state ON secret_keys (id, state, version DESC);
 
 CREATE TABLE IF NOT EXISTS secret_versions (
-	workspace_id TEXT    NOT NULL,
 	realm        TEXT    NOT NULL,
 	name         TEXT    NOT NULL,
 	version_id   TEXT    NOT NULL,
@@ -216,9 +215,9 @@ func (s *PGSecretStore) PutSecret(ctx context.Context, secret *Secret) error {
 
 	query := `
 INSERT INTO secret_versions
-(workspace_id, realm, name, version_id, dek_id, dek_version, ciphertext, checksum, state,
+(realm, name, version_id, dek_id, dek_version, ciphertext, checksum, state,
  created_at, created_by, enabled_at, enabled_by, disabled_at, disabled_by, retired_at, retired_by, shredded_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 ON CONFLICT (realm, name, version_id) DO UPDATE
 SET ciphertext = EXCLUDED.ciphertext, checksum = EXCLUDED.checksum, state = EXCLUDED.state,
 	enabled_at = EXCLUDED.enabled_at, enabled_by = EXCLUDED.enabled_by,
@@ -227,7 +226,7 @@ SET ciphertext = EXCLUDED.ciphertext, checksum = EXCLUDED.checksum, state = EXCL
 	shredded_at = EXCLUDED.shredded_at
 `
 	_, err := s.pool.Exec(ctx, query,
-		secret.WorkspaceID, secret.Realm, secret.Name, secret.VersionID,
+		secret.Realm, secret.Name, secret.VersionID,
 		secret.DEKID, secret.DEKVersion, secret.Ciphertext, secret.Checksum, secret.State,
 		secret.CreatedAt, secret.CreatedBy,
 		secret.EnabledAt, secret.EnabledBy,
@@ -248,7 +247,7 @@ func (s *PGSecretStore) GetLatestEnabledSecret(ctx context.Context, realm, name 
 	}
 
 	query := `
-SELECT workspace_id, realm, name, version_id, dek_id, dek_version, ciphertext, checksum, state,
+SELECT realm, name, version_id, dek_id, dek_version, ciphertext, checksum, state,
        created_at, created_by, enabled_at, enabled_by, disabled_at, disabled_by, retired_at, retired_by, shredded_at
 FROM secret_versions
 WHERE realm = $1 AND name = $2 AND state = $3
@@ -266,7 +265,7 @@ func (s *PGSecretStore) GetSecretVersion(ctx context.Context, realm, name, versi
 	}
 
 	query := `
-SELECT workspace_id, realm, name, version_id, dek_id, dek_version, ciphertext, checksum, state,
+SELECT realm, name, version_id, dek_id, dek_version, ciphertext, checksum, state,
        created_at, created_by, enabled_at, enabled_by, disabled_at, disabled_by, retired_at, retired_by, shredded_at
 FROM secret_versions
 WHERE realm = $1 AND name = $2 AND version_id = $3
@@ -283,7 +282,7 @@ func (s *PGSecretStore) ListSecretVersions(ctx context.Context, realm, name stri
 	}
 
 	query := `
-SELECT workspace_id, realm, name, version_id, dek_id, dek_version, ciphertext, checksum, state,
+SELECT realm, name, version_id, dek_id, dek_version, ciphertext, checksum, state,
        created_at, created_by, enabled_at, enabled_by, disabled_at, disabled_by, retired_at, retired_by, shredded_at
 FROM secret_versions
 WHERE realm = $1 AND name = $2
@@ -316,13 +315,15 @@ func (s *PGSecretStore) ListSecrets(ctx context.Context, realm string) ([]Secret
 		return nil, err
 	}
 
+	// realm is used as a prefix filter: empty = all; non-empty = realm LIKE '<realm>%'
+	// This lets callers pass "org/<uuid>/" to list all secrets under an org.
 	query := `
-SELECT DISTINCT workspace_id, realm, name
+SELECT DISTINCT realm, name
 FROM secret_versions
-WHERE $1 = '' OR realm = $2
+WHERE $1 = '' OR realm LIKE $2
 ORDER BY realm, name
 `
-	rows, err := s.pool.Query(ctx, query, realm, realm)
+	rows, err := s.pool.Query(ctx, query, realm, realm+"%")
 	if err != nil {
 		return nil, fmt.Errorf("pg: list secrets: %w", err)
 	}
@@ -331,7 +332,7 @@ ORDER BY realm, name
 	var secrets []SecretID
 	for rows.Next() {
 		var id SecretID
-		if err := rows.Scan(&id.WorkspaceID, &id.Realm, &id.Name); err != nil {
+		if err := rows.Scan(&id.Realm, &id.Name); err != nil {
 			return nil, fmt.Errorf("pg: scan secret id: %w", err)
 		}
 		secrets = append(secrets, id)
@@ -365,7 +366,7 @@ func (s *PGSecretStore) scanKeyFromRows(rows pgx.Rows) (*Key, error) {
 
 func (s *PGSecretStore) scanSecret(row pgx.Row) (*Secret, error) {
 	var sv Secret
-	if err := row.Scan(&sv.WorkspaceID, &sv.Realm, &sv.Name, &sv.VersionID,
+	if err := row.Scan(&sv.Realm, &sv.Name, &sv.VersionID,
 		&sv.DEKID, &sv.DEKVersion, &sv.Ciphertext, &sv.Checksum, &sv.State,
 		&sv.CreatedAt, &sv.CreatedBy,
 		&sv.EnabledAt, &sv.EnabledBy,
@@ -382,7 +383,7 @@ func (s *PGSecretStore) scanSecret(row pgx.Row) (*Secret, error) {
 
 func (s *PGSecretStore) scanSecretFromRows(rows pgx.Rows) (*Secret, error) {
 	var sv Secret
-	if err := rows.Scan(&sv.WorkspaceID, &sv.Realm, &sv.Name, &sv.VersionID,
+	if err := rows.Scan(&sv.Realm, &sv.Name, &sv.VersionID,
 		&sv.DEKID, &sv.DEKVersion, &sv.Ciphertext, &sv.Checksum, &sv.State,
 		&sv.CreatedAt, &sv.CreatedBy,
 		&sv.EnabledAt, &sv.EnabledBy,

@@ -19,14 +19,14 @@
 // # SERVICE_KEK modes
 //
 // The default mode is KEKModePooled. A small pool of SERVICE_KEKs is shared
-// across all (workspace_id, realm) boundaries so that MASTER_KEK is only
-// accessed once — when the pool is first populated — and never again at
-// runtime. Set Config.PoolSize to have the pool auto-provisioned on the first
-// CreateVersion call.
+// across all realm boundaries so that MASTER_KEK is only accessed once —
+// when the pool is first populated — and never again at runtime. Set
+// Config.PoolSize to have the pool auto-provisioned on the first CreateVersion
+// call.
 //
-// KEKModePerBoundary provisions a dedicated SERVICE_KEK per (workspace_id,
-// realm) pair. Stronger isolation; requires MASTER_KEK access for every new
-// boundary.
+// KEKModePerBoundary provisions a dedicated SERVICE_KEK per canonical realm
+// ("org/<uuid>/purpose", "proj/<uuid>/purpose", "ws/<uuid>/purpose"). Stronger
+// isolation; requires MASTER_KEK access for every new boundary.
 package secret
 
 import (
@@ -38,7 +38,6 @@ import (
 	"io"
 	"log/slog"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -118,10 +117,15 @@ func New(_ context.Context, cfg Config) (*Service, error) {
 	}, nil
 }
 
-// ResolveSecret decrypts and returns the latest-enabled plaintext for secretID
-// in realm. Used by SecretResolverService to lazily populate its cache on a miss.
-func (s *Service) ResolveSecret(ctx context.Context, workspaceID, realm, secretID string) (material []byte, versionID, checksum string, err error) {
-	sv, err := s.st.GetLatestEnabledSecret(ctx, storeRealm(workspaceID, realm), secretID)
+// ResolveSecret decrypts the latest-enabled secret version. realm must be a
+// canonical realm string ("org/<uuid>/…", "proj/<uuid>/…", or "ws/<uuid>/…").
+// wsID/projID/orgID are the egress ancestry — the realm must fall under one of
+// those levels or the call is rejected with a permission error.
+func (s *Service) ResolveSecret(ctx context.Context, realm, secretID, wsID, projID, orgID string) (material []byte, versionID, checksum string, err error) {
+	if !RealmInAncestry(realm, wsID, projID, orgID) {
+		return nil, "", "", fmt.Errorf("realm %q is not accessible from egress ancestry (ws=%s proj=%s org=%s)", realm, wsID, projID, orgID)
+	}
+	sv, err := s.st.GetLatestEnabledSecret(ctx, realm, secretID)
 	if err != nil {
 		return nil, "", "", err
 	}
@@ -146,11 +150,13 @@ func (s *Service) ResolveSecret(ctx context.Context, workspaceID, realm, secretI
 
 func (s *Service) CreateServiceKEK(ctx context.Context, req *connect.Request[adminv1.CreateServiceKEKRequest]) (*connect.Response[adminv1.CreateServiceKEKResponse], error) {
 	r := req.Msg
-	isPool := r.WorkspaceId == "" && r.Realm == ""
-	isBoundary := r.WorkspaceId != "" && r.Realm != ""
-	if !isPool && !isBoundary {
-		return nil, connect.NewError(connect.CodeInvalidArgument,
-			fmt.Errorf("provide both workspace_id+realm for a boundary key, or neither for a pool key"))
+	// Empty realm = new pool member. Non-empty realm = per-boundary KEK; realm
+	// must be canonical ("org/<uuid>/…", "proj/<uuid>/…", "ws/<uuid>/…").
+	isPool := r.Realm == ""
+	if !isPool {
+		if _, _, _, err := ParseRealm(r.Realm); err != nil {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
 	}
 
 	var kekID string
@@ -160,7 +166,7 @@ func (s *Service) CreateServiceKEK(ctx context.Context, req *connect.Request[adm
 	if isPool {
 		kekID, entry, err = s.createPoolMember(ctx)
 	} else {
-		kekID, entry, err = s.getOrCreateServiceKEK(ctx, r.WorkspaceId, r.Realm)
+		kekID, entry, err = s.getOrCreateServiceKEK(ctx, r.Realm)
 	}
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
@@ -173,11 +179,11 @@ func (s *Service) CreateServiceKEK(ctx context.Context, req *connect.Request[adm
 
 func (s *Service) RotateServiceKEK(ctx context.Context, req *connect.Request[adminv1.RotateServiceKEKRequest]) (*connect.Response[adminv1.RotateServiceKEKResponse], error) {
 	r := req.Msg
-	isPool := r.WorkspaceId == "" && r.Realm == ""
-	isBoundary := r.WorkspaceId != "" && r.Realm != ""
-	if !isPool && !isBoundary {
-		return nil, connect.NewError(connect.CodeInvalidArgument,
-			fmt.Errorf("provide both workspace_id+realm for a boundary key, or neither for pool rotation"))
+	isPool := r.Realm == ""
+	if !isPool {
+		if _, _, _, err := ParseRealm(r.Realm); err != nil {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
 	}
 
 	var targets []*store.Key
@@ -188,7 +194,7 @@ func (s *Service) RotateServiceKEK(ctx context.Context, req *connect.Request[adm
 		}
 		targets = members
 	} else {
-		kekID := svcKEKID(r.WorkspaceId, r.Realm)
+		kekID := svcKEKID(r.Realm)
 		versions, err := s.st.ListKeyVersions(ctx, kekID)
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("list SERVICE_KEK versions: %w", err))
@@ -202,7 +208,7 @@ func (s *Service) RotateServiceKEK(ctx context.Context, req *connect.Request[adm
 		}
 		if latest == nil {
 			return nil, connect.NewError(connect.CodeNotFound,
-				fmt.Errorf("no active SERVICE_KEK for workspace=%q realm=%q", r.WorkspaceId, r.Realm))
+				fmt.Errorf("no active SERVICE_KEK for realm=%q", r.Realm))
 		}
 		targets = []*store.Key{latest}
 	}
@@ -270,20 +276,22 @@ func (s *Service) RotateServiceKEK(ctx context.Context, req *connect.Request[adm
 
 func (s *Service) CreateVersion(ctx context.Context, req *connect.Request[adminv1.CreateVersionRequest]) (*connect.Response[adminv1.CreateVersionResponse], error) {
 	r := req.Msg
-	if r.WorkspaceId == "" || r.Realm == "" || r.SecretId == "" || len(r.Material) == 0 {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("workspace_id, realm, secret_id, and material are required"))
+	if r.Realm == "" || r.SecretId == "" || len(r.Material) == 0 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("realm, secret_id, and material are required"))
+	}
+	if _, _, _, err := ParseRealm(r.Realm); err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 
-	dekID, dekVer, rawDEK, err := s.createDEK(ctx, r.WorkspaceId, r.Realm)
+	dekID, dekVer, rawDEK, err := s.createDEK(ctx, r.Realm)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	defer crypto.Zeroize(rawDEK)
 
-	sr := storeRealm(r.WorkspaceId, r.Realm)
 	versionID := newUUID7()
 	checksum := crypto.SHA256Hex(r.Material)
-	aad := crypto.SecretAAD(sr, r.SecretId, versionID, dekID, strconv.Itoa(dekVer))
+	aad := crypto.SecretAAD(r.Realm, r.SecretId, versionID, dekID, strconv.Itoa(dekVer))
 	blob, err := s.encryptor.Seal(crypto.ContextData, rawDEK, r.Material, aad)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("seal material: %w", err))
@@ -292,17 +300,16 @@ func (s *Service) CreateVersion(ctx context.Context, req *connect.Request[adminv
 	now := time.Now()
 	caller := callerIdentity(ctx)
 	sv := &store.Secret{
-		WorkspaceID: r.WorkspaceId,
-		Realm:       sr,
-		Name:        r.SecretId,
-		VersionID:   versionID,
-		DEKID:       dekID,
-		DEKVersion:  dekVer,
-		Ciphertext:  blobToBase64(blob),
-		Checksum:    checksum,
-		State:       store.VersionStateDisabled,
-		CreatedAt:   now,
-		CreatedBy:   caller,
+		Realm:      r.Realm,
+		Name:       r.SecretId,
+		VersionID:  versionID,
+		DEKID:      dekID,
+		DEKVersion: dekVer,
+		Ciphertext: blobToBase64(blob),
+		Checksum:   checksum,
+		State:      store.VersionStateDisabled,
+		CreatedAt:  now,
+		CreatedBy:  caller,
 	}
 	if r.Enable {
 		sv.State = store.VersionStateEnabled
@@ -318,8 +325,7 @@ func (s *Service) CreateVersion(ctx context.Context, req *connect.Request[adminv
 
 func (s *Service) EnableVersion(ctx context.Context, req *connect.Request[adminv1.EnableVersionRequest]) (*connect.Response[adminv1.EnableVersionResponse], error) {
 	r := req.Msg
-	sr := storeRealm(r.WorkspaceId, r.Realm)
-	sv, err := s.st.GetSecretVersion(ctx, sr, r.SecretId, r.VersionId)
+	sv, err := s.st.GetSecretVersion(ctx, r.Realm, r.SecretId, r.VersionId)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, err)
 	}
@@ -340,8 +346,7 @@ func (s *Service) EnableVersion(ctx context.Context, req *connect.Request[adminv
 
 func (s *Service) DisableVersion(ctx context.Context, req *connect.Request[adminv1.DisableVersionRequest]) (*connect.Response[adminv1.DisableVersionResponse], error) {
 	r := req.Msg
-	sr := storeRealm(r.WorkspaceId, r.Realm)
-	sv, err := s.st.GetSecretVersion(ctx, sr, r.SecretId, r.VersionId)
+	sv, err := s.st.GetSecretVersion(ctx, r.Realm, r.SecretId, r.VersionId)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, err)
 	}
@@ -362,8 +367,7 @@ func (s *Service) DisableVersion(ctx context.Context, req *connect.Request[admin
 
 func (s *Service) RetireVersion(ctx context.Context, req *connect.Request[adminv1.RetireVersionRequest]) (*connect.Response[adminv1.RetireVersionResponse], error) {
 	r := req.Msg
-	sr := storeRealm(r.WorkspaceId, r.Realm)
-	sv, err := s.st.GetSecretVersion(ctx, sr, r.SecretId, r.VersionId)
+	sv, err := s.st.GetSecretVersion(ctx, r.Realm, r.SecretId, r.VersionId)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, err)
 	}
@@ -388,7 +392,7 @@ func (s *Service) RetireVersion(ctx context.Context, req *connect.Request[adminv
 
 func (s *Service) ResolveVersion(ctx context.Context, req *connect.Request[adminv1.ResolveVersionRequest]) (*connect.Response[adminv1.ResolveVersionResponse], error) {
 	r := req.Msg
-	sv, err := s.st.GetLatestEnabledSecret(ctx, storeRealm(r.WorkspaceId, r.Realm), r.SecretId)
+	sv, err := s.st.GetLatestEnabledSecret(ctx, r.Realm, r.SecretId)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, err)
 	}
@@ -414,7 +418,7 @@ func (s *Service) ResolveVersion(ctx context.Context, req *connect.Request[admin
 
 func (s *Service) ListVersions(ctx context.Context, req *connect.Request[adminv1.ListVersionsRequest]) (*connect.Response[adminv1.ListVersionsResponse], error) {
 	r := req.Msg
-	versions, err := s.st.ListSecretVersions(ctx, storeRealm(r.WorkspaceId, r.Realm), r.SecretId)
+	versions, err := s.st.ListSecretVersions(ctx, r.Realm, r.SecretId)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
@@ -427,24 +431,17 @@ func (s *Service) ListVersions(ctx context.Context, req *connect.Request[adminv1
 
 func (s *Service) ListSecrets(ctx context.Context, req *connect.Request[adminv1.ListSecretsRequest]) (*connect.Response[adminv1.ListSecretsResponse], error) {
 	r := req.Msg
-	var realmFilter string
-	if r.Realm != "" {
-		realmFilter = storeRealm(r.WorkspaceId, r.Realm)
-	}
-	ids, err := s.st.ListSecrets(ctx, realmFilter)
+	// r.Realm is used as a prefix filter. Empty = list all; a canonical realm
+	// prefix like "org/<uuid>/" lists secrets across that scope.
+	ids, err := s.st.ListSecrets(ctx, r.Realm)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	wsPrefix := r.WorkspaceId + "/"
 	summaries := make([]*adminv1.SecretSummary, 0, len(ids))
 	for _, id := range ids {
-		if r.Realm == "" && !strings.HasPrefix(id.Realm, wsPrefix) {
-			continue
-		}
 		summaries = append(summaries, &adminv1.SecretSummary{
-			WorkspaceId: r.WorkspaceId,
-			Realm:       extractUserRealm(r.WorkspaceId, id.Realm),
-			SecretId:    id.Name,
+			Realm:    id.Realm,
+			SecretId: id.Name,
 		})
 	}
 	return connect.NewResponse(&adminv1.ListSecretsResponse{Secrets: summaries}), nil
@@ -452,8 +449,8 @@ func (s *Service) ListSecrets(ctx context.Context, req *connect.Request[adminv1.
 
 // --- internal helpers ---
 
-func (s *Service) getOrCreateServiceKEK(ctx context.Context, workspaceID, realm string) (string, *svcKEKEntry, error) {
-	kekID := svcKEKID(workspaceID, realm)
+func (s *Service) getOrCreateServiceKEK(ctx context.Context, realm string) (string, *svcKEKEntry, error) {
+	kekID := svcKEKID(realm)
 
 	load := func() (*svcKEKEntry, error) {
 		versions, err := s.st.ListKeyVersions(ctx, kekID)
@@ -476,7 +473,7 @@ func (s *Service) getOrCreateServiceKEK(ctx context.Context, workspaceID, realm 
 	if err != nil {
 		return "", nil, err
 	}
-	e, err := s.generateServiceKEK(ctx, kekID, workspaceID, realm, len(versions)+1)
+	e, err := s.generateServiceKEK(ctx, kekID, realm, len(versions)+1)
 	if err != nil && !errors.Is(err, store.ErrKeyExists) {
 		return "", nil, err
 	}
@@ -525,7 +522,7 @@ func (s *Service) createPoolMember(ctx context.Context) (string, *svcKEKEntry, e
 		return "", nil, fmt.Errorf("allocate pool seq: %w", err)
 	}
 	id := poolMemberID(seq)
-	e, err := s.generateServiceKEK(ctx, id, "system", "pool", 1)
+	e, err := s.generateServiceKEK(ctx, id, systemRealm, 1)
 	if err != nil {
 		return "", nil, err
 	}
@@ -535,7 +532,9 @@ func (s *Service) createPoolMember(ctx context.Context) (string, *svcKEKEntry, e
 
 func poolMemberID(n int) string { return poolMemberPrefix + strconv.Itoa(n) }
 
-func svcKEKID(workspaceID, realm string) string { return "svc-kek-" + workspaceID + "/" + realm }
+// svcKEKID returns the stable identifier for a per-boundary SERVICE_KEK.
+// realm is the canonical realm string ("org/<uuid>/api-keys", etc.).
+func svcKEKID(realm string) string { return "svc-kek-" + realm }
 
 func randIntn(n int) int {
 	if n <= 1 {
@@ -590,7 +589,7 @@ func (s *Service) getServiceKEKVersion(ctx context.Context, kekID string, versio
 	return s.decryptServiceKEKRecord(ctx, k)
 }
 
-func (s *Service) generateServiceKEK(ctx context.Context, kekID, workspaceID, realm string, version int) (*svcKEKEntry, error) {
+func (s *Service) generateServiceKEK(ctx context.Context, kekID, realm string, version int) (*svcKEKEntry, error) {
 	rawKEK := make([]byte, 32)
 	if _, err := io.ReadFull(rand.Reader, rawKEK); err != nil {
 		return nil, fmt.Errorf("rand SERVICE_KEK: %w", err)
@@ -627,7 +626,6 @@ func (s *Service) generateServiceKEK(ctx context.Context, kekID, workspaceID, re
 
 	s.log.Info("secretstore: created SERVICE_KEK",
 		"kek_id", kekID,
-		"workspace_id", workspaceID,
 		"realm", realm,
 		"version", version,
 	)
@@ -649,7 +647,7 @@ func (s *Service) decryptServiceKEKRecord(ctx context.Context, k *store.Key) ([]
 	return s.encryptor.Open(crypto.ContextWrap, masterKey, blob, aad)
 }
 
-func (s *Service) createDEK(ctx context.Context, workspaceID, realm string) (dekID string, dekVersion int, rawDEK []byte, err error) {
+func (s *Service) createDEK(ctx context.Context, realm string) (dekID string, dekVersion int, rawDEK []byte, err error) {
 	rawDEK = make([]byte, 32)
 	if _, err = io.ReadFull(rand.Reader, rawDEK); err != nil {
 		return "", 0, nil, fmt.Errorf("rand DEK: %w", err)
@@ -661,7 +659,7 @@ func (s *Service) createDEK(ctx context.Context, workspaceID, realm string) (dek
 	case KEKModePooled:
 		kekID, entry, err = s.selectPoolKEK(ctx)
 	default:
-		kekID, entry, err = s.getOrCreateServiceKEK(ctx, workspaceID, realm)
+		kekID, entry, err = s.getOrCreateServiceKEK(ctx, realm)
 	}
 	if err != nil {
 		crypto.Zeroize(rawDEK)
@@ -672,10 +670,9 @@ func (s *Service) createDEK(ctx context.Context, workspaceID, realm string) (dek
 	copy(svcKey, entry.raw)
 	defer crypto.Zeroize(svcKey)
 
-	sr := storeRealm(workspaceID, realm)
 	dekID = "dek-" + newUUID7()
 	dekVersion = 1
-	aad := crypto.DEKWrapAAD(sr, dekID, strconv.Itoa(dekVersion), kekID, strconv.Itoa(entry.version))
+	aad := crypto.DEKWrapAAD(realm, dekID, strconv.Itoa(dekVersion), kekID, strconv.Itoa(entry.version))
 	blob, err := s.encryptor.Seal(crypto.ContextWrap, svcKey, rawDEK, aad)
 	if err != nil {
 		crypto.Zeroize(rawDEK)
@@ -686,7 +683,7 @@ func (s *Service) createDEK(ctx context.Context, workspaceID, realm string) (dek
 		ID:              dekID,
 		Version:         dekVersion,
 		Purpose:         store.PurposeDEK,
-		Realm:           sr,
+		Realm:           realm,
 		State:           store.KeyStateActive,
 		ParentID:        kekID,
 		ParentVersion:   entry.version,
@@ -724,10 +721,9 @@ func (s *Service) unwrapDEK(ctx context.Context, dekID string, dekVersion int) (
 
 func toProto(sv *store.Secret, material []byte) *adminv1.SecretVersion {
 	p := &adminv1.SecretVersion{
-		WorkspaceId: sv.WorkspaceID,
-		VersionId:   sv.VersionID,
-		Realm:       extractUserRealm(sv.WorkspaceID, sv.Realm),
-		SecretId:    sv.Name,
+		VersionId: sv.VersionID,
+		Realm:     sv.Realm,
+		SecretId:  sv.Name,
 		Checksum:    sv.Checksum,
 		State:       stateToProto(sv.State),
 		CreatedAt:   timestamppb.New(sv.CreatedAt),
@@ -765,16 +761,6 @@ func stateToProto(s store.VersionState) adminv1.VersionState {
 	default:
 		return adminv1.VersionState_VERSION_STATE_UNSPECIFIED
 	}
-}
-
-func storeRealm(workspaceID, userRealm string) string { return workspaceID + "/" + userRealm }
-
-func extractUserRealm(workspaceID, sr string) string {
-	prefix := workspaceID + "/"
-	if len(sr) > len(prefix) && sr[:len(prefix)] == prefix {
-		return sr[len(prefix):]
-	}
-	return sr
 }
 
 func callerIdentity(_ context.Context) string { return "system" }

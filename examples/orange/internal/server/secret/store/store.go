@@ -63,9 +63,8 @@ const (
 
 // Secret is the at-rest record for one encrypted version of a secret.
 type Secret struct {
-	WorkspaceID string
-	Realm       string // internal: workspaceID + "/" + user-facing realm
-	Name        string
+	Realm string // canonical: "org/<uuid>/<purpose>", "proj/<uuid>/<purpose>", or "ws/<uuid>/<purpose>"
+	Name  string
 	VersionID   string // UUID7
 
 	DEKID      string
@@ -90,9 +89,8 @@ type Secret struct {
 
 // SecretID is a lightweight identity tuple used by ListSecrets.
 type SecretID struct {
-	WorkspaceID string
-	Realm       string
-	Name        string
+	Realm string
+	Name  string
 }
 
 // SecretStore is the persistence interface for the secret management plane.

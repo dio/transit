@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -12,22 +14,38 @@ import (
 
 	secretv1 "github.com/dio/transit/examples/orange/api/orange/secret/admin/v1"
 	secretconnect "github.com/dio/transit/examples/orange/api/orange/secret/admin/v1/adminv1connect"
+	"github.com/dio/transit/examples/orange/internal/server/secret"
 )
 
-// parseSecretName splits "realm/secret-id" into (realm, secretID).
-// If no slash is present, realm defaults to "default".
-func parseSecretName(name string) (realm, secretID string) {
-	if i := strings.IndexByte(name, '/'); i >= 0 {
-		return name[:i], name[i+1:]
+// readSecretValue reads the secret material from --value or stdin.
+// If value is "-" or empty and stdin is not a terminal, reads from stdin.
+func readSecretValue(value string) ([]byte, error) {
+	if value != "" && value != "-" {
+		return []byte(value), nil
 	}
-	return "default", name
+	stat, _ := os.Stdin.Stat()
+	isPipe := (stat.Mode() & os.ModeCharDevice) == 0
+	if value == "-" || isPipe {
+		b, err := io.ReadAll(bufio.NewReader(os.Stdin))
+		if err != nil {
+			return nil, fmt.Errorf("read stdin: %w", err)
+		}
+		return []byte(strings.TrimRight(string(b), "\r\n")), nil
+	}
+	return nil, fmt.Errorf("--value is required (or pass '-' to read from stdin)")
 }
 
 func newSecretCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "secret",
 		Aliases: []string{"sec"},
-		Short:   "Manage secrets in a workspace",
+		Short:   "Manage secrets",
+		Long: `Manage secrets at org, project, or workspace level.
+
+Realm format: <level>/<id>/<purpose>
+  org/<org-uuid>/api-keys       visible to all egresses under the org
+  proj/<proj-uuid>/api-keys     visible to all egresses under the project
+  ws/<ws-uuid>/runtime-keys     visible only to egresses in that workspace`,
 	}
 	cmd.AddCommand(newSecretListCmd())
 	cmd.AddCommand(newSecretSetCmd())
@@ -41,26 +59,25 @@ func newSecretCmd() *cobra.Command {
 }
 
 func newSecretListCmd() *cobra.Command {
-	var workspaceID, realm string
+	var realm string
 	cmd := &cobra.Command{
-		Use:          "list",
-		Short:        "List secrets in a workspace",
+		Use:   "list",
+		Short: "List secrets (by realm prefix)",
+		Long: `List secrets filtered by a realm prefix.
+
+Examples:
+  orange admin secret list --realm=org/<uuid>/       # all org-level secrets
+  orange admin secret list --realm=proj/<uuid>/api-keys
+  orange admin secret list                           # all secrets (org-admin only)`,
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if workspaceID == "" {
-				workspaceID = os.Getenv("ORANGE_WS_ID")
-			}
-			if workspaceID == "" {
-				return fmt.Errorf("--workspace-id is required (or set ORANGE_WS_ID)")
-			}
 			rc, err := resolveRunCtx()
 			if err != nil {
 				return err
 			}
 			client := secretconnect.NewSecretAdminServiceClient(rc.HTTPClient, rc.ServerURL, rc.ConnectOpts...)
 			resp, err := client.ListSecrets(context.Background(), connect.NewRequest(&secretv1.ListSecretsRequest{
-				WorkspaceId: workspaceID,
-				Realm:       realm,
+				Realm: realm,
 			}))
 			if err != nil {
 				return err
@@ -68,43 +85,50 @@ func newSecretListCmd() *cobra.Command {
 			return printSecretSummaries(rc.Printer, resp.Msg.GetSecrets()...)
 		},
 	}
-	cmd.Flags().StringVar(&workspaceID, "workspace-id", "", "workspace ID (env: ORANGE_WS_ID)")
-	cmd.Flags().StringVar(&realm, "realm", "", "filter by realm (omit for all realms)")
+	cmd.Flags().StringVar(&realm, "realm", "", "realm prefix filter (e.g. org/<uuid>/ or proj/<uuid>/api-keys)")
 	return cmd
 }
 
 func newSecretSetCmd() *cobra.Command {
-	var workspaceID, name, value string
+	var realm, name, value string
 	var enable bool
 	cmd := &cobra.Command{
-		Use:          "set",
-		Short:        "Create a new secret version (--name realm/secret-id)",
+		Use:   "set",
+		Short: "Create a new secret version",
+		Long: `Create a new secret version under the given realm.
+
+Examples:
+  orange admin secret set --realm=org/<uuid>/api-keys --name=anthropic --value=sk-ant-...
+  orange admin secret set --realm=ws/<uuid>/certs    --name=server-tls --value=- --enable
+  echo "sk-ant-..." | orange admin secret set --realm=org/<uuid>/api-keys --name=anthropic`,
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if workspaceID == "" {
-				workspaceID = os.Getenv("ORANGE_WS_ID")
+			if realm == "" {
+				return fmt.Errorf("--realm is required (e.g. org/<uuid>/api-keys)")
 			}
-			if workspaceID == "" {
-				return fmt.Errorf("--workspace-id is required (or set ORANGE_WS_ID)")
+			if _, _, _, err := secret.ParseRealm(realm); err != nil {
+				return err
 			}
 			if name == "" {
-				return fmt.Errorf("--name is required (format: realm/secret-id or just secret-id for realm=default)")
+				return fmt.Errorf("--name is required")
 			}
-			if value == "" {
-				return fmt.Errorf("--value is required")
+			material, err := readSecretValue(value)
+			if err != nil {
+				return err
 			}
-			realm, secretID := parseSecretName(name)
+			if len(material) == 0 {
+				return fmt.Errorf("secret material is empty")
+			}
 			rc, err := resolveRunCtx()
 			if err != nil {
 				return err
 			}
 			client := secretconnect.NewSecretAdminServiceClient(rc.HTTPClient, rc.ServerURL, rc.ConnectOpts...)
 			resp, err := client.CreateVersion(context.Background(), connect.NewRequest(&secretv1.CreateVersionRequest{
-				WorkspaceId: workspaceID,
-				Realm:       realm,
-				SecretId:    secretID,
-				Material:    []byte(value),
-				Enable:      enable,
+				Realm:    realm,
+				SecretId: name,
+				Material: material,
+				Enable:   enable,
 			}))
 			if err != nil {
 				return err
@@ -112,45 +136,39 @@ func newSecretSetCmd() *cobra.Command {
 			return printSecretVersions(rc.Printer, resp.Msg.GetVersion())
 		},
 	}
-	cmd.Flags().StringVar(&workspaceID, "workspace-id", "", "workspace ID (env: ORANGE_WS_ID)")
-	cmd.Flags().StringVar(&name, "name", "", "secret name as realm/secret-id (e.g. prod/db-password); omit realm for default")
-	cmd.Flags().StringVar(&value, "value", "", "secret material (plaintext)")
+	cmd.Flags().StringVar(&realm, "realm", "", "canonical realm: org/<uuid>/<purpose>, proj/<uuid>/<purpose>, ws/<uuid>/<purpose>")
+	cmd.Flags().StringVar(&name, "name", "", "secret name within the realm")
+	cmd.Flags().StringVar(&value, "value", "", "secret material; use '-' to read from stdin")
 	cmd.Flags().BoolVar(&enable, "enable", true, "enable version immediately")
 	return cmd
 }
 
 func newSecretGetCmd() *cobra.Command {
-	var workspaceID, name string
+	var realm, name string
 	cmd := &cobra.Command{
 		Use:          "get",
-		Short:        "Resolve the active version of a secret (includes plaintext material)",
+		Short:        "Resolve the active secret version (includes plaintext material)",
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if workspaceID == "" {
-				workspaceID = os.Getenv("ORANGE_WS_ID")
-			}
-			if workspaceID == "" {
-				return fmt.Errorf("--workspace-id is required (or set ORANGE_WS_ID)")
+			if realm == "" {
+				return fmt.Errorf("--realm is required")
 			}
 			if name == "" {
-				return fmt.Errorf("--name is required (format: realm/secret-id or just secret-id)")
+				return fmt.Errorf("--name is required")
 			}
-			realm, secretID := parseSecretName(name)
 			rc, err := resolveRunCtx()
 			if err != nil {
 				return err
 			}
 			client := secretconnect.NewSecretAdminServiceClient(rc.HTTPClient, rc.ServerURL, rc.ConnectOpts...)
 			resp, err := client.ResolveVersion(context.Background(), connect.NewRequest(&secretv1.ResolveVersionRequest{
-				WorkspaceId: workspaceID,
-				Realm:       realm,
-				SecretId:    secretID,
+				Realm:    realm,
+				SecretId: name,
 			}))
 			if err != nil {
 				return err
 			}
 			v := resp.Msg.GetVersion()
-			// In table mode print just the material; structured formats include all fields.
 			if rc.Printer.Format != FormatJSON && rc.Printer.Format != FormatYAML {
 				rc.Printer.OK(string(v.GetMaterial()))
 				return nil
@@ -158,37 +176,32 @@ func newSecretGetCmd() *cobra.Command {
 			return printSecretVersions(rc.Printer, v)
 		},
 	}
-	cmd.Flags().StringVar(&workspaceID, "workspace-id", "", "workspace ID (env: ORANGE_WS_ID)")
-	cmd.Flags().StringVar(&name, "name", "", "secret name as realm/secret-id (e.g. prod/db-password)")
+	cmd.Flags().StringVar(&realm, "realm", "", "canonical realm")
+	cmd.Flags().StringVar(&name, "name", "", "secret name")
 	return cmd
 }
 
 func newSecretVersionsCmd() *cobra.Command {
-	var workspaceID, name string
+	var realm, name string
 	cmd := &cobra.Command{
 		Use:          "versions",
 		Short:        "List all versions of a secret",
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if workspaceID == "" {
-				workspaceID = os.Getenv("ORANGE_WS_ID")
-			}
-			if workspaceID == "" {
-				return fmt.Errorf("--workspace-id is required (or set ORANGE_WS_ID)")
+			if realm == "" {
+				return fmt.Errorf("--realm is required")
 			}
 			if name == "" {
-				return fmt.Errorf("--name is required (format: realm/secret-id or just secret-id)")
+				return fmt.Errorf("--name is required")
 			}
-			realm, secretID := parseSecretName(name)
 			rc, err := resolveRunCtx()
 			if err != nil {
 				return err
 			}
 			client := secretconnect.NewSecretAdminServiceClient(rc.HTTPClient, rc.ServerURL, rc.ConnectOpts...)
 			resp, err := client.ListVersions(context.Background(), connect.NewRequest(&secretv1.ListVersionsRequest{
-				WorkspaceId: workspaceID,
-				Realm:       realm,
-				SecretId:    secretID,
+				Realm:    realm,
+				SecretId: name,
 			}))
 			if err != nil {
 				return err
@@ -196,41 +209,36 @@ func newSecretVersionsCmd() *cobra.Command {
 			return printSecretVersions(rc.Printer, resp.Msg.GetVersions()...)
 		},
 	}
-	cmd.Flags().StringVar(&workspaceID, "workspace-id", "", "workspace ID (env: ORANGE_WS_ID)")
-	cmd.Flags().StringVar(&name, "name", "", "secret name as realm/secret-id (e.g. prod/db-password)")
+	cmd.Flags().StringVar(&realm, "realm", "", "canonical realm")
+	cmd.Flags().StringVar(&name, "name", "", "secret name")
 	return cmd
 }
 
 func newSecretEnableCmd() *cobra.Command {
-	var workspaceID, name, versionID string
+	var realm, name, versionID string
 	cmd := &cobra.Command{
 		Use:          "enable",
 		Short:        "Enable a secret version",
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if workspaceID == "" {
-				workspaceID = os.Getenv("ORANGE_WS_ID")
-			}
-			if workspaceID == "" {
-				return fmt.Errorf("--workspace-id is required (or set ORANGE_WS_ID)")
+			if realm == "" {
+				return fmt.Errorf("--realm is required")
 			}
 			if name == "" {
-				return fmt.Errorf("--name is required (format: realm/secret-id or just secret-id)")
+				return fmt.Errorf("--name is required")
 			}
 			if versionID == "" {
 				return fmt.Errorf("--version-id is required")
 			}
-			realm, secretID := parseSecretName(name)
 			rc, err := resolveRunCtx()
 			if err != nil {
 				return err
 			}
 			client := secretconnect.NewSecretAdminServiceClient(rc.HTTPClient, rc.ServerURL, rc.ConnectOpts...)
 			resp, err := client.EnableVersion(context.Background(), connect.NewRequest(&secretv1.EnableVersionRequest{
-				WorkspaceId: workspaceID,
-				Realm:       realm,
-				SecretId:    secretID,
-				VersionId:   versionID,
+				Realm:     realm,
+				SecretId:  name,
+				VersionId: versionID,
 			}))
 			if err != nil {
 				return err
@@ -238,42 +246,37 @@ func newSecretEnableCmd() *cobra.Command {
 			return printSecretVersions(rc.Printer, resp.Msg.GetVersion())
 		},
 	}
-	cmd.Flags().StringVar(&workspaceID, "workspace-id", "", "workspace ID (env: ORANGE_WS_ID)")
-	cmd.Flags().StringVar(&name, "name", "", "secret name as realm/secret-id (e.g. prod/db-password)")
+	cmd.Flags().StringVar(&realm, "realm", "", "canonical realm")
+	cmd.Flags().StringVar(&name, "name", "", "secret name")
 	cmd.Flags().StringVar(&versionID, "version-id", "", "version ID to enable")
 	return cmd
 }
 
 func newSecretDisableCmd() *cobra.Command {
-	var workspaceID, name, versionID string
+	var realm, name, versionID string
 	cmd := &cobra.Command{
 		Use:          "disable",
 		Short:        "Disable a secret version (reversible)",
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if workspaceID == "" {
-				workspaceID = os.Getenv("ORANGE_WS_ID")
-			}
-			if workspaceID == "" {
-				return fmt.Errorf("--workspace-id is required (or set ORANGE_WS_ID)")
+			if realm == "" {
+				return fmt.Errorf("--realm is required")
 			}
 			if name == "" {
-				return fmt.Errorf("--name is required (format: realm/secret-id or just secret-id)")
+				return fmt.Errorf("--name is required")
 			}
 			if versionID == "" {
 				return fmt.Errorf("--version-id is required")
 			}
-			realm, secretID := parseSecretName(name)
 			rc, err := resolveRunCtx()
 			if err != nil {
 				return err
 			}
 			client := secretconnect.NewSecretAdminServiceClient(rc.HTTPClient, rc.ServerURL, rc.ConnectOpts...)
 			resp, err := client.DisableVersion(context.Background(), connect.NewRequest(&secretv1.DisableVersionRequest{
-				WorkspaceId: workspaceID,
-				Realm:       realm,
-				SecretId:    secretID,
-				VersionId:   versionID,
+				Realm:     realm,
+				SecretId:  name,
+				VersionId: versionID,
 			}))
 			if err != nil {
 				return err
@@ -281,44 +284,39 @@ func newSecretDisableCmd() *cobra.Command {
 			return printSecretVersions(rc.Printer, resp.Msg.GetVersion())
 		},
 	}
-	cmd.Flags().StringVar(&workspaceID, "workspace-id", "", "workspace ID (env: ORANGE_WS_ID)")
-	cmd.Flags().StringVar(&name, "name", "", "secret name as realm/secret-id (e.g. prod/db-password)")
+	cmd.Flags().StringVar(&realm, "realm", "", "canonical realm")
+	cmd.Flags().StringVar(&name, "name", "", "secret name")
 	cmd.Flags().StringVar(&versionID, "version-id", "", "version ID to disable")
 	return cmd
 }
 
 func newSecretRetireCmd() *cobra.Command {
-	var workspaceID, name, versionID string
+	var realm, name, versionID string
 	var shred bool
 	cmd := &cobra.Command{
 		Use:          "retire",
 		Short:        "Retire a secret version (permanent; use --shred to zero material)",
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if workspaceID == "" {
-				workspaceID = os.Getenv("ORANGE_WS_ID")
-			}
-			if workspaceID == "" {
-				return fmt.Errorf("--workspace-id is required (or set ORANGE_WS_ID)")
+			if realm == "" {
+				return fmt.Errorf("--realm is required")
 			}
 			if name == "" {
-				return fmt.Errorf("--name is required (format: realm/secret-id or just secret-id)")
+				return fmt.Errorf("--name is required")
 			}
 			if versionID == "" {
 				return fmt.Errorf("--version-id is required")
 			}
-			realm, secretID := parseSecretName(name)
 			rc, err := resolveRunCtx()
 			if err != nil {
 				return err
 			}
 			client := secretconnect.NewSecretAdminServiceClient(rc.HTTPClient, rc.ServerURL, rc.ConnectOpts...)
 			resp, err := client.RetireVersion(context.Background(), connect.NewRequest(&secretv1.RetireVersionRequest{
-				WorkspaceId: workspaceID,
-				Realm:       realm,
-				SecretId:    secretID,
-				VersionId:   versionID,
-				Shred:       shred,
+				Realm:     realm,
+				SecretId:  name,
+				VersionId: versionID,
+				Shred:     shred,
 			}))
 			if err != nil {
 				return err
@@ -326,14 +324,13 @@ func newSecretRetireCmd() *cobra.Command {
 			return printSecretVersions(rc.Printer, resp.Msg.GetVersion())
 		},
 	}
-	cmd.Flags().StringVar(&workspaceID, "workspace-id", "", "workspace ID (env: ORANGE_WS_ID)")
-	cmd.Flags().StringVar(&name, "name", "", "secret name as realm/secret-id (e.g. prod/db-password)")
+	cmd.Flags().StringVar(&realm, "realm", "", "canonical realm")
+	cmd.Flags().StringVar(&name, "name", "", "secret name")
 	cmd.Flags().StringVar(&versionID, "version-id", "", "version ID to retire")
 	cmd.Flags().BoolVar(&shred, "shred", false, "zero the material bytes after retiring")
 	return cmd
 }
 
-// newSecretKEKCmd groups KEK management under "orange secret kek".
 func newSecretKEKCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "kek",
@@ -345,10 +342,17 @@ func newSecretKEKCmd() *cobra.Command {
 }
 
 func newSecretKEKCreateCmd() *cobra.Command {
-	var workspaceID, realm string
+	var realm string
 	cmd := &cobra.Command{
-		Use:          "create",
-		Short:        "Provision a service KEK (pool member or per-boundary)",
+		Use:   "create",
+		Short: "Provision a service KEK (pool member when --realm is empty; per-boundary otherwise)",
+		Long: `Create a SERVICE_KEK.
+
+  Pool member (default, omit --realm):
+    orange admin secret kek create
+
+  Per-boundary (one KEK dedicated to this realm):
+    orange admin secret kek create --realm=org/<uuid>/api-keys`,
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			rc, err := resolveRunCtx()
@@ -357,8 +361,7 @@ func newSecretKEKCreateCmd() *cobra.Command {
 			}
 			client := secretconnect.NewSecretAdminServiceClient(rc.HTTPClient, rc.ServerURL, rc.ConnectOpts...)
 			resp, err := client.CreateServiceKEK(context.Background(), connect.NewRequest(&secretv1.CreateServiceKEKRequest{
-				WorkspaceId: workspaceID,
-				Realm:       realm,
+				Realm: realm,
 			}))
 			if err != nil {
 				return err
@@ -374,13 +377,12 @@ func newSecretKEKCreateCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&workspaceID, "workspace-id", "", "workspace ID (omit for pool member)")
-	cmd.Flags().StringVar(&realm, "realm", "", "realm (omit for pool member)")
+	cmd.Flags().StringVar(&realm, "realm", "", "canonical realm for per-boundary KEK (empty = pool member)")
 	return cmd
 }
 
 func newSecretKEKRotateCmd() *cobra.Command {
-	var workspaceID, realm string
+	var realm string
 	cmd := &cobra.Command{
 		Use:          "rotate",
 		Short:        "Rotate service KEK(s) under the current master KEK",
@@ -392,8 +394,7 @@ func newSecretKEKRotateCmd() *cobra.Command {
 			}
 			client := secretconnect.NewSecretAdminServiceClient(rc.HTTPClient, rc.ServerURL, rc.ConnectOpts...)
 			resp, err := client.RotateServiceKEK(context.Background(), connect.NewRequest(&secretv1.RotateServiceKEKRequest{
-				WorkspaceId: workspaceID,
-				Realm:       realm,
+				Realm: realm,
 			}))
 			if err != nil {
 				return err
@@ -412,8 +413,7 @@ func newSecretKEKRotateCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&workspaceID, "workspace-id", "", "workspace ID (omit for pool rotation)")
-	cmd.Flags().StringVar(&realm, "realm", "", "realm (omit for pool rotation)")
+	cmd.Flags().StringVar(&realm, "realm", "", "canonical realm for per-boundary rotation (empty = rotate all pool members)")
 	return cmd
 }
 
@@ -431,10 +431,9 @@ func printSecretSummaries(p *Printer, summaries ...*secretv1.SecretSummary) erro
 	default:
 		rows := make([]string, len(summaries))
 		for i, s := range summaries {
-			rows[i] = fmt.Sprintf("%s/%s\t%s",
-				s.GetRealm(), s.GetSecretId(), s.GetWorkspaceId())
+			rows[i] = fmt.Sprintf("%s\t%s", s.GetRealm(), s.GetSecretId())
 		}
-		p.Table("NAME\tWORKSPACE-ID", rows)
+		p.Table("REALM\tNAME", rows)
 		return nil
 	}
 }
@@ -454,11 +453,14 @@ func printSecretVersions(p *Printer, versions ...*secretv1.SecretVersion) error 
 		rows := make([]string, len(versions))
 		for i, v := range versions {
 			state := strings.TrimPrefix(v.GetState().String(), "VERSION_STATE_")
-			name := v.GetRealm() + "/" + v.GetSecretId()
-			rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s\t%s",
-				v.GetVersionId(), name, state, v.GetChecksum(), age(v.GetCreatedAt()))
+			sum := v.GetChecksum()
+			if len(sum) > 8 {
+				sum = sum[:8]
+			}
+			rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s",
+				v.GetVersionId(), v.GetRealm(), v.GetSecretId(), state, sum, age(v.GetCreatedAt()))
 		}
-		p.Table("VERSION-ID\tNAME\tSTATE\tCHECKSUM\tAGE", rows)
+		p.Table("VERSION-ID\tREALM\tNAME\tSTATE\tCHECKSUM\tAGE", rows)
 		return nil
 	}
 }
