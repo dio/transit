@@ -52,9 +52,15 @@ const (
 	// APIKeyAdminServiceIssueKeyProcedure is the fully-qualified name of the APIKeyAdminService's
 	// IssueKey RPC.
 	APIKeyAdminServiceIssueKeyProcedure = "/orange.apikey.admin.v1.APIKeyAdminService/IssueKey"
+	// APIKeyAdminServiceGetKeyProcedure is the fully-qualified name of the APIKeyAdminService's GetKey
+	// RPC.
+	APIKeyAdminServiceGetKeyProcedure = "/orange.apikey.admin.v1.APIKeyAdminService/GetKey"
 	// APIKeyAdminServiceListKeysProcedure is the fully-qualified name of the APIKeyAdminService's
 	// ListKeys RPC.
 	APIKeyAdminServiceListKeysProcedure = "/orange.apikey.admin.v1.APIKeyAdminService/ListKeys"
+	// APIKeyAdminServiceUpdateKeyScopesProcedure is the fully-qualified name of the
+	// APIKeyAdminService's UpdateKeyScopes RPC.
+	APIKeyAdminServiceUpdateKeyScopesProcedure = "/orange.apikey.admin.v1.APIKeyAdminService/UpdateKeyScopes"
 	// APIKeyAdminServiceRevokeKeyProcedure is the fully-qualified name of the APIKeyAdminService's
 	// RevokeKey RPC.
 	APIKeyAdminServiceRevokeKeyProcedure = "/orange.apikey.admin.v1.APIKeyAdminService/RevokeKey"
@@ -63,7 +69,9 @@ const (
 // APIKeyAdminServiceClient is a client for the orange.apikey.admin.v1.APIKeyAdminService service.
 type APIKeyAdminServiceClient interface {
 	IssueKey(context.Context, *connect.Request[v1.IssueKeyRequest]) (*connect.Response[v1.IssueKeyResponse], error)
+	GetKey(context.Context, *connect.Request[v1.GetKeyRequest]) (*connect.Response[v1.GetKeyResponse], error)
 	ListKeys(context.Context, *connect.Request[v1.ListKeysRequest]) (*connect.Response[v1.ListKeysResponse], error)
+	UpdateKeyScopes(context.Context, *connect.Request[v1.UpdateKeyScopesRequest]) (*connect.Response[v1.UpdateKeyScopesResponse], error)
 	RevokeKey(context.Context, *connect.Request[v1.RevokeKeyRequest]) (*connect.Response[v1.RevokeKeyResponse], error)
 }
 
@@ -84,11 +92,24 @@ func NewAPIKeyAdminServiceClient(httpClient connect.HTTPClient, baseURL string, 
 			connect.WithSchema(aPIKeyAdminServiceMethods.ByName("IssueKey")),
 			connect.WithClientOptions(opts...),
 		),
+		getKey: connect.NewClient[v1.GetKeyRequest, v1.GetKeyResponse](
+			httpClient,
+			baseURL+APIKeyAdminServiceGetKeyProcedure,
+			connect.WithSchema(aPIKeyAdminServiceMethods.ByName("GetKey")),
+			connect.WithIdempotency(connect.IdempotencyNoSideEffects),
+			connect.WithClientOptions(opts...),
+		),
 		listKeys: connect.NewClient[v1.ListKeysRequest, v1.ListKeysResponse](
 			httpClient,
 			baseURL+APIKeyAdminServiceListKeysProcedure,
 			connect.WithSchema(aPIKeyAdminServiceMethods.ByName("ListKeys")),
 			connect.WithIdempotency(connect.IdempotencyNoSideEffects),
+			connect.WithClientOptions(opts...),
+		),
+		updateKeyScopes: connect.NewClient[v1.UpdateKeyScopesRequest, v1.UpdateKeyScopesResponse](
+			httpClient,
+			baseURL+APIKeyAdminServiceUpdateKeyScopesProcedure,
+			connect.WithSchema(aPIKeyAdminServiceMethods.ByName("UpdateKeyScopes")),
 			connect.WithClientOptions(opts...),
 		),
 		revokeKey: connect.NewClient[v1.RevokeKeyRequest, v1.RevokeKeyResponse](
@@ -102,9 +123,11 @@ func NewAPIKeyAdminServiceClient(httpClient connect.HTTPClient, baseURL string, 
 
 // aPIKeyAdminServiceClient implements APIKeyAdminServiceClient.
 type aPIKeyAdminServiceClient struct {
-	issueKey  *connect.Client[v1.IssueKeyRequest, v1.IssueKeyResponse]
-	listKeys  *connect.Client[v1.ListKeysRequest, v1.ListKeysResponse]
-	revokeKey *connect.Client[v1.RevokeKeyRequest, v1.RevokeKeyResponse]
+	issueKey        *connect.Client[v1.IssueKeyRequest, v1.IssueKeyResponse]
+	getKey          *connect.Client[v1.GetKeyRequest, v1.GetKeyResponse]
+	listKeys        *connect.Client[v1.ListKeysRequest, v1.ListKeysResponse]
+	updateKeyScopes *connect.Client[v1.UpdateKeyScopesRequest, v1.UpdateKeyScopesResponse]
+	revokeKey       *connect.Client[v1.RevokeKeyRequest, v1.RevokeKeyResponse]
 }
 
 // IssueKey calls orange.apikey.admin.v1.APIKeyAdminService.IssueKey.
@@ -112,9 +135,19 @@ func (c *aPIKeyAdminServiceClient) IssueKey(ctx context.Context, req *connect.Re
 	return c.issueKey.CallUnary(ctx, req)
 }
 
+// GetKey calls orange.apikey.admin.v1.APIKeyAdminService.GetKey.
+func (c *aPIKeyAdminServiceClient) GetKey(ctx context.Context, req *connect.Request[v1.GetKeyRequest]) (*connect.Response[v1.GetKeyResponse], error) {
+	return c.getKey.CallUnary(ctx, req)
+}
+
 // ListKeys calls orange.apikey.admin.v1.APIKeyAdminService.ListKeys.
 func (c *aPIKeyAdminServiceClient) ListKeys(ctx context.Context, req *connect.Request[v1.ListKeysRequest]) (*connect.Response[v1.ListKeysResponse], error) {
 	return c.listKeys.CallUnary(ctx, req)
+}
+
+// UpdateKeyScopes calls orange.apikey.admin.v1.APIKeyAdminService.UpdateKeyScopes.
+func (c *aPIKeyAdminServiceClient) UpdateKeyScopes(ctx context.Context, req *connect.Request[v1.UpdateKeyScopesRequest]) (*connect.Response[v1.UpdateKeyScopesResponse], error) {
+	return c.updateKeyScopes.CallUnary(ctx, req)
 }
 
 // RevokeKey calls orange.apikey.admin.v1.APIKeyAdminService.RevokeKey.
@@ -126,7 +159,9 @@ func (c *aPIKeyAdminServiceClient) RevokeKey(ctx context.Context, req *connect.R
 // service.
 type APIKeyAdminServiceHandler interface {
 	IssueKey(context.Context, *connect.Request[v1.IssueKeyRequest]) (*connect.Response[v1.IssueKeyResponse], error)
+	GetKey(context.Context, *connect.Request[v1.GetKeyRequest]) (*connect.Response[v1.GetKeyResponse], error)
 	ListKeys(context.Context, *connect.Request[v1.ListKeysRequest]) (*connect.Response[v1.ListKeysResponse], error)
+	UpdateKeyScopes(context.Context, *connect.Request[v1.UpdateKeyScopesRequest]) (*connect.Response[v1.UpdateKeyScopesResponse], error)
 	RevokeKey(context.Context, *connect.Request[v1.RevokeKeyRequest]) (*connect.Response[v1.RevokeKeyResponse], error)
 }
 
@@ -143,11 +178,24 @@ func NewAPIKeyAdminServiceHandler(svc APIKeyAdminServiceHandler, opts ...connect
 		connect.WithSchema(aPIKeyAdminServiceMethods.ByName("IssueKey")),
 		connect.WithHandlerOptions(opts...),
 	)
+	aPIKeyAdminServiceGetKeyHandler := connect.NewUnaryHandler(
+		APIKeyAdminServiceGetKeyProcedure,
+		svc.GetKey,
+		connect.WithSchema(aPIKeyAdminServiceMethods.ByName("GetKey")),
+		connect.WithIdempotency(connect.IdempotencyNoSideEffects),
+		connect.WithHandlerOptions(opts...),
+	)
 	aPIKeyAdminServiceListKeysHandler := connect.NewUnaryHandler(
 		APIKeyAdminServiceListKeysProcedure,
 		svc.ListKeys,
 		connect.WithSchema(aPIKeyAdminServiceMethods.ByName("ListKeys")),
 		connect.WithIdempotency(connect.IdempotencyNoSideEffects),
+		connect.WithHandlerOptions(opts...),
+	)
+	aPIKeyAdminServiceUpdateKeyScopesHandler := connect.NewUnaryHandler(
+		APIKeyAdminServiceUpdateKeyScopesProcedure,
+		svc.UpdateKeyScopes,
+		connect.WithSchema(aPIKeyAdminServiceMethods.ByName("UpdateKeyScopes")),
 		connect.WithHandlerOptions(opts...),
 	)
 	aPIKeyAdminServiceRevokeKeyHandler := connect.NewUnaryHandler(
@@ -160,8 +208,12 @@ func NewAPIKeyAdminServiceHandler(svc APIKeyAdminServiceHandler, opts ...connect
 		switch r.URL.Path {
 		case APIKeyAdminServiceIssueKeyProcedure:
 			aPIKeyAdminServiceIssueKeyHandler.ServeHTTP(w, r)
+		case APIKeyAdminServiceGetKeyProcedure:
+			aPIKeyAdminServiceGetKeyHandler.ServeHTTP(w, r)
 		case APIKeyAdminServiceListKeysProcedure:
 			aPIKeyAdminServiceListKeysHandler.ServeHTTP(w, r)
+		case APIKeyAdminServiceUpdateKeyScopesProcedure:
+			aPIKeyAdminServiceUpdateKeyScopesHandler.ServeHTTP(w, r)
 		case APIKeyAdminServiceRevokeKeyProcedure:
 			aPIKeyAdminServiceRevokeKeyHandler.ServeHTTP(w, r)
 		default:
@@ -177,8 +229,16 @@ func (UnimplementedAPIKeyAdminServiceHandler) IssueKey(context.Context, *connect
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orange.apikey.admin.v1.APIKeyAdminService.IssueKey is not implemented"))
 }
 
+func (UnimplementedAPIKeyAdminServiceHandler) GetKey(context.Context, *connect.Request[v1.GetKeyRequest]) (*connect.Response[v1.GetKeyResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orange.apikey.admin.v1.APIKeyAdminService.GetKey is not implemented"))
+}
+
 func (UnimplementedAPIKeyAdminServiceHandler) ListKeys(context.Context, *connect.Request[v1.ListKeysRequest]) (*connect.Response[v1.ListKeysResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orange.apikey.admin.v1.APIKeyAdminService.ListKeys is not implemented"))
+}
+
+func (UnimplementedAPIKeyAdminServiceHandler) UpdateKeyScopes(context.Context, *connect.Request[v1.UpdateKeyScopesRequest]) (*connect.Response[v1.UpdateKeyScopesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orange.apikey.admin.v1.APIKeyAdminService.UpdateKeyScopes is not implemented"))
 }
 
 func (UnimplementedAPIKeyAdminServiceHandler) RevokeKey(context.Context, *connect.Request[v1.RevokeKeyRequest]) (*connect.Response[v1.RevokeKeyResponse], error) {

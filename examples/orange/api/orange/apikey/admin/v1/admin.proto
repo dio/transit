@@ -26,9 +26,16 @@ service APIKeyAdminService {
   rpc IssueKey(IssueKeyRequest) returns (IssueKeyResponse) {
     option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
   }
+  rpc GetKey(GetKeyRequest) returns (GetKeyResponse) {
+    option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
   rpc ListKeys(ListKeysRequest) returns (ListKeysResponse) {
     option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
     option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc UpdateKeyScopes(UpdateKeyScopesRequest) returns (UpdateKeyScopesResponse) {
+    option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
   }
   rpc RevokeKey(RevokeKeyRequest) returns (RevokeKeyResponse) {
     option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
@@ -63,6 +70,33 @@ message ListKeysRequest {
 message ListKeysResponse {
   repeated ApiKey keys = 1;
   string next_page_token = 2;
+}
+
+message GetKeyRequest {
+  string key_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+}
+
+message GetKeyResponse {
+  ApiKey key = 1;
+}
+
+// UpdateKeyScopesRequest merges add_scopes into the key's existing scope list.
+// Existing scopes are preserved — this is additive only.
+// Use template = "ws-member" with workspace_id to add the standard workspace
+// member scope set (secret:read, secret:write, token:issue for that workspace).
+message UpdateKeyScopesRequest {
+  string key_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+  // add_scopes are merged into the existing scopes (deduplication applied).
+  repeated string add_scopes = 2;
+  // template is a shortcut for a well-known scope set.
+  // Supported: "ws-member" (requires workspace_id).
+  string template = 3 [(buf.validate.field).string.max_len = 64];
+  // workspace_id is required when template = "ws-member".
+  string workspace_id = 4 [(buf.validate.field).string.max_len = 36];
+}
+
+message UpdateKeyScopesResponse {
+  ApiKey key = 1;
 }
 
 message RevokeKeyRequest {

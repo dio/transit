@@ -293,6 +293,214 @@ func (x *ListKeysResponse) GetNextPageToken() string {
 	return ""
 }
 
+type GetKeyRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	KeyId         string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetKeyRequest) Reset() {
+	*x = GetKeyRequest{}
+	mi := &file_orange_apikey_admin_v1_admin_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetKeyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetKeyRequest) ProtoMessage() {}
+
+func (x *GetKeyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_apikey_admin_v1_admin_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetKeyRequest.ProtoReflect.Descriptor instead.
+func (*GetKeyRequest) Descriptor() ([]byte, []int) {
+	return file_orange_apikey_admin_v1_admin_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *GetKeyRequest) GetKeyId() string {
+	if x != nil {
+		return x.KeyId
+	}
+	return ""
+}
+
+type GetKeyResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Key           *ApiKey                `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetKeyResponse) Reset() {
+	*x = GetKeyResponse{}
+	mi := &file_orange_apikey_admin_v1_admin_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetKeyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetKeyResponse) ProtoMessage() {}
+
+func (x *GetKeyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_apikey_admin_v1_admin_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetKeyResponse.ProtoReflect.Descriptor instead.
+func (*GetKeyResponse) Descriptor() ([]byte, []int) {
+	return file_orange_apikey_admin_v1_admin_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *GetKeyResponse) GetKey() *ApiKey {
+	if x != nil {
+		return x.Key
+	}
+	return nil
+}
+
+// UpdateKeyScopesRequest merges add_scopes into the key's existing scope list.
+// Existing scopes are preserved — this is additive only.
+// Use template = "ws-member" with workspace_id to add the standard workspace
+// member scope set (secret:read, secret:write, token:issue for that workspace).
+type UpdateKeyScopesRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	KeyId string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	// add_scopes are merged into the existing scopes (deduplication applied).
+	AddScopes []string `protobuf:"bytes,2,rep,name=add_scopes,json=addScopes,proto3" json:"add_scopes,omitempty"`
+	// template is a shortcut for a well-known scope set.
+	// Supported: "ws-member" (requires workspace_id).
+	Template string `protobuf:"bytes,3,opt,name=template,proto3" json:"template,omitempty"`
+	// workspace_id is required when template = "ws-member".
+	WorkspaceId   string `protobuf:"bytes,4,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateKeyScopesRequest) Reset() {
+	*x = UpdateKeyScopesRequest{}
+	mi := &file_orange_apikey_admin_v1_admin_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateKeyScopesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateKeyScopesRequest) ProtoMessage() {}
+
+func (x *UpdateKeyScopesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_apikey_admin_v1_admin_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateKeyScopesRequest.ProtoReflect.Descriptor instead.
+func (*UpdateKeyScopesRequest) Descriptor() ([]byte, []int) {
+	return file_orange_apikey_admin_v1_admin_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *UpdateKeyScopesRequest) GetKeyId() string {
+	if x != nil {
+		return x.KeyId
+	}
+	return ""
+}
+
+func (x *UpdateKeyScopesRequest) GetAddScopes() []string {
+	if x != nil {
+		return x.AddScopes
+	}
+	return nil
+}
+
+func (x *UpdateKeyScopesRequest) GetTemplate() string {
+	if x != nil {
+		return x.Template
+	}
+	return ""
+}
+
+func (x *UpdateKeyScopesRequest) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return ""
+}
+
+type UpdateKeyScopesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Key           *ApiKey                `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateKeyScopesResponse) Reset() {
+	*x = UpdateKeyScopesResponse{}
+	mi := &file_orange_apikey_admin_v1_admin_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateKeyScopesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateKeyScopesResponse) ProtoMessage() {}
+
+func (x *UpdateKeyScopesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_apikey_admin_v1_admin_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateKeyScopesResponse.ProtoReflect.Descriptor instead.
+func (*UpdateKeyScopesResponse) Descriptor() ([]byte, []int) {
+	return file_orange_apikey_admin_v1_admin_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *UpdateKeyScopesResponse) GetKey() *ApiKey {
+	if x != nil {
+		return x.Key
+	}
+	return nil
+}
+
 type RevokeKeyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	KeyId         string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
@@ -302,7 +510,7 @@ type RevokeKeyRequest struct {
 
 func (x *RevokeKeyRequest) Reset() {
 	*x = RevokeKeyRequest{}
-	mi := &file_orange_apikey_admin_v1_admin_proto_msgTypes[4]
+	mi := &file_orange_apikey_admin_v1_admin_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -314,7 +522,7 @@ func (x *RevokeKeyRequest) String() string {
 func (*RevokeKeyRequest) ProtoMessage() {}
 
 func (x *RevokeKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_apikey_admin_v1_admin_proto_msgTypes[4]
+	mi := &file_orange_apikey_admin_v1_admin_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -327,7 +535,7 @@ func (x *RevokeKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeKeyRequest.ProtoReflect.Descriptor instead.
 func (*RevokeKeyRequest) Descriptor() ([]byte, []int) {
-	return file_orange_apikey_admin_v1_admin_proto_rawDescGZIP(), []int{4}
+	return file_orange_apikey_admin_v1_admin_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *RevokeKeyRequest) GetKeyId() string {
@@ -345,7 +553,7 @@ type RevokeKeyResponse struct {
 
 func (x *RevokeKeyResponse) Reset() {
 	*x = RevokeKeyResponse{}
-	mi := &file_orange_apikey_admin_v1_admin_proto_msgTypes[5]
+	mi := &file_orange_apikey_admin_v1_admin_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -357,7 +565,7 @@ func (x *RevokeKeyResponse) String() string {
 func (*RevokeKeyResponse) ProtoMessage() {}
 
 func (x *RevokeKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_apikey_admin_v1_admin_proto_msgTypes[5]
+	mi := &file_orange_apikey_admin_v1_admin_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -370,7 +578,7 @@ func (x *RevokeKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeKeyResponse.ProtoReflect.Descriptor instead.
 func (*RevokeKeyResponse) Descriptor() ([]byte, []int) {
-	return file_orange_apikey_admin_v1_admin_proto_rawDescGZIP(), []int{5}
+	return file_orange_apikey_admin_v1_admin_proto_rawDescGZIP(), []int{9}
 }
 
 // ApiKey is the stored metadata for an API key. Plaintext is never included.
@@ -390,7 +598,7 @@ type ApiKey struct {
 
 func (x *ApiKey) Reset() {
 	*x = ApiKey{}
-	mi := &file_orange_apikey_admin_v1_admin_proto_msgTypes[6]
+	mi := &file_orange_apikey_admin_v1_admin_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -402,7 +610,7 @@ func (x *ApiKey) String() string {
 func (*ApiKey) ProtoMessage() {}
 
 func (x *ApiKey) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_apikey_admin_v1_admin_proto_msgTypes[6]
+	mi := &file_orange_apikey_admin_v1_admin_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -415,7 +623,7 @@ func (x *ApiKey) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApiKey.ProtoReflect.Descriptor instead.
 func (*ApiKey) Descriptor() ([]byte, []int) {
-	return file_orange_apikey_admin_v1_admin_proto_rawDescGZIP(), []int{6}
+	return file_orange_apikey_admin_v1_admin_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ApiKey) GetKeyId() string {
@@ -500,7 +708,19 @@ const file_orange_apikey_admin_v1_admin_proto_rawDesc = "" +
 	"\v_page_token\"n\n" +
 	"\x10ListKeysResponse\x122\n" +
 	"\x04keys\x18\x01 \x03(\v2\x1e.orange.apikey.admin.v1.ApiKeyR\x04keys\x12&\n" +
-	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"4\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"1\n" +
+	"\rGetKeyRequest\x12 \n" +
+	"\x06key_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\x05keyId\"B\n" +
+	"\x0eGetKeyResponse\x120\n" +
+	"\x03key\x18\x01 \x01(\v2\x1e.orange.apikey.admin.v1.ApiKeyR\x03key\"\xaa\x01\n" +
+	"\x16UpdateKeyScopesRequest\x12 \n" +
+	"\x06key_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\x05keyId\x12\x1d\n" +
+	"\n" +
+	"add_scopes\x18\x02 \x03(\tR\taddScopes\x12#\n" +
+	"\btemplate\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x18@R\btemplate\x12*\n" +
+	"\fworkspace_id\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x18$R\vworkspaceId\"K\n" +
+	"\x17UpdateKeyScopesResponse\x120\n" +
+	"\x03key\x18\x01 \x01(\v2\x1e.orange.apikey.admin.v1.ApiKeyR\x03key\"4\n" +
 	"\x10RevokeKeyRequest\x12 \n" +
 	"\x06key_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\x05keyId\"\x13\n" +
 	"\x11RevokeKeyResponse\"\x9b\x02\n" +
@@ -515,14 +735,20 @@ const file_orange_apikey_admin_v1_admin_proto_rawDesc = "" +
 	"\vdescription\x18\a \x01(\tH\x00R\vdescription\x88\x01\x01\x129\n" +
 	"\n" +
 	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAtB\x0e\n" +
-	"\f_description2\xe7\x02\n" +
+	"\f_description2\xd8\x04\n" +
 	"\x12APIKeyAdminService\x12m\n" +
 	"\bIssueKey\x12'.orange.apikey.admin.v1.IssueKeyRequest\x1a(.orange.apikey.admin.v1.IssueKeyResponse\"\x0e\xc2\xf3\x18\n" +
 	"\n" +
-	"\x01\x01\x12\x05admin\x12p\n" +
-	"\bListKeys\x12'.orange.apikey.admin.v1.ListKeysRequest\x1a(.orange.apikey.admin.v1.ListKeysResponse\"\x11\xc2\xf3\x18\n" +
+	"\x01\x01\x12\x05admin\x12j\n" +
+	"\x06GetKey\x12%.orange.apikey.admin.v1.GetKeyRequest\x1a&.orange.apikey.admin.v1.GetKeyResponse\"\x11\xc2\xf3\x18\n" +
 	"\n" +
 	"\x01\x01\x12\x05admin\x90\x02\x01\x12p\n" +
+	"\bListKeys\x12'.orange.apikey.admin.v1.ListKeysRequest\x1a(.orange.apikey.admin.v1.ListKeysResponse\"\x11\xc2\xf3\x18\n" +
+	"\n" +
+	"\x01\x01\x12\x05admin\x90\x02\x01\x12\x82\x01\n" +
+	"\x0fUpdateKeyScopes\x12..orange.apikey.admin.v1.UpdateKeyScopesRequest\x1a/.orange.apikey.admin.v1.UpdateKeyScopesResponse\"\x0e\xc2\xf3\x18\n" +
+	"\n" +
+	"\x01\x01\x12\x05admin\x12p\n" +
 	"\tRevokeKey\x12(.orange.apikey.admin.v1.RevokeKeyRequest\x1a).orange.apikey.admin.v1.RevokeKeyResponse\"\x0e\xc2\xf3\x18\n" +
 	"\n" +
 	"\x01\x01\x12\x05adminB\xee\x01\n" +
@@ -541,32 +767,42 @@ func file_orange_apikey_admin_v1_admin_proto_rawDescGZIP() []byte {
 	return file_orange_apikey_admin_v1_admin_proto_rawDescData
 }
 
-var file_orange_apikey_admin_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_orange_apikey_admin_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_orange_apikey_admin_v1_admin_proto_goTypes = []any{
-	(*IssueKeyRequest)(nil),       // 0: orange.apikey.admin.v1.IssueKeyRequest
-	(*IssueKeyResponse)(nil),      // 1: orange.apikey.admin.v1.IssueKeyResponse
-	(*ListKeysRequest)(nil),       // 2: orange.apikey.admin.v1.ListKeysRequest
-	(*ListKeysResponse)(nil),      // 3: orange.apikey.admin.v1.ListKeysResponse
-	(*RevokeKeyRequest)(nil),      // 4: orange.apikey.admin.v1.RevokeKeyRequest
-	(*RevokeKeyResponse)(nil),     // 5: orange.apikey.admin.v1.RevokeKeyResponse
-	(*ApiKey)(nil),                // 6: orange.apikey.admin.v1.ApiKey
-	(*timestamppb.Timestamp)(nil), // 7: google.protobuf.Timestamp
+	(*IssueKeyRequest)(nil),         // 0: orange.apikey.admin.v1.IssueKeyRequest
+	(*IssueKeyResponse)(nil),        // 1: orange.apikey.admin.v1.IssueKeyResponse
+	(*ListKeysRequest)(nil),         // 2: orange.apikey.admin.v1.ListKeysRequest
+	(*ListKeysResponse)(nil),        // 3: orange.apikey.admin.v1.ListKeysResponse
+	(*GetKeyRequest)(nil),           // 4: orange.apikey.admin.v1.GetKeyRequest
+	(*GetKeyResponse)(nil),          // 5: orange.apikey.admin.v1.GetKeyResponse
+	(*UpdateKeyScopesRequest)(nil),  // 6: orange.apikey.admin.v1.UpdateKeyScopesRequest
+	(*UpdateKeyScopesResponse)(nil), // 7: orange.apikey.admin.v1.UpdateKeyScopesResponse
+	(*RevokeKeyRequest)(nil),        // 8: orange.apikey.admin.v1.RevokeKeyRequest
+	(*RevokeKeyResponse)(nil),       // 9: orange.apikey.admin.v1.RevokeKeyResponse
+	(*ApiKey)(nil),                  // 10: orange.apikey.admin.v1.ApiKey
+	(*timestamppb.Timestamp)(nil),   // 11: google.protobuf.Timestamp
 }
 var file_orange_apikey_admin_v1_admin_proto_depIdxs = []int32{
-	6, // 0: orange.apikey.admin.v1.IssueKeyResponse.key:type_name -> orange.apikey.admin.v1.ApiKey
-	6, // 1: orange.apikey.admin.v1.ListKeysResponse.keys:type_name -> orange.apikey.admin.v1.ApiKey
-	7, // 2: orange.apikey.admin.v1.ApiKey.created_at:type_name -> google.protobuf.Timestamp
-	0, // 3: orange.apikey.admin.v1.APIKeyAdminService.IssueKey:input_type -> orange.apikey.admin.v1.IssueKeyRequest
-	2, // 4: orange.apikey.admin.v1.APIKeyAdminService.ListKeys:input_type -> orange.apikey.admin.v1.ListKeysRequest
-	4, // 5: orange.apikey.admin.v1.APIKeyAdminService.RevokeKey:input_type -> orange.apikey.admin.v1.RevokeKeyRequest
-	1, // 6: orange.apikey.admin.v1.APIKeyAdminService.IssueKey:output_type -> orange.apikey.admin.v1.IssueKeyResponse
-	3, // 7: orange.apikey.admin.v1.APIKeyAdminService.ListKeys:output_type -> orange.apikey.admin.v1.ListKeysResponse
-	5, // 8: orange.apikey.admin.v1.APIKeyAdminService.RevokeKey:output_type -> orange.apikey.admin.v1.RevokeKeyResponse
-	6, // [6:9] is the sub-list for method output_type
-	3, // [3:6] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	10, // 0: orange.apikey.admin.v1.IssueKeyResponse.key:type_name -> orange.apikey.admin.v1.ApiKey
+	10, // 1: orange.apikey.admin.v1.ListKeysResponse.keys:type_name -> orange.apikey.admin.v1.ApiKey
+	10, // 2: orange.apikey.admin.v1.GetKeyResponse.key:type_name -> orange.apikey.admin.v1.ApiKey
+	10, // 3: orange.apikey.admin.v1.UpdateKeyScopesResponse.key:type_name -> orange.apikey.admin.v1.ApiKey
+	11, // 4: orange.apikey.admin.v1.ApiKey.created_at:type_name -> google.protobuf.Timestamp
+	0,  // 5: orange.apikey.admin.v1.APIKeyAdminService.IssueKey:input_type -> orange.apikey.admin.v1.IssueKeyRequest
+	4,  // 6: orange.apikey.admin.v1.APIKeyAdminService.GetKey:input_type -> orange.apikey.admin.v1.GetKeyRequest
+	2,  // 7: orange.apikey.admin.v1.APIKeyAdminService.ListKeys:input_type -> orange.apikey.admin.v1.ListKeysRequest
+	6,  // 8: orange.apikey.admin.v1.APIKeyAdminService.UpdateKeyScopes:input_type -> orange.apikey.admin.v1.UpdateKeyScopesRequest
+	8,  // 9: orange.apikey.admin.v1.APIKeyAdminService.RevokeKey:input_type -> orange.apikey.admin.v1.RevokeKeyRequest
+	1,  // 10: orange.apikey.admin.v1.APIKeyAdminService.IssueKey:output_type -> orange.apikey.admin.v1.IssueKeyResponse
+	5,  // 11: orange.apikey.admin.v1.APIKeyAdminService.GetKey:output_type -> orange.apikey.admin.v1.GetKeyResponse
+	3,  // 12: orange.apikey.admin.v1.APIKeyAdminService.ListKeys:output_type -> orange.apikey.admin.v1.ListKeysResponse
+	7,  // 13: orange.apikey.admin.v1.APIKeyAdminService.UpdateKeyScopes:output_type -> orange.apikey.admin.v1.UpdateKeyScopesResponse
+	9,  // 14: orange.apikey.admin.v1.APIKeyAdminService.RevokeKey:output_type -> orange.apikey.admin.v1.RevokeKeyResponse
+	10, // [10:15] is the sub-list for method output_type
+	5,  // [5:10] is the sub-list for method input_type
+	5,  // [5:5] is the sub-list for extension type_name
+	5,  // [5:5] is the sub-list for extension extendee
+	0,  // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_orange_apikey_admin_v1_admin_proto_init() }
@@ -576,14 +812,14 @@ func file_orange_apikey_admin_v1_admin_proto_init() {
 	}
 	file_orange_apikey_admin_v1_admin_proto_msgTypes[0].OneofWrappers = []any{}
 	file_orange_apikey_admin_v1_admin_proto_msgTypes[2].OneofWrappers = []any{}
-	file_orange_apikey_admin_v1_admin_proto_msgTypes[6].OneofWrappers = []any{}
+	file_orange_apikey_admin_v1_admin_proto_msgTypes[10].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orange_apikey_admin_v1_admin_proto_rawDesc), len(file_orange_apikey_admin_v1_admin_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
