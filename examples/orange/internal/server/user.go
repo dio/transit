@@ -72,7 +72,7 @@ func newUserCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&orgID, "org-id", "", "org ID (env: ORANGE_ORG_ID)")
 	cmd.Flags().StringVar(&email, "email", "", "user email address")
 	cmd.Flags().StringVar(&description, "description", "", "user description")
-	cmd.Flags().StringVar(&scopeFlag, "scope", "read,write", "comma-separated scopes: read, write, admin, proxy, user, token:issue, egress-bundle:download")
+	cmd.Flags().StringVar(&scopeFlag, "scope", "user:read", "comma-separated scopes: user:read, org:admin, token:issue, egress-bundle:download")
 	return cmd
 }
 

@@ -35,17 +35,26 @@ CREATE TABLE IF NOT EXISTS workspace_members (
   PRIMARY KEY (workspace_id, user_id)
 )`
 
+// KeyBinder is implemented by apikeys.Store. It is declared here to avoid an
+// import cycle between resources ↔ apikeys.
+type KeyBinder interface {
+	BindWorkspace(ctx context.Context, orgID, userID, wsID string) error
+	UnbindWorkspace(ctx context.Context, orgID, userID, wsID string) error
+}
+
 // UserService implements adminv1connect.UserAdminServiceHandler over PostgreSQL.
 type UserService struct {
 	adminv1connect.UnimplementedUserAdminServiceHandler
 
-	pool   *pgxpool.Pool
-	logger *slog.Logger
+	pool      *pgxpool.Pool
+	logger    *slog.Logger
+	keyBinder KeyBinder // may be nil in tests; nil → skip key binding
 }
 
-// NewUserService creates a UserService and ensures the required tables exist.
-func NewUserService(pool *pgxpool.Pool, logger *slog.Logger) *UserService {
-	return &UserService{pool: pool, logger: logger}
+// NewUserService creates a UserService. kb is called on workspace membership
+// changes to update API key scopes atomically; pass nil to skip binding (tests).
+func NewUserService(pool *pgxpool.Pool, logger *slog.Logger, kb KeyBinder) *UserService {
+	return &UserService{pool: pool, logger: logger, keyBinder: kb}
 }
 
 // EnsureSchema creates the users and workspace_members tables if they do not exist.
@@ -275,30 +284,45 @@ func (s *UserService) DeleteUser(
 	return connect.NewResponse(&userv1.DeleteUserResponse{}), nil
 }
 
-// AddWorkspaceMember inserts a workspace_members record and returns the joined member.
+// AddWorkspaceMember inserts a workspace_members record and, if a KeyBinder is
+// configured, atomically supersedes every active API key for the user with
+// updated workspace-scoped permissions.
 func (s *UserService) AddWorkspaceMember(
 	ctx context.Context,
 	req *connect.Request[userv1.AddWorkspaceMemberRequest],
 ) (*connect.Response[userv1.AddWorkspaceMemberResponse], error) {
+	wsID := req.Msg.GetWorkspaceId()
+	uID := req.Msg.GetUserId()
+
 	const query = `
 INSERT INTO workspace_members (workspace_id, user_id)
 VALUES ($1, $2)
 RETURNING workspace_id, user_id, joined_at`
 
 	var (
-		wID, uID string
+		wID      string
 		joinedAt time.Time
 	)
-	err := s.pool.QueryRow(ctx, query,
-		req.Msg.GetWorkspaceId(),
-		req.Msg.GetUserId(),
-	).Scan(&wID, &uID, &joinedAt)
+	err := s.pool.QueryRow(ctx, query, wsID, uID).Scan(&wID, &uID, &joinedAt)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return nil, connect.NewError(connect.CodeAlreadyExists, err)
 		}
 		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+
+	if s.keyBinder != nil {
+		// Resolve org_id for the user (required by BindWorkspace).
+		var orgID string
+		if err := s.pool.QueryRow(ctx,
+			`SELECT org_id FROM users WHERE user_id = $1`, uID,
+		).Scan(&orgID); err != nil {
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+		if err := s.keyBinder.BindWorkspace(ctx, orgID, uID, wsID); err != nil {
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
 	}
 
 	return connect.NewResponse(&userv1.AddWorkspaceMemberResponse{
@@ -310,21 +334,37 @@ RETURNING workspace_id, user_id, joined_at`
 	}), nil
 }
 
-// RemoveWorkspaceMember deletes a workspace_members record.
+// RemoveWorkspaceMember deletes a workspace_members record and, if a KeyBinder
+// is configured, atomically strips workspace-scoped permissions from every
+// active API key for the user.
 func (s *UserService) RemoveWorkspaceMember(
 	ctx context.Context,
 	req *connect.Request[userv1.RemoveWorkspaceMemberRequest],
 ) (*connect.Response[userv1.RemoveWorkspaceMemberResponse], error) {
+	wsID := req.Msg.GetWorkspaceId()
+	uID := req.Msg.GetUserId()
+
 	result, err := s.pool.Exec(ctx,
 		`DELETE FROM workspace_members WHERE workspace_id = $1 AND user_id = $2`,
-		req.Msg.GetWorkspaceId(),
-		req.Msg.GetUserId(),
+		wsID, uID,
 	)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	if result.RowsAffected() == 0 {
 		return nil, connect.NewError(connect.CodeNotFound, errors.New("workspace member not found"))
+	}
+
+	if s.keyBinder != nil {
+		var orgID string
+		if err := s.pool.QueryRow(ctx,
+			`SELECT org_id FROM users WHERE user_id = $1`, uID,
+		).Scan(&orgID); err != nil {
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+		if err := s.keyBinder.UnbindWorkspace(ctx, orgID, uID, wsID); err != nil {
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
 	}
 
 	return connect.NewResponse(&userv1.RemoveWorkspaceMemberResponse{}), nil
