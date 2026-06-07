@@ -63,10 +63,61 @@ the first successful load; tests can call `MustReload` to drop the cache.
    is roundtripped through JSON before validation so integer types match what
    the JSON Schema validator expects.
 2. **Semantic**: every `llm.models[*].provider` must exist in `llm.providers`.
-3. **Secret resolution**: every `auth.secret_ref` is resolved against the
-   environment (`env://VAR_NAME`) and cached on the `Config`. Missing env vars
-   surface as load errors. Retrieve resolved secrets with
-   `cfg.ProviderSecret(name)`.
+3. **Secret resolution**: every `auth.secret_ref` is resolved according to its
+   scheme and cached on the `Config`. Missing secrets surface as load errors.
+   Retrieve resolved secrets with `cfg.ProviderSecret(name)`.
+
+## Secret Schemes
+
+The `auth.secret_ref` field supports multiple schemes for flexible secret management.
+
+### Built-in Schemes
+
+- `env://VAR_NAME` — Read from environment variable
+- `file:///path/to/secret` — Read from file on disk (whitespace trimmed)
+- `literal://value` — Plaintext literal (dev/test only; never use in production)
+
+### Orange Scheme
+
+The `orange://` scheme lazily resolves secrets using the `SecretResolverService`,
+allowing config to reference secrets managed by the orange secret store:
+
+```
+orange://workspace_id/realm/secret_id
+```
+
+#### Usage Example
+
+```yaml
+llm:
+  providers:
+    anthropic:
+      kind: anthropic
+      endpoint: https://api.anthropic.com
+      auth:
+        type: anthropic
+        secret_ref: orange://my-workspace/api-keys/anthropic-key
+```
+
+#### For Config Service Operators
+
+To enable `orange://` scheme support when publishing config:
+
+```go
+httpClient := &http.Client{}
+resolver := config.NewDefaultResolverWithOrange(httpClient, "http://localhost:8080", 1*time.Hour)
+
+// Use with LoadWithResolver to resolve orange:// references
+cfg, err := config.LoadWithResolver(ctx, yamlBytes, resolver)
+```
+
+#### How It Works
+
+- **Lazy resolution**: Secrets are fetched on-demand by calling `SecretResolverService.Resolve`
+- **Caching**: Results are cached with configurable TTL (default 1 hour)
+- **Rotation**: Secrets can be rotated server-side; clients invalidate on updates
+- **Performance**: Concurrent requests for the same secret are coalesced (single-flight)
+- **Errors**: Failed resolutions are retried on the next access (not cached)
 
 ## Helpers
 

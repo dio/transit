@@ -363,6 +363,61 @@ func TestNewDefaultResolver_Invalidate(t *testing.T) {
 	assert.Equal(t, "rotated", got, "post-invalidate Resolve must pick up the new value")
 }
 
+// ── NewDefaultResolverWithOrange ──────────────────────────────────────────────
+
+func TestNewDefaultResolverWithOrange(t *testing.T) {
+	// Test that a custom resolver can be created with orange:// support.
+	// We pass a nil HTTP client here since we're not testing the actual service call.
+	r := NewDefaultResolverWithOrange(nil, "http://localhost:8080", time.Hour)
+
+	// Verify that literal:// still works.
+	got, err := r.Resolve(bg, "literal://test-value")
+	require.NoError(t, err)
+	assert.Equal(t, "test-value", got)
+
+	// Verify that env:// still works.
+	t.Setenv("ORANGE_RESOLVER_TEST_VAR", "env-value")
+	got, err = r.Resolve(bg, "env://ORANGE_RESOLVER_TEST_VAR")
+	require.NoError(t, err)
+	assert.Equal(t, "env-value", got)
+}
+
+// ── OrangeResolver ───────────────────────────────────────────────────────────
+
+func TestOrangeResolver_BadRef(t *testing.T) {
+	or := NewOrangeResolver(nil, "http://localhost:8080")
+	_, err := or.Resolve(bg, "orange://")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "expected orange://")
+}
+
+func TestOrangeResolver_MissingWorkspace(t *testing.T) {
+	or := NewOrangeResolver(nil, "http://localhost:8080")
+	_, err := or.Resolve(bg, "orange:///realm/secret")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "expected orange://")
+}
+
+func TestOrangeResolver_MissingRealm(t *testing.T) {
+	or := NewOrangeResolver(nil, "http://localhost:8080")
+	_, err := or.Resolve(bg, "orange://ws-123//secret")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "expected orange://")
+}
+
+func TestOrangeResolver_MissingSecret(t *testing.T) {
+	or := NewOrangeResolver(nil, "http://localhost:8080")
+	_, err := or.Resolve(bg, "orange://ws-123/realm/")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "expected orange://")
+}
+
+func TestOrangeResolver_Invalidate_NoOp(t *testing.T) {
+	or := NewOrangeResolver(nil, "http://localhost:8080")
+	// Must not panic.
+	or.Invalidate("orange://ws/realm/secret")
+}
+
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
 // spyResolver wraps an inner SecretResolver and counts how many times Resolve

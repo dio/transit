@@ -7,28 +7,13 @@ import (
 	"strings"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/hashicorp/golang-lru/v2/expirable"
 	"golang.org/x/sync/singleflight"
+
+	secretv1 "github.com/dio/transit/examples/orange/api/orange/secret/v1"
+	secretv1connect "github.com/dio/transit/examples/orange/api/orange/secret/v1/secretv1connect"
 )
-
-// SecretResolver resolves an opaque secret reference string to its plaintext
-// value. References use scheme://... notation (e.g. env://MY_VAR) to identify
-// the backend. Implementations must be safe for concurrent use.
-//
-// The snapshot never holds resolved secret values — AuthConfig.SecretRef carries
-// the reference as a stable string, and callers invoke Resolve at request time.
-// This allows secrets to rotate without a config reload: the secret-service
-// webhook calls Invalidate, and the next request fetches a fresh value.
-type SecretResolver interface {
-	// Resolve returns the plaintext value for ref. Callers should treat the
-	// result as sensitive and not log it.
-	Resolve(ctx context.Context, ref string) (string, error)
-
-	// Invalidate evicts any cached value for ref so that the next Resolve call
-	// fetches a fresh copy from the backend. It is a no-op for non-caching
-	// implementations.
-	Invalidate(ref string)
-}
 
 // ── Scheme-dispatching resolver ───────────────────────────────────────────────
 
@@ -228,6 +213,63 @@ func (c *CachedResolver) Invalidate(ref string) {
 	c.cache.Remove(ref)
 }
 
+// OrangeResolver resolves orange://workspace_id/realm/secret_id references by
+// calling the SecretResolverService to fetch the current enabled version's plaintext.
+// It requires an HTTP client and server URL to communicate with the service.
+type OrangeResolver struct {
+	httpClient connect.HTTPClient
+	serverURL  string
+}
+
+// NewOrangeResolver returns an OrangeResolver backed by the given HTTP client
+// and server URL. The server URL should be the base URL of the orange service
+// (e.g., "http://localhost:8080").
+func NewOrangeResolver(httpClient connect.HTTPClient, serverURL string) *OrangeResolver {
+	return &OrangeResolver{
+		httpClient: httpClient,
+		serverURL:  serverURL,
+	}
+}
+
+// Resolve parses the orange:// reference and fetches the secret from
+// SecretResolverService. The reference format is:
+//
+//	orange://workspace_id/realm/secret_id
+func (o *OrangeResolver) Resolve(ctx context.Context, ref string) (string, error) {
+	const scheme = "orange://"
+	if !strings.HasPrefix(ref, scheme) {
+		return "", fmt.Errorf("orange resolver: %q: expected %s<workspace_id>/<realm>/<secret_id>", ref, scheme)
+	}
+
+	path := ref[len(scheme):]
+	parts := strings.SplitN(path, "/", 3)
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		return "", fmt.Errorf("orange resolver: %q: expected %s<workspace_id>/<realm>/<secret_id>", ref, scheme)
+	}
+
+	workspaceID, realm, secretID := parts[0], parts[1], parts[2]
+
+	client := secretv1connect.NewSecretResolverServiceClient(o.httpClient, o.serverURL)
+	req := &secretv1.ResolveRequest{
+		Realm:    realm,
+		SecretId: secretID,
+	}
+	resp, err := client.Resolve(ctx, connect.NewRequest(req))
+	if err != nil {
+		return "", fmt.Errorf("orange resolver: resolve %s/%s/%s: %w", workspaceID, realm, secretID, err)
+	}
+
+	payload := resp.Msg.GetPayload()
+	if payload == nil {
+		return "", fmt.Errorf("orange resolver: resolve %s/%s/%s: unexpected response type", workspaceID, realm, secretID)
+	}
+	return string(payload.GetMaterial()), nil
+}
+
+// Invalidate is a no-op for OrangeResolver; secret rotation is handled via
+// server-side invalidation and the Watch/Fetch streams.
+func (o *OrangeResolver) Invalidate(_ string) {}
+
 // ── Default resolver ──────────────────────────────────────────────────────────
 
 // NewDefaultResolver returns a CachedResolver that dispatches across the three
@@ -243,6 +285,22 @@ func NewDefaultResolver(ttl time.Duration) *CachedResolver {
 			"env":     &EnvResolver{},
 			"file":    &FileResolver{},
 			"literal": &LiteralResolver{},
+		}),
+		ttl,
+	)
+}
+
+// NewDefaultResolverWithOrange returns a CachedResolver that dispatches across
+// the built-in schemes (env://, file://, literal://) plus the orange:// scheme
+// backed by the SecretResolverService. Useful for config publication where secrets
+// may be referenced from the orange secret store.
+func NewDefaultResolverWithOrange(httpClient connect.HTTPClient, serverURL string, ttl time.Duration) *CachedResolver {
+	return NewCachedResolver(
+		NewDispatchResolver(map[string]SecretResolver{
+			"env":     &EnvResolver{},
+			"file":    &FileResolver{},
+			"literal": &LiteralResolver{},
+			"orange":  NewOrangeResolver(httpClient, serverURL),
 		}),
 		ttl,
 	)

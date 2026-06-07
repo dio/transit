@@ -42,6 +42,25 @@ import (
 // EnvVar names the env var that points at the orange config file.
 const EnvVar = "ORANGE_CONFIG"
 
+// SecretResolver resolves an opaque secret reference string to its plaintext
+// value. References use scheme://... notation (e.g. env://MY_VAR) to identify
+// the backend. Implementations must be safe for concurrent use.
+//
+// The snapshot never holds resolved secret values — AuthConfig.SecretRef carries
+// the reference as a stable string, and callers invoke Resolve at request time.
+// This allows secrets to rotate without a config reload: the secret-service
+// webhook calls Invalidate, and the next request fetches a fresh value.
+type SecretResolver interface {
+	// Resolve returns the plaintext value for ref. Callers should treat the
+	// result as sensitive and not log it.
+	Resolve(ctx context.Context, ref string) (string, error)
+
+	// Invalidate evicts any cached value for ref so that the next Resolve call
+	// fetches a fresh copy from the backend. It is a no-op for non-caching
+	// implementations.
+	Invalidate(ref string)
+}
+
 //go:embed config.schema.json
 var rawSchema []byte
 
@@ -641,6 +660,106 @@ func Load(data []byte) (*Config, error) {
 	return cfg, nil
 }
 
+// LoadWithResolver decodes config from raw bytes, validates it, and resolves
+// secrets using the provided SecretResolver. If resolver is nil, only the
+// built-in env://, file://, and literal:// schemes are supported. This allows
+// the orange:// scheme to be used when a SecretResolver with orange support
+// is provided (e.g., via NewDefaultResolverWithOrange).
+func LoadWithResolver(ctx context.Context, data []byte, resolver SecretResolver) (*Config, error) {
+	if err := schemaValidate(data); err != nil {
+		return nil, err
+	}
+
+	cfg := &Config{}
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("orange/config: unmarshal: %w", err)
+	}
+	cfg.Providers = cfg.LLM.Providers
+	cfg.Models = cfg.LLM.Models
+
+	// Semantic: each provider must have an endpoint or at least one binding;
+	// binding names must be unique within a provider.
+	for name, p := range cfg.Providers {
+		if len(p.Bindings) == 0 && p.Endpoint == "" {
+			return nil, fmt.Errorf("orange/config: provider %q: must have endpoint or bindings", name)
+		}
+		seen := make(map[string]struct{}, len(p.Bindings))
+		for _, b := range p.Bindings {
+			if b.Name == "" {
+				return nil, fmt.Errorf("orange/config: provider %q: binding must have a name", name)
+			}
+			if _, dup := seen[b.Name]; dup {
+				return nil, fmt.Errorf("orange/config: provider %q: duplicate binding name %q", name, b.Name)
+			}
+			seen[b.Name] = struct{}{}
+		}
+	}
+
+	// Semantic: every models[].provider must exist in providers; binding (when
+	// set) must name a binding of that provider.
+	for id, entry := range cfg.Models {
+		if err := validateModelEntry(cfg.Providers, "models["+id+"]", entry); err != nil {
+			return nil, err
+		}
+	}
+	if cfg.MCP != nil {
+		// Namespace uniqueness across all servers.
+		seenNS := make(map[string]string) // namespace → first server name
+		for serverName, server := range cfg.MCP.Servers {
+			if server.Namespace == "" {
+				continue
+			}
+			if prior, dup := seenNS[server.Namespace]; dup {
+				return nil, fmt.Errorf("orange/config: mcp.servers: duplicate namespace %q for servers %q and %q", server.Namespace, prior, serverName)
+			}
+			seenNS[server.Namespace] = serverName
+		}
+		for profileName, profile := range cfg.MCP.Profiles {
+			if len(profile.Tools) == 0 {
+				return nil, fmt.Errorf("orange/config: mcp.profiles[%q].tools: must not be empty", profileName)
+			}
+			for serverName, pt := range profile.Tools {
+				server, ok := cfg.MCP.Servers[serverName]
+				if !ok {
+					return nil, fmt.Errorf("orange/config: mcp.profiles[%q].tools: server %q not found in mcp.servers", profileName, serverName)
+				}
+				expose := server.Tools.Include
+				if len(expose) == 0 {
+					// Open boundary — all tools available; no subset check needed.
+					continue
+				}
+				exposeSet := make(map[string]struct{}, len(expose))
+				for _, t := range expose {
+					exposeSet[t] = struct{}{}
+				}
+				for _, tool := range pt.Include {
+					if _, allowed := exposeSet[tool]; !allowed {
+						return nil, fmt.Errorf("orange/config: mcp.profiles[%q].tools[%q]: tool %q not in server expose list; available: %v", profileName, serverName, tool, expose)
+					}
+				}
+			}
+		}
+	}
+
+	// Semantic: validate keys[].
+	for keyID, kb := range cfg.Keys {
+		expectedPrefix := kb.Workspace + "/" + kb.User + "/"
+		if !strings.HasPrefix(keyID, expectedPrefix) {
+			return nil, fmt.Errorf("orange/config: keys[%q]: id must start with %q (workspace=%q user=%q)", keyID, expectedPrefix, kb.Workspace, kb.User)
+		}
+		for modelID, entry := range kb.LLM.Models {
+			if err := validateModelEntry(cfg.Providers, "keys["+keyID+"].llm.models["+modelID+"]", entry); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	if err := resolveSecretsWithResolver(ctx, cfg, resolver); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
 // validateModelEntry validates a single ModelEntry for semantic correctness.
 // path is used in error messages (e.g. "models[\"claude-3\"]" or "keys[...].llm.models[...]").
 func validateModelEntry(providers map[string]Provider, path string, entry ModelEntry) error {
@@ -992,8 +1111,94 @@ func resolveSecrets(cfg *Config) error {
 	return nil
 }
 
+// resolveSecretsWithResolver is similar to resolveSecrets but uses an external
+// SecretResolver if provided. If resolver is nil, falls back to resolveSecretRef.
+func resolveSecretsWithResolver(ctx context.Context, cfg *Config, resolver SecretResolver) error {
+	cfg.resolvedSecrets = make(map[string]string, len(cfg.Providers))
+	for name, p := range cfg.Providers {
+		// Resolve extra values that use secret_ref schemes.
+		for k, val := range p.Extra {
+			if !strings.Contains(val, "://") {
+				continue
+			}
+			var resolved string
+			var err error
+			if resolver != nil {
+				resolved, err = resolver.Resolve(ctx, val)
+			} else {
+				resolved, err = resolveSecretRef(val)
+			}
+			if err != nil {
+				return fmt.Errorf("orange/config: provider %q extra %q: %w", name, k, err)
+			}
+			p.Extra[k] = resolved
+		}
+
+		if p.Auth.SecretRef == "" {
+			continue
+		}
+		var v string
+		var err error
+		if p.Auth.Type == "gcp" && strings.HasPrefix(p.Auth.SecretRef, "file://") {
+			// For GCP, pass the file path directly so NewGCPAuth can use
+			// CredentialsFile without reading the file here.
+			v = strings.TrimPrefix(p.Auth.SecretRef, "file://")
+		} else {
+			if resolver != nil {
+				v, err = resolver.Resolve(ctx, p.Auth.SecretRef)
+			} else {
+				v, err = resolveSecretRef(p.Auth.SecretRef)
+			}
+			if err != nil {
+				return fmt.Errorf("orange/config: provider %q: %w", name, err)
+			}
+		}
+		cfg.resolvedSecrets[name] = v
+	}
+	cfg.resolvedMCPCredentials = make(map[string]string)
+	if cfg.MCP != nil {
+		for serverName, server := range cfg.MCP.Servers {
+			if server.Auth == nil || server.Auth.SecretRef == "" {
+				continue
+			}
+			var v string
+			var err error
+			if resolver != nil {
+				v, err = resolver.Resolve(ctx, server.Auth.SecretRef)
+			} else {
+				v, err = resolveSecretRef(server.Auth.SecretRef)
+			}
+			if err != nil {
+				return fmt.Errorf("orange/config: mcp server %q: %w", serverName, err)
+			}
+			cfg.resolvedMCPCredentials[serverName] = v
+		}
+		for profileName, profile := range cfg.MCP.Profiles {
+			for serverName, auth := range profile.Auth {
+				if auth.SecretRef == "" {
+					continue
+				}
+				var v string
+				var err error
+				if resolver != nil {
+					v, err = resolver.Resolve(ctx, auth.SecretRef)
+				} else {
+					v, err = resolveSecretRef(auth.SecretRef)
+				}
+				if err != nil {
+					return fmt.Errorf("orange/config: mcp profile %q server %q: %w", profileName, serverName, err)
+				}
+				cfg.resolvedMCPCredentials[profileName+":"+serverName] = v
+			}
+		}
+	}
+	return nil
+}
+
 // resolveSecretRef resolves a secret_ref URI.
 // Supported schemes: env://VAR_NAME, file:///absolute/path, literal://value.
+// Note: orange:// is supported only when LoadWithResolver is used with a resolver
+// that includes OrangeResolver (e.g., NewDefaultResolverWithOrange).
 func resolveSecretRef(ref string) (string, error) {
 	switch {
 	case strings.HasPrefix(ref, "env://"):
