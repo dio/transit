@@ -24,12 +24,20 @@ type KeyLookup interface {
 	ActivePublicKeyPEM(ctx context.Context, egressID string) (string, error)
 }
 
+// WorkspaceAncestryLookup resolves the project and org that own a workspace.
+type WorkspaceAncestryLookup interface {
+	WorkspaceAncestry(ctx context.Context, workspaceID string) (projID, orgID string, err error)
+}
+
 type contextKey struct{}
 
 // EgressIdentity holds the authenticated egress identity extracted from the assertion.
+// ProjectID and OrgID are resolved from the workspace ancestry at auth time.
 type EgressIdentity struct {
 	EgressID    string
 	WorkspaceID string
+	ProjectID   string
+	OrgID       string
 }
 
 // WithEgressIdentity attaches an EgressIdentity to ctx.
@@ -91,7 +99,7 @@ func acceptsEgressAssertion(opts *authv1.AuthOptions) bool {
 //  7. Attach EgressIdentity to context for downstream handlers
 //  8. Pass the request to the next handler (no "egress" scope check is performed;
 //     signature verification IS the authorization)
-func Interceptor(store KeyLookup) connect.UnaryInterceptorFunc {
+func Interceptor(store KeyLookup, ancestry WorkspaceAncestryLookup) connect.UnaryInterceptorFunc {
 	// Build the policy map once: maps procedure paths (e.g., "/orange.egress.v1.EgressService/Heartbeat")
 	// to their auth options extracted from proto annotations.
 	policy := auth.BuildPolicyMap()
@@ -188,12 +196,19 @@ func Interceptor(store KeyLookup) connect.UnaryInterceptorFunc {
 					errors.New("invalid signature"))
 			}
 
-			// STEP 11: Attach the authenticated egress identity to the context.
-			// Downstream handlers can retrieve this via EgressIdentityFromContext(ctx)
-			// to access the authenticated egress_id and workspace_id if needed.
+			// STEP 11: Resolve workspace ancestry (project + org) and attach the full
+			// egress identity to the context. Downstream handlers use the ancestry to
+			// validate that secret realms fall within the egress's allowed path.
+			projID, orgID, err := ancestry.WorkspaceAncestry(ctx, workspaceID)
+			if err != nil {
+				return nil, connect.NewError(connect.CodeInternal,
+					fmt.Errorf("resolve ancestry for workspace %q: %w", workspaceID, err))
+			}
 			ctx = WithEgressIdentity(ctx, EgressIdentity{
 				EgressID:    egressID,
 				WorkspaceID: workspaceID,
+				ProjectID:   projID,
+				OrgID:       orgID,
 			})
 
 			// STEP 12: Invoke the handler with the authenticated context.
