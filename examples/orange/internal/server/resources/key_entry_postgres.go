@@ -413,13 +413,15 @@ ORDER BY ep.slot`
 	workspaceID, privKeyRef, wsSlug := chosen.workspaceID, chosen.privKeyRef, chosen.wsSlug
 	pasetoKeypairID, slot, keSlug := chosen.keypairID, chosen.slot, chosen.keSlug
 
-	// Resolve the private key DER from the secret service. Ref format: "<realm>/<secret_id>".
-	idx := strings.Index(privKeyRef, "/")
+	// Resolve the private key DER from the secret service.
+	// Ref format: "ws/<workspaceID>/<purpose>/<secretID>" — split at last '/'.
+	idx := strings.LastIndex(privKeyRef, "/")
 	if idx < 0 {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("malformed private_key_ref: %q", privKeyRef))
 	}
 	realm, secretID := privKeyRef[:idx], privKeyRef[idx+1:]
-	der, _, _, err := s.secretSvc.ResolveSecret(ctx, workspaceID, realm, secretID)
+	// Workspace-scoped internal secret: ancestry is the workspace itself.
+	der, _, _, err := s.secretSvc.ResolveSecret(ctx, realm, secretID, workspaceID, "", "")
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("resolve paseto signing key: %w", err))
 	}

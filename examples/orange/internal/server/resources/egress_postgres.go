@@ -275,31 +275,34 @@ func generateIdentityCert(workspaceID string, ttlDays int) (certPEM string, priv
 	return
 }
 
-// storeKey stores a private key DER blob in the secret service and returns a ref
-// in the form "<realm>/<secret_id>". The workspace_id is the encryption scope.
-func (s *EgressService) storeKey(ctx context.Context, workspaceID, realm, secretID string, der []byte) (string, error) {
+// storeKey encrypts a private key DER blob in the secret service.
+// realm is the purpose label (e.g. "egress-keypair"); it is combined with
+// workspaceID to form the canonical realm "ws/<workspaceID>/<purpose>".
+// Returns the full ref: "ws/<workspaceID>/<purpose>/<secretID>".
+func (s *EgressService) storeKey(ctx context.Context, workspaceID, purpose, secretID string, der []byte) (string, error) {
+	canonicalRealm := "ws/" + workspaceID + "/" + purpose
 	_, err := s.secretSvc.CreateVersion(ctx, connect.NewRequest(&secretv1.CreateVersionRequest{
-		WorkspaceId: workspaceID,
-		Realm:       realm,
-		SecretId:    secretID,
-		Material:    der,
-		Enable:      true,
+		Realm:    canonicalRealm,
+		SecretId: secretID,
+		Material: der,
+		Enable:   true,
 	}))
 	if err != nil {
-		return "", fmt.Errorf("store key %s/%s: %w", realm, secretID, err)
+		return "", fmt.Errorf("store key %s/%s: %w", canonicalRealm, secretID, err)
 	}
-	return realm + "/" + secretID, nil
+	return canonicalRealm + "/" + secretID, nil
 }
 
 // resolveKey decrypts and returns the PEM-encoded private key for a ref.
-// Ref format: "<realm>/<secret_id>" (workspace_id is passed explicitly).
+// Ref format: "ws/<workspaceID>/<purpose>/<secretID>" — split at the last '/'.
 func (s *EgressService) resolveKey(ctx context.Context, workspaceID, ref string) (string, error) {
-	idx := strings.Index(ref, "/")
+	idx := strings.LastIndex(ref, "/")
 	if idx < 0 {
 		return "", fmt.Errorf("malformed key ref: %q", ref)
 	}
 	realm, secretID := ref[:idx], ref[idx+1:]
-	der, _, _, err := s.secretSvc.ResolveSecret(ctx, workspaceID, realm, secretID)
+	// Workspace-scoped internal secret: ancestry is the workspace itself.
+	der, _, _, err := s.secretSvc.ResolveSecret(ctx, realm, secretID, workspaceID, "", "")
 	if err != nil {
 		return "", fmt.Errorf("resolve secret %s/%s: %w", realm, secretID, err)
 	}
