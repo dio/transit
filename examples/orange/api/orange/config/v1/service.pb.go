@@ -9,6 +9,9 @@
 // both still match, the server returns Unchanged instead of re-sending the full
 // payload; otherwise it returns the current SnapshotEnvelope.
 //
+// All RPCs require AUTH_TYPE_EGRESS_ASSERTION; workspace_id is derived from the
+// caller's authenticated identity and not accepted in requests.
+//
 // All request messages are annotated with buf.validate constraints. The server
 // should call protovalidate.Validate() on every incoming request before
 // processing. Generated clients may call it on response messages as an
@@ -43,10 +46,9 @@ const (
 
 // WatchRequest opens a live-update stream. last_version = 0 is the bootstrap
 // request: the server sends the current snapshot unconditionally.
+// workspace_id is derived from the caller's egress assertion and not accepted in the request.
 type WatchRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// workspace_id is the UUID7 workspace whose config snapshot to stream.
-	WorkspaceId string `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
 	// last_version is the highest version the client has already applied.
 	// The server skips sending if its current version equals last_version.
 	// Use 0 for a bootstrap request (always receive the current snapshot).
@@ -83,13 +85,6 @@ func (x *WatchRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use WatchRequest.ProtoReflect.Descriptor instead.
 func (*WatchRequest) Descriptor() ([]byte, []int) {
 	return file_orange_config_v1_service_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *WatchRequest) GetWorkspaceId() string {
-	if x != nil {
-		return x.WorkspaceId
-	}
-	return ""
 }
 
 func (x *WatchRequest) GetLastVersion() uint64 {
@@ -185,10 +180,9 @@ func (*WatchResponse_Heartbeat) isWatchResponse_Event() {}
 // last_version and last_checksum still match the server's current snapshot,
 // the server replies with Unchanged. Send last_version = 0 and omit
 // last_checksum for an unconditional fetch.
+// workspace_id is derived from the caller's egress assertion and not accepted in the request.
 type FetchRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// workspace_id is the UUID7 workspace whose config snapshot to fetch.
-	WorkspaceId string `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
 	// last_version is the highest version the client has applied; 0 = unconditional.
 	LastVersion uint64 `protobuf:"varint,2,opt,name=last_version,json=lastVersion,proto3" json:"last_version,omitempty"`
 	// last_checksum is the SHA-256 of the last accepted decompressed payload.
@@ -227,13 +221,6 @@ func (x *FetchRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use FetchRequest.ProtoReflect.Descriptor instead.
 func (*FetchRequest) Descriptor() ([]byte, []int) {
 	return file_orange_config_v1_service_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *FetchRequest) GetWorkspaceId() string {
-	if x != nil {
-		return x.WorkspaceId
-	}
-	return ""
 }
 
 func (x *FetchRequest) GetLastVersion() uint64 {
@@ -421,16 +408,14 @@ var File_orange_config_v1_service_proto protoreflect.FileDescriptor
 
 const file_orange_config_v1_service_proto_rawDesc = "" +
 	"\n" +
-	"\x1eorange/config/v1/service.proto\x12\x10orange.config.v1\x1a\x1bbuf/validate/validate.proto\x1a\x1forange/config/v1/snapshot.proto\x1a!orange/auth/v1/auth_options.proto\"_\n" +
-	"\fWatchRequest\x12,\n" +
-	"\fworkspace_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\vworkspaceId\x12!\n" +
+	"\x1eorange/config/v1/service.proto\x12\x10orange.config.v1\x1a\x1bbuf/validate/validate.proto\x1a\x1forange/config/v1/snapshot.proto\x1a!orange/auth/v1/auth_options.proto\"1\n" +
+	"\fWatchRequest\x12!\n" +
 	"\flast_version\x18\x02 \x01(\x04R\vlastVersion\"\x9e\x01\n" +
 	"\rWatchResponse\x12@\n" +
 	"\bsnapshot\x18\x01 \x01(\v2\".orange.config.v1.SnapshotEnvelopeH\x00R\bsnapshot\x12;\n" +
 	"\theartbeat\x18\x02 \x01(\v2\x1b.orange.config.v1.HeartbeatH\x00R\theartbeatB\x0e\n" +
-	"\x05event\x12\x05\xbaH\x02\b\x01\"\x8c\x02\n" +
-	"\fFetchRequest\x12,\n" +
-	"\fworkspace_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\vworkspaceId\x12!\n" +
+	"\x05event\x12\x05\xbaH\x02\b\x01\"\xde\x01\n" +
+	"\fFetchRequest\x12!\n" +
 	"\flast_version\x18\x02 \x01(\x04R\vlastVersion\x12\xaa\x01\n" +
 	"\rlast_checksum\x18\x03 \x01(\fB\x84\x01\xbaH\x80\x01\xba\x01}\n" +
 	"\x19fetch_checksum_sha256_len\x129last_checksum must be empty or exactly 32 bytes (SHA-256)\x1a%this.size() == 0 || this.size() == 32R\flastChecksum\"\x9f\x01\n" +

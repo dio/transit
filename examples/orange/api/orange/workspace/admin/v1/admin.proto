@@ -135,4 +135,5 @@ message Workspace {
   google.protobuf.Timestamp created_at = 5;
   google.protobuf.Timestamp updated_at = 6;
   string egress_id = 7;    // auto-provisioned on creation; empty until provisioned
+  string slug = 8;          // short auto-generated ID, e.g. "ws-abc12def"
 }

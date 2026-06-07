@@ -20,10 +20,9 @@ service EgressService {
   }
 }
 
-message HeartbeatRequest {
-  string egress_id = 1;
-  string workspace_id = 2;
-}
+// HeartbeatRequest carries no fields; egress_id and workspace_id are extracted
+// from the X-Egress-Assertion header by the server-side interceptor.
+message HeartbeatRequest {}
 
 message HeartbeatResponse {
   google.protobuf.Timestamp server_time = 1;

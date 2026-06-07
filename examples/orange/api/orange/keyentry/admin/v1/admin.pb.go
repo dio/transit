@@ -1,8 +1,8 @@
-// admin.proto — KeyAdminService: Key, PASETOToken, and KeySecret management.
+// admin.proto — KeyEntryAdminService: Key, PASETOToken, and KeySecret management.
 //
 // A Key is permanently bound to a single Workspace and a single User.
 // key_format is always "paseto_v4.public" (Ed25519).
-// key_id is server-assigned as a UUID7.
+// key_entry_id is server-assigned as a UUID7.
 //
 // PASETOToken records metadata and hash of an issued PASETO v4 token;
 // the token itself is never stored.
@@ -18,7 +18,7 @@
 // versions:
 // 	protoc-gen-go v1.36.10
 // 	protoc        (unknown)
-// source: orange/key/admin/v1/admin.proto
+// source: orange/keyentry/admin/v1/admin.proto
 
 package adminv1
 
@@ -54,7 +54,7 @@ type CreateKeyRequest struct {
 
 func (x *CreateKeyRequest) Reset() {
 	*x = CreateKeyRequest{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[0]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -66,7 +66,7 @@ func (x *CreateKeyRequest) String() string {
 func (*CreateKeyRequest) ProtoMessage() {}
 
 func (x *CreateKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[0]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -79,7 +79,7 @@ func (x *CreateKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateKeyRequest.ProtoReflect.Descriptor instead.
 func (*CreateKeyRequest) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{0}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *CreateKeyRequest) GetWorkspaceId() string {
@@ -126,7 +126,7 @@ type CreateKeyResponse struct {
 
 func (x *CreateKeyResponse) Reset() {
 	*x = CreateKeyResponse{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[1]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -138,7 +138,7 @@ func (x *CreateKeyResponse) String() string {
 func (*CreateKeyResponse) ProtoMessage() {}
 
 func (x *CreateKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[1]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -151,7 +151,7 @@ func (x *CreateKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateKeyResponse.ProtoReflect.Descriptor instead.
 func (*CreateKeyResponse) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{1}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *CreateKeyResponse) GetKey() *Key {
@@ -163,14 +163,14 @@ func (x *CreateKeyResponse) GetKey() *Key {
 
 type GetKeyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	KeyId         string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	KeyEntryId    string                 `protobuf:"bytes,1,opt,name=key_entry_id,json=keyEntryId,proto3" json:"key_entry_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *GetKeyRequest) Reset() {
 	*x = GetKeyRequest{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[2]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -182,7 +182,7 @@ func (x *GetKeyRequest) String() string {
 func (*GetKeyRequest) ProtoMessage() {}
 
 func (x *GetKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[2]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -195,12 +195,12 @@ func (x *GetKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetKeyRequest.ProtoReflect.Descriptor instead.
 func (*GetKeyRequest) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{2}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *GetKeyRequest) GetKeyId() string {
+func (x *GetKeyRequest) GetKeyEntryId() string {
 	if x != nil {
-		return x.KeyId
+		return x.KeyEntryId
 	}
 	return ""
 }
@@ -214,7 +214,7 @@ type GetKeyResponse struct {
 
 func (x *GetKeyResponse) Reset() {
 	*x = GetKeyResponse{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[3]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -226,7 +226,7 @@ func (x *GetKeyResponse) String() string {
 func (*GetKeyResponse) ProtoMessage() {}
 
 func (x *GetKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[3]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -239,7 +239,7 @@ func (x *GetKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetKeyResponse.ProtoReflect.Descriptor instead.
 func (*GetKeyResponse) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{3}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *GetKeyResponse) GetKey() *Key {
@@ -261,7 +261,7 @@ type ListKeysRequest struct {
 
 func (x *ListKeysRequest) Reset() {
 	*x = ListKeysRequest{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[4]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -273,7 +273,7 @@ func (x *ListKeysRequest) String() string {
 func (*ListKeysRequest) ProtoMessage() {}
 
 func (x *ListKeysRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[4]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -286,7 +286,7 @@ func (x *ListKeysRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListKeysRequest.ProtoReflect.Descriptor instead.
 func (*ListKeysRequest) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{4}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ListKeysRequest) GetWorkspaceId() string {
@@ -327,7 +327,7 @@ type ListKeysResponse struct {
 
 func (x *ListKeysResponse) Reset() {
 	*x = ListKeysResponse{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[5]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -339,7 +339,7 @@ func (x *ListKeysResponse) String() string {
 func (*ListKeysResponse) ProtoMessage() {}
 
 func (x *ListKeysResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[5]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -352,7 +352,7 @@ func (x *ListKeysResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListKeysResponse.ProtoReflect.Descriptor instead.
 func (*ListKeysResponse) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{5}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *ListKeysResponse) GetKeys() []*Key {
@@ -371,7 +371,7 @@ func (x *ListKeysResponse) GetNextPageToken() string {
 
 type UpdateKeyRequest struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
-	KeyId            string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	KeyEntryId       string                 `protobuf:"bytes,1,opt,name=key_entry_id,json=keyEntryId,proto3" json:"key_entry_id,omitempty"`
 	Description      *string                `protobuf:"bytes,2,opt,name=description,proto3,oneof" json:"description,omitempty"`
 	RoutingOverrides []*v1.RoutingOverride  `protobuf:"bytes,3,rep,name=routing_overrides,json=routingOverrides,proto3" json:"routing_overrides,omitempty"`
 	unknownFields    protoimpl.UnknownFields
@@ -380,7 +380,7 @@ type UpdateKeyRequest struct {
 
 func (x *UpdateKeyRequest) Reset() {
 	*x = UpdateKeyRequest{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[6]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -392,7 +392,7 @@ func (x *UpdateKeyRequest) String() string {
 func (*UpdateKeyRequest) ProtoMessage() {}
 
 func (x *UpdateKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[6]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -405,12 +405,12 @@ func (x *UpdateKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateKeyRequest.ProtoReflect.Descriptor instead.
 func (*UpdateKeyRequest) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{6}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{6}
 }
 
-func (x *UpdateKeyRequest) GetKeyId() string {
+func (x *UpdateKeyRequest) GetKeyEntryId() string {
 	if x != nil {
-		return x.KeyId
+		return x.KeyEntryId
 	}
 	return ""
 }
@@ -438,7 +438,7 @@ type UpdateKeyResponse struct {
 
 func (x *UpdateKeyResponse) Reset() {
 	*x = UpdateKeyResponse{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[7]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -450,7 +450,7 @@ func (x *UpdateKeyResponse) String() string {
 func (*UpdateKeyResponse) ProtoMessage() {}
 
 func (x *UpdateKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[7]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -463,7 +463,7 @@ func (x *UpdateKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateKeyResponse.ProtoReflect.Descriptor instead.
 func (*UpdateKeyResponse) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{7}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *UpdateKeyResponse) GetKey() *Key {
@@ -475,14 +475,14 @@ func (x *UpdateKeyResponse) GetKey() *Key {
 
 type DeleteKeyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	KeyId         string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	KeyEntryId    string                 `protobuf:"bytes,1,opt,name=key_entry_id,json=keyEntryId,proto3" json:"key_entry_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DeleteKeyRequest) Reset() {
 	*x = DeleteKeyRequest{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[8]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -494,7 +494,7 @@ func (x *DeleteKeyRequest) String() string {
 func (*DeleteKeyRequest) ProtoMessage() {}
 
 func (x *DeleteKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[8]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -507,12 +507,12 @@ func (x *DeleteKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteKeyRequest.ProtoReflect.Descriptor instead.
 func (*DeleteKeyRequest) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{8}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{8}
 }
 
-func (x *DeleteKeyRequest) GetKeyId() string {
+func (x *DeleteKeyRequest) GetKeyEntryId() string {
 	if x != nil {
-		return x.KeyId
+		return x.KeyEntryId
 	}
 	return ""
 }
@@ -525,7 +525,7 @@ type DeleteKeyResponse struct {
 
 func (x *DeleteKeyResponse) Reset() {
 	*x = DeleteKeyResponse{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[9]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -537,7 +537,7 @@ func (x *DeleteKeyResponse) String() string {
 func (*DeleteKeyResponse) ProtoMessage() {}
 
 func (x *DeleteKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[9]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -550,13 +550,13 @@ func (x *DeleteKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteKeyResponse.ProtoReflect.Descriptor instead.
 func (*DeleteKeyResponse) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{9}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{9}
 }
 
 // Key is permanently bound to a Workspace and User. key_format is always "paseto_v4.public".
 type Key struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
-	KeyId       string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`                   // UUID7, server-assigned
+	KeyEntryId  string                 `protobuf:"bytes,1,opt,name=key_entry_id,json=keyEntryId,proto3" json:"key_entry_id,omitempty"`  // UUID7, server-assigned
 	WorkspaceId string                 `protobuf:"bytes,2,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"` // owning workspace; immutable
 	UserId      string                 `protobuf:"bytes,3,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`                // owning user; immutable
 	Name        string                 `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`                                  // unique within workspace+user
@@ -573,7 +573,7 @@ type Key struct {
 
 func (x *Key) Reset() {
 	*x = Key{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[10]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -585,7 +585,7 @@ func (x *Key) String() string {
 func (*Key) ProtoMessage() {}
 
 func (x *Key) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[10]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -598,12 +598,12 @@ func (x *Key) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Key.ProtoReflect.Descriptor instead.
 func (*Key) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{10}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{10}
 }
 
-func (x *Key) GetKeyId() string {
+func (x *Key) GetKeyEntryId() string {
 	if x != nil {
-		return x.KeyId
+		return x.KeyEntryId
 	}
 	return ""
 }
@@ -665,8 +665,8 @@ func (x *Key) GetUpdatedAt() *timestamppb.Timestamp {
 }
 
 type IssueTokenRequest struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	KeyId string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	KeyEntryId string                 `protobuf:"bytes,1,opt,name=key_entry_id,json=keyEntryId,proto3" json:"key_entry_id,omitempty"`
 	// exp is the token expiry in seconds from now.
 	TtlSeconds int64 `protobuf:"varint,2,opt,name=ttl_seconds,json=ttlSeconds,proto3" json:"ttl_seconds,omitempty"`
 	// pol is an optional embedded policy JSON attached to the token.
@@ -677,7 +677,7 @@ type IssueTokenRequest struct {
 
 func (x *IssueTokenRequest) Reset() {
 	*x = IssueTokenRequest{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[11]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -689,7 +689,7 @@ func (x *IssueTokenRequest) String() string {
 func (*IssueTokenRequest) ProtoMessage() {}
 
 func (x *IssueTokenRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[11]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -702,12 +702,12 @@ func (x *IssueTokenRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IssueTokenRequest.ProtoReflect.Descriptor instead.
 func (*IssueTokenRequest) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{11}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{11}
 }
 
-func (x *IssueTokenRequest) GetKeyId() string {
+func (x *IssueTokenRequest) GetKeyEntryId() string {
 	if x != nil {
-		return x.KeyId
+		return x.KeyEntryId
 	}
 	return ""
 }
@@ -737,7 +737,7 @@ type IssueTokenResponse struct {
 
 func (x *IssueTokenResponse) Reset() {
 	*x = IssueTokenResponse{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[12]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -749,7 +749,7 @@ func (x *IssueTokenResponse) String() string {
 func (*IssueTokenResponse) ProtoMessage() {}
 
 func (x *IssueTokenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[12]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -762,7 +762,7 @@ func (x *IssueTokenResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IssueTokenResponse.ProtoReflect.Descriptor instead.
 func (*IssueTokenResponse) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{12}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *IssueTokenResponse) GetToken() string {
@@ -779,6 +779,139 @@ func (x *IssueTokenResponse) GetMetadata() *PASETOToken {
 	return nil
 }
 
+// IssueNamedTokenRequest derives workspace_id and user_id from the authenticated
+// API key record injected into the context by the apikeys interceptor.
+type IssueNamedTokenRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// ttl_seconds controls token lifetime. 0 = no expiry.
+	TtlSeconds    int64   `protobuf:"varint,2,opt,name=ttl_seconds,json=ttlSeconds,proto3" json:"ttl_seconds,omitempty"`
+	Pol           *string `protobuf:"bytes,3,opt,name=pol,proto3,oneof" json:"pol,omitempty"`
+	Description   *string `protobuf:"bytes,4,opt,name=description,proto3,oneof" json:"description,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IssueNamedTokenRequest) Reset() {
+	*x = IssueNamedTokenRequest{}
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IssueNamedTokenRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IssueNamedTokenRequest) ProtoMessage() {}
+
+func (x *IssueNamedTokenRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IssueNamedTokenRequest.ProtoReflect.Descriptor instead.
+func (*IssueNamedTokenRequest) Descriptor() ([]byte, []int) {
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *IssueNamedTokenRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *IssueNamedTokenRequest) GetTtlSeconds() int64 {
+	if x != nil {
+		return x.TtlSeconds
+	}
+	return 0
+}
+
+func (x *IssueNamedTokenRequest) GetPol() string {
+	if x != nil && x.Pol != nil {
+		return *x.Pol
+	}
+	return ""
+}
+
+func (x *IssueNamedTokenRequest) GetDescription() string {
+	if x != nil && x.Description != nil {
+		return *x.Description
+	}
+	return ""
+}
+
+type IssueNamedTokenResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// token is the signed PASETO v4 token — only returned once; not stored.
+	Token    string       `protobuf:"bytes,1,opt,name=token,proto3" json:"token,omitempty"`
+	Metadata *PASETOToken `protobuf:"bytes,2,opt,name=metadata,proto3" json:"metadata,omitempty"`
+	// key is the key entry that was created or already existed.
+	Key           *Key `protobuf:"bytes,3,opt,name=key,proto3" json:"key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IssueNamedTokenResponse) Reset() {
+	*x = IssueNamedTokenResponse{}
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IssueNamedTokenResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IssueNamedTokenResponse) ProtoMessage() {}
+
+func (x *IssueNamedTokenResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IssueNamedTokenResponse.ProtoReflect.Descriptor instead.
+func (*IssueNamedTokenResponse) Descriptor() ([]byte, []int) {
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *IssueNamedTokenResponse) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
+func (x *IssueNamedTokenResponse) GetMetadata() *PASETOToken {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
+func (x *IssueNamedTokenResponse) GetKey() *Key {
+	if x != nil {
+		return x.Key
+	}
+	return nil
+}
+
 type GetTokenRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	TokenId       string                 `protobuf:"bytes,1,opt,name=token_id,json=tokenId,proto3" json:"token_id,omitempty"`
@@ -788,7 +921,7 @@ type GetTokenRequest struct {
 
 func (x *GetTokenRequest) Reset() {
 	*x = GetTokenRequest{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[13]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -800,7 +933,7 @@ func (x *GetTokenRequest) String() string {
 func (*GetTokenRequest) ProtoMessage() {}
 
 func (x *GetTokenRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[13]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -813,7 +946,7 @@ func (x *GetTokenRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTokenRequest.ProtoReflect.Descriptor instead.
 func (*GetTokenRequest) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{13}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *GetTokenRequest) GetTokenId() string {
@@ -832,7 +965,7 @@ type GetTokenResponse struct {
 
 func (x *GetTokenResponse) Reset() {
 	*x = GetTokenResponse{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[14]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -844,7 +977,7 @@ func (x *GetTokenResponse) String() string {
 func (*GetTokenResponse) ProtoMessage() {}
 
 func (x *GetTokenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[14]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -857,7 +990,7 @@ func (x *GetTokenResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTokenResponse.ProtoReflect.Descriptor instead.
 func (*GetTokenResponse) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{14}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *GetTokenResponse) GetToken() *PASETOToken {
@@ -869,7 +1002,7 @@ func (x *GetTokenResponse) GetToken() *PASETOToken {
 
 type ListTokensRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
-	KeyId          string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	KeyEntryId     string                 `protobuf:"bytes,1,opt,name=key_entry_id,json=keyEntryId,proto3" json:"key_entry_id,omitempty"`
 	IncludeRevoked *bool                  `protobuf:"varint,2,opt,name=include_revoked,json=includeRevoked,proto3,oneof" json:"include_revoked,omitempty"`
 	Limit          *int32                 `protobuf:"varint,3,opt,name=limit,proto3,oneof" json:"limit,omitempty"`
 	PageToken      *string                `protobuf:"bytes,4,opt,name=page_token,json=pageToken,proto3,oneof" json:"page_token,omitempty"`
@@ -879,7 +1012,7 @@ type ListTokensRequest struct {
 
 func (x *ListTokensRequest) Reset() {
 	*x = ListTokensRequest{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[15]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -891,7 +1024,7 @@ func (x *ListTokensRequest) String() string {
 func (*ListTokensRequest) ProtoMessage() {}
 
 func (x *ListTokensRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[15]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -904,12 +1037,12 @@ func (x *ListTokensRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTokensRequest.ProtoReflect.Descriptor instead.
 func (*ListTokensRequest) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{15}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{17}
 }
 
-func (x *ListTokensRequest) GetKeyId() string {
+func (x *ListTokensRequest) GetKeyEntryId() string {
 	if x != nil {
-		return x.KeyId
+		return x.KeyEntryId
 	}
 	return ""
 }
@@ -945,7 +1078,7 @@ type ListTokensResponse struct {
 
 func (x *ListTokensResponse) Reset() {
 	*x = ListTokensResponse{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[16]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -957,7 +1090,7 @@ func (x *ListTokensResponse) String() string {
 func (*ListTokensResponse) ProtoMessage() {}
 
 func (x *ListTokensResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[16]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -970,7 +1103,7 @@ func (x *ListTokensResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTokensResponse.ProtoReflect.Descriptor instead.
 func (*ListTokensResponse) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{16}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ListTokensResponse) GetTokens() []*PASETOToken {
@@ -996,7 +1129,7 @@ type RevokeTokenRequest struct {
 
 func (x *RevokeTokenRequest) Reset() {
 	*x = RevokeTokenRequest{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[17]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1008,7 +1141,7 @@ func (x *RevokeTokenRequest) String() string {
 func (*RevokeTokenRequest) ProtoMessage() {}
 
 func (x *RevokeTokenRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[17]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1021,7 +1154,7 @@ func (x *RevokeTokenRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeTokenRequest.ProtoReflect.Descriptor instead.
 func (*RevokeTokenRequest) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{17}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *RevokeTokenRequest) GetTokenId() string {
@@ -1039,7 +1172,7 @@ type RevokeTokenResponse struct {
 
 func (x *RevokeTokenResponse) Reset() {
 	*x = RevokeTokenResponse{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[18]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1051,7 +1184,7 @@ func (x *RevokeTokenResponse) String() string {
 func (*RevokeTokenResponse) ProtoMessage() {}
 
 func (x *RevokeTokenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[18]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1064,15 +1197,15 @@ func (x *RevokeTokenResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeTokenResponse.ProtoReflect.Descriptor instead.
 func (*RevokeTokenResponse) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{18}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{20}
 }
 
 // PASETOToken stores token metadata only; the bearer token itself is never stored.
 type PASETOToken struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	TokenId       string                 `protobuf:"bytes,1,opt,name=token_id,json=tokenId,proto3" json:"token_id,omitempty"` // UUID7, server-assigned
-	KeyId         string                 `protobuf:"bytes,2,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`       // owning key
-	Jti           string                 `protobuf:"bytes,3,opt,name=jti,proto3" json:"jti,omitempty"`                        // JWT ID embedded in token
+	TokenId       string                 `protobuf:"bytes,1,opt,name=token_id,json=tokenId,proto3" json:"token_id,omitempty"`            // UUID7, server-assigned
+	KeyEntryId    string                 `protobuf:"bytes,2,opt,name=key_entry_id,json=keyEntryId,proto3" json:"key_entry_id,omitempty"` // owning key
+	Jti           string                 `protobuf:"bytes,3,opt,name=jti,proto3" json:"jti,omitempty"`                                   // JWT ID embedded in token
 	Iat           *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=iat,proto3" json:"iat,omitempty"`
 	Exp           *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=exp,proto3" json:"exp,omitempty"`
 	Pol           *string                `protobuf:"bytes,6,opt,name=pol,proto3,oneof" json:"pol,omitempty"`                        // embedded policy JSON
@@ -1085,7 +1218,7 @@ type PASETOToken struct {
 
 func (x *PASETOToken) Reset() {
 	*x = PASETOToken{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[19]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1097,7 +1230,7 @@ func (x *PASETOToken) String() string {
 func (*PASETOToken) ProtoMessage() {}
 
 func (x *PASETOToken) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[19]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1110,7 +1243,7 @@ func (x *PASETOToken) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PASETOToken.ProtoReflect.Descriptor instead.
 func (*PASETOToken) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{19}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *PASETOToken) GetTokenId() string {
@@ -1120,9 +1253,9 @@ func (x *PASETOToken) GetTokenId() string {
 	return ""
 }
 
-func (x *PASETOToken) GetKeyId() string {
+func (x *PASETOToken) GetKeyEntryId() string {
 	if x != nil {
-		return x.KeyId
+		return x.KeyEntryId
 	}
 	return ""
 }
@@ -1177,8 +1310,8 @@ func (x *PASETOToken) GetCreatedAt() *timestamppb.Timestamp {
 }
 
 type CreateKeySecretRequest struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	KeyId string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	KeyEntryId string                 `protobuf:"bytes,1,opt,name=key_entry_id,json=keyEntryId,proto3" json:"key_entry_id,omitempty"`
 	// upstream_target identifies the upstream (e.g. "openai", "anthropic").
 	UpstreamTarget string `protobuf:"bytes,2,opt,name=upstream_target,json=upstreamTarget,proto3" json:"upstream_target,omitempty"`
 	// value is the plaintext credential; stored encrypted, never returned.
@@ -1190,7 +1323,7 @@ type CreateKeySecretRequest struct {
 
 func (x *CreateKeySecretRequest) Reset() {
 	*x = CreateKeySecretRequest{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[20]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1202,7 +1335,7 @@ func (x *CreateKeySecretRequest) String() string {
 func (*CreateKeySecretRequest) ProtoMessage() {}
 
 func (x *CreateKeySecretRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[20]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1215,12 +1348,12 @@ func (x *CreateKeySecretRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateKeySecretRequest.ProtoReflect.Descriptor instead.
 func (*CreateKeySecretRequest) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{20}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{22}
 }
 
-func (x *CreateKeySecretRequest) GetKeyId() string {
+func (x *CreateKeySecretRequest) GetKeyEntryId() string {
 	if x != nil {
-		return x.KeyId
+		return x.KeyEntryId
 	}
 	return ""
 }
@@ -1255,7 +1388,7 @@ type CreateKeySecretResponse struct {
 
 func (x *CreateKeySecretResponse) Reset() {
 	*x = CreateKeySecretResponse{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[21]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1267,7 +1400,7 @@ func (x *CreateKeySecretResponse) String() string {
 func (*CreateKeySecretResponse) ProtoMessage() {}
 
 func (x *CreateKeySecretResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[21]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1280,7 +1413,7 @@ func (x *CreateKeySecretResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateKeySecretResponse.ProtoReflect.Descriptor instead.
 func (*CreateKeySecretResponse) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{21}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *CreateKeySecretResponse) GetSecret() *KeySecret {
@@ -1299,7 +1432,7 @@ type GetKeySecretRequest struct {
 
 func (x *GetKeySecretRequest) Reset() {
 	*x = GetKeySecretRequest{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[22]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1311,7 +1444,7 @@ func (x *GetKeySecretRequest) String() string {
 func (*GetKeySecretRequest) ProtoMessage() {}
 
 func (x *GetKeySecretRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[22]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1324,7 +1457,7 @@ func (x *GetKeySecretRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetKeySecretRequest.ProtoReflect.Descriptor instead.
 func (*GetKeySecretRequest) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{22}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *GetKeySecretRequest) GetKeySecretId() string {
@@ -1343,7 +1476,7 @@ type GetKeySecretResponse struct {
 
 func (x *GetKeySecretResponse) Reset() {
 	*x = GetKeySecretResponse{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[23]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1355,7 +1488,7 @@ func (x *GetKeySecretResponse) String() string {
 func (*GetKeySecretResponse) ProtoMessage() {}
 
 func (x *GetKeySecretResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[23]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1368,7 +1501,7 @@ func (x *GetKeySecretResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetKeySecretResponse.ProtoReflect.Descriptor instead.
 func (*GetKeySecretResponse) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{23}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *GetKeySecretResponse) GetSecret() *KeySecret {
@@ -1380,7 +1513,7 @@ func (x *GetKeySecretResponse) GetSecret() *KeySecret {
 
 type ListKeySecretsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	KeyId         string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	KeyEntryId    string                 `protobuf:"bytes,1,opt,name=key_entry_id,json=keyEntryId,proto3" json:"key_entry_id,omitempty"`
 	Limit         *int32                 `protobuf:"varint,2,opt,name=limit,proto3,oneof" json:"limit,omitempty"`
 	PageToken     *string                `protobuf:"bytes,3,opt,name=page_token,json=pageToken,proto3,oneof" json:"page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -1389,7 +1522,7 @@ type ListKeySecretsRequest struct {
 
 func (x *ListKeySecretsRequest) Reset() {
 	*x = ListKeySecretsRequest{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[24]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1401,7 +1534,7 @@ func (x *ListKeySecretsRequest) String() string {
 func (*ListKeySecretsRequest) ProtoMessage() {}
 
 func (x *ListKeySecretsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[24]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1414,12 +1547,12 @@ func (x *ListKeySecretsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListKeySecretsRequest.ProtoReflect.Descriptor instead.
 func (*ListKeySecretsRequest) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{24}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{26}
 }
 
-func (x *ListKeySecretsRequest) GetKeyId() string {
+func (x *ListKeySecretsRequest) GetKeyEntryId() string {
 	if x != nil {
-		return x.KeyId
+		return x.KeyEntryId
 	}
 	return ""
 }
@@ -1448,7 +1581,7 @@ type ListKeySecretsResponse struct {
 
 func (x *ListKeySecretsResponse) Reset() {
 	*x = ListKeySecretsResponse{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[25]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1460,7 +1593,7 @@ func (x *ListKeySecretsResponse) String() string {
 func (*ListKeySecretsResponse) ProtoMessage() {}
 
 func (x *ListKeySecretsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[25]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1473,7 +1606,7 @@ func (x *ListKeySecretsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListKeySecretsResponse.ProtoReflect.Descriptor instead.
 func (*ListKeySecretsResponse) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{25}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *ListKeySecretsResponse) GetSecrets() []*KeySecret {
@@ -1500,7 +1633,7 @@ type RotateKeySecretRequest struct {
 
 func (x *RotateKeySecretRequest) Reset() {
 	*x = RotateKeySecretRequest{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[26]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1512,7 +1645,7 @@ func (x *RotateKeySecretRequest) String() string {
 func (*RotateKeySecretRequest) ProtoMessage() {}
 
 func (x *RotateKeySecretRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[26]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1525,7 +1658,7 @@ func (x *RotateKeySecretRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RotateKeySecretRequest.ProtoReflect.Descriptor instead.
 func (*RotateKeySecretRequest) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{26}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *RotateKeySecretRequest) GetKeySecretId() string {
@@ -1551,7 +1684,7 @@ type RotateKeySecretResponse struct {
 
 func (x *RotateKeySecretResponse) Reset() {
 	*x = RotateKeySecretResponse{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[27]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1563,7 +1696,7 @@ func (x *RotateKeySecretResponse) String() string {
 func (*RotateKeySecretResponse) ProtoMessage() {}
 
 func (x *RotateKeySecretResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[27]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1576,7 +1709,7 @@ func (x *RotateKeySecretResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RotateKeySecretResponse.ProtoReflect.Descriptor instead.
 func (*RotateKeySecretResponse) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{27}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *RotateKeySecretResponse) GetSecret() *KeySecret {
@@ -1595,7 +1728,7 @@ type DeleteKeySecretRequest struct {
 
 func (x *DeleteKeySecretRequest) Reset() {
 	*x = DeleteKeySecretRequest{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[28]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1607,7 +1740,7 @@ func (x *DeleteKeySecretRequest) String() string {
 func (*DeleteKeySecretRequest) ProtoMessage() {}
 
 func (x *DeleteKeySecretRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[28]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1620,7 +1753,7 @@ func (x *DeleteKeySecretRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteKeySecretRequest.ProtoReflect.Descriptor instead.
 func (*DeleteKeySecretRequest) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{28}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *DeleteKeySecretRequest) GetKeySecretId() string {
@@ -1638,7 +1771,7 @@ type DeleteKeySecretResponse struct {
 
 func (x *DeleteKeySecretResponse) Reset() {
 	*x = DeleteKeySecretResponse{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[29]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1650,7 +1783,7 @@ func (x *DeleteKeySecretResponse) String() string {
 func (*DeleteKeySecretResponse) ProtoMessage() {}
 
 func (x *DeleteKeySecretResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[29]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1663,7 +1796,7 @@ func (x *DeleteKeySecretResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteKeySecretResponse.ProtoReflect.Descriptor instead.
 func (*DeleteKeySecretResponse) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{29}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{31}
 }
 
 // KeySecret is a versioned upstream credential bound to a Key (BYOK).
@@ -1671,7 +1804,7 @@ func (*DeleteKeySecretResponse) Descriptor() ([]byte, []int) {
 type KeySecret struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	KeySecretId    string                 `protobuf:"bytes,1,opt,name=key_secret_id,json=keySecretId,proto3" json:"key_secret_id,omitempty"`        // UUID7, server-assigned
-	KeyId          string                 `protobuf:"bytes,2,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`                            // owning key; immutable
+	KeyEntryId     string                 `protobuf:"bytes,2,opt,name=key_entry_id,json=keyEntryId,proto3" json:"key_entry_id,omitempty"`           // owning key; immutable
 	UpstreamTarget string                 `protobuf:"bytes,3,opt,name=upstream_target,json=upstreamTarget,proto3" json:"upstream_target,omitempty"` // e.g. "openai"
 	Version        int32                  `protobuf:"varint,4,opt,name=version,proto3" json:"version,omitempty"`                                    // increments on rotate
 	Active         bool                   `protobuf:"varint,5,opt,name=active,proto3" json:"active,omitempty"`
@@ -1684,7 +1817,7 @@ type KeySecret struct {
 
 func (x *KeySecret) Reset() {
 	*x = KeySecret{}
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[30]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1696,7 +1829,7 @@ func (x *KeySecret) String() string {
 func (*KeySecret) ProtoMessage() {}
 
 func (x *KeySecret) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_key_admin_v1_admin_proto_msgTypes[30]
+	mi := &file_orange_keyentry_admin_v1_admin_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1709,7 +1842,7 @@ func (x *KeySecret) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KeySecret.ProtoReflect.Descriptor instead.
 func (*KeySecret) Descriptor() ([]byte, []int) {
-	return file_orange_key_admin_v1_admin_proto_rawDescGZIP(), []int{30}
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *KeySecret) GetKeySecretId() string {
@@ -1719,9 +1852,9 @@ func (x *KeySecret) GetKeySecretId() string {
 	return ""
 }
 
-func (x *KeySecret) GetKeyId() string {
+func (x *KeySecret) GetKeyEntryId() string {
 	if x != nil {
-		return x.KeyId
+		return x.KeyEntryId
 	}
 	return ""
 }
@@ -1768,24 +1901,25 @@ func (x *KeySecret) GetUpdatedAt() *timestamppb.Timestamp {
 	return nil
 }
 
-var File_orange_key_admin_v1_admin_proto protoreflect.FileDescriptor
+var File_orange_keyentry_admin_v1_admin_proto protoreflect.FileDescriptor
 
-const file_orange_key_admin_v1_admin_proto_rawDesc = "" +
+const file_orange_keyentry_admin_v1_admin_proto_rawDesc = "" +
 	"\n" +
-	"\x1forange/key/admin/v1/admin.proto\x12\x13orange.key.admin.v1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a!orange/auth/v1/auth_options.proto\x1a\x1forange/routing/v1/routing.proto\"\xb3\x02\n" +
+	"$orange/keyentry/admin/v1/admin.proto\x12\x18orange.keyentry.admin.v1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a!orange/auth/v1/auth_options.proto\x1a\x1forange/routing/v1/routing.proto\"\xb3\x02\n" +
 	"\x10CreateKeyRequest\x12,\n" +
 	"\fworkspace_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\vworkspaceId\x12\"\n" +
 	"\auser_id\x18\x02 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\x06userId\x12;\n" +
 	"\x04name\x18\x03 \x01(\tB'\xbaH$r\"\x10\x02\x18?2\x1c^[a-z0-9][a-z0-9-]*[a-z0-9]$R\x04name\x12/\n" +
 	"\vdescription\x18\x04 \x01(\tB\b\xbaH\x05r\x03\x18\x80\bH\x00R\vdescription\x88\x01\x01\x12O\n" +
 	"\x11routing_overrides\x18\x05 \x03(\v2\".orange.routing.v1.RoutingOverrideR\x10routingOverridesB\x0e\n" +
-	"\f_description\"?\n" +
-	"\x11CreateKeyResponse\x12*\n" +
-	"\x03key\x18\x01 \x01(\v2\x18.orange.key.admin.v1.KeyR\x03key\"1\n" +
-	"\rGetKeyRequest\x12 \n" +
-	"\x06key_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\x05keyId\"<\n" +
-	"\x0eGetKeyResponse\x12*\n" +
-	"\x03key\x18\x01 \x01(\v2\x18.orange.key.admin.v1.KeyR\x03key\"\xd8\x01\n" +
+	"\f_description\"D\n" +
+	"\x11CreateKeyResponse\x12/\n" +
+	"\x03key\x18\x01 \x01(\v2\x1d.orange.keyentry.admin.v1.KeyR\x03key\"<\n" +
+	"\rGetKeyRequest\x12+\n" +
+	"\fkey_entry_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\n" +
+	"keyEntryId\"A\n" +
+	"\x0eGetKeyResponse\x12/\n" +
+	"\x03key\x18\x01 \x01(\v2\x1d.orange.keyentry.admin.v1.KeyR\x03key\"\xd8\x01\n" +
 	"\x0fListKeysRequest\x12,\n" +
 	"\fworkspace_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\vworkspaceId\x12'\n" +
 	"\auser_id\x18\x02 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$H\x00R\x06userId\x88\x01\x01\x12%\n" +
@@ -1796,22 +1930,25 @@ const file_orange_key_admin_v1_admin_proto_rawDesc = "" +
 	"\n" +
 	"\b_user_idB\b\n" +
 	"\x06_limitB\r\n" +
-	"\v_page_token\"h\n" +
-	"\x10ListKeysResponse\x12,\n" +
-	"\x04keys\x18\x01 \x03(\v2\x18.orange.key.admin.v1.KeyR\x04keys\x12&\n" +
-	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\xc6\x01\n" +
-	"\x10UpdateKeyRequest\x12 \n" +
-	"\x06key_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\x05keyId\x12/\n" +
+	"\v_page_token\"m\n" +
+	"\x10ListKeysResponse\x121\n" +
+	"\x04keys\x18\x01 \x03(\v2\x1d.orange.keyentry.admin.v1.KeyR\x04keys\x12&\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\xd1\x01\n" +
+	"\x10UpdateKeyRequest\x12+\n" +
+	"\fkey_entry_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\n" +
+	"keyEntryId\x12/\n" +
 	"\vdescription\x18\x02 \x01(\tB\b\xbaH\x05r\x03\x18\x80\bH\x00R\vdescription\x88\x01\x01\x12O\n" +
 	"\x11routing_overrides\x18\x03 \x03(\v2\".orange.routing.v1.RoutingOverrideR\x10routingOverridesB\x0e\n" +
-	"\f_description\"?\n" +
-	"\x11UpdateKeyResponse\x12*\n" +
-	"\x03key\x18\x01 \x01(\v2\x18.orange.key.admin.v1.KeyR\x03key\"4\n" +
-	"\x10DeleteKeyRequest\x12 \n" +
-	"\x06key_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\x05keyId\"\x13\n" +
-	"\x11DeleteKeyResponse\"\x89\x03\n" +
-	"\x03Key\x12\x15\n" +
-	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12!\n" +
+	"\f_description\"D\n" +
+	"\x11UpdateKeyResponse\x12/\n" +
+	"\x03key\x18\x01 \x01(\v2\x1d.orange.keyentry.admin.v1.KeyR\x03key\"?\n" +
+	"\x10DeleteKeyRequest\x12+\n" +
+	"\fkey_entry_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\n" +
+	"keyEntryId\"\x13\n" +
+	"\x11DeleteKeyResponse\"\x94\x03\n" +
+	"\x03Key\x12 \n" +
+	"\fkey_entry_id\x18\x01 \x01(\tR\n" +
+	"keyEntryId\x12!\n" +
 	"\fworkspace_id\x18\x02 \x01(\tR\vworkspaceId\x12\x17\n" +
 	"\auser_id\x18\x03 \x01(\tR\x06userId\x12\x12\n" +
 	"\x04name\x18\x04 \x01(\tR\x04name\x12\x1d\n" +
@@ -1823,22 +1960,36 @@ const file_orange_key_admin_v1_admin_proto_rawDesc = "" +
 	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
 	"updated_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAtB\x0e\n" +
-	"\f_description\"\x8c\x01\n" +
-	"\x11IssueTokenRequest\x12 \n" +
-	"\x06key_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\x05keyId\x12,\n" +
+	"\f_description\"\x97\x01\n" +
+	"\x11IssueTokenRequest\x12+\n" +
+	"\fkey_entry_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\n" +
+	"keyEntryId\x12,\n" +
 	"\vttl_seconds\x18\x02 \x01(\x03B\v\xbaH\b\"\x06\x18\x80\xa3\x05(\x01R\n" +
 	"ttlSeconds\x12\x1f\n" +
 	"\x03pol\x18\x03 \x01(\tB\b\xbaH\x05r\x03\x18\x80 H\x00R\x03pol\x88\x01\x01B\x06\n" +
-	"\x04_pol\"h\n" +
+	"\x04_pol\"m\n" +
 	"\x12IssueTokenResponse\x12\x14\n" +
-	"\x05token\x18\x01 \x01(\tR\x05token\x12<\n" +
-	"\bmetadata\x18\x02 \x01(\v2 .orange.key.admin.v1.PASETOTokenR\bmetadata\"7\n" +
+	"\x05token\x18\x01 \x01(\tR\x05token\x12A\n" +
+	"\bmetadata\x18\x02 \x01(\v2%.orange.keyentry.admin.v1.PASETOTokenR\bmetadata\"\xe9\x01\n" +
+	"\x16IssueNamedTokenRequest\x12;\n" +
+	"\x04name\x18\x01 \x01(\tB'\xbaH$r\"\x10\x02\x18?2\x1c^[a-z0-9][a-z0-9-]*[a-z0-9]$R\x04name\x12(\n" +
+	"\vttl_seconds\x18\x02 \x01(\x03B\a\xbaH\x04\"\x02(\x00R\n" +
+	"ttlSeconds\x12\x1f\n" +
+	"\x03pol\x18\x03 \x01(\tB\b\xbaH\x05r\x03\x18\x80 H\x00R\x03pol\x88\x01\x01\x12/\n" +
+	"\vdescription\x18\x04 \x01(\tB\b\xbaH\x05r\x03\x18\x80\bH\x01R\vdescription\x88\x01\x01B\x06\n" +
+	"\x04_polB\x0e\n" +
+	"\f_description\"\xa3\x01\n" +
+	"\x17IssueNamedTokenResponse\x12\x14\n" +
+	"\x05token\x18\x01 \x01(\tR\x05token\x12A\n" +
+	"\bmetadata\x18\x02 \x01(\v2%.orange.keyentry.admin.v1.PASETOTokenR\bmetadata\x12/\n" +
+	"\x03key\x18\x03 \x01(\v2\x1d.orange.keyentry.admin.v1.KeyR\x03key\"7\n" +
 	"\x0fGetTokenRequest\x12$\n" +
-	"\btoken_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\atokenId\"J\n" +
-	"\x10GetTokenResponse\x126\n" +
-	"\x05token\x18\x01 \x01(\v2 .orange.key.admin.v1.PASETOTokenR\x05token\"\xdb\x01\n" +
-	"\x11ListTokensRequest\x12 \n" +
-	"\x06key_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\x05keyId\x12,\n" +
+	"\btoken_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\atokenId\"O\n" +
+	"\x10GetTokenResponse\x12;\n" +
+	"\x05token\x18\x01 \x01(\v2%.orange.keyentry.admin.v1.PASETOTokenR\x05token\"\xe6\x01\n" +
+	"\x11ListTokensRequest\x12+\n" +
+	"\fkey_entry_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\n" +
+	"keyEntryId\x12,\n" +
 	"\x0finclude_revoked\x18\x02 \x01(\bH\x00R\x0eincludeRevoked\x88\x01\x01\x12%\n" +
 	"\x05limit\x18\x03 \x01(\x05B\n" +
 	"\xbaH\a\x1a\x05\x18\xe8\a(\x00H\x01R\x05limit\x88\x01\x01\x12\"\n" +
@@ -1846,16 +1997,17 @@ const file_orange_key_admin_v1_admin_proto_rawDesc = "" +
 	"page_token\x18\x04 \x01(\tH\x02R\tpageToken\x88\x01\x01B\x12\n" +
 	"\x10_include_revokedB\b\n" +
 	"\x06_limitB\r\n" +
-	"\v_page_token\"v\n" +
-	"\x12ListTokensResponse\x128\n" +
-	"\x06tokens\x18\x01 \x03(\v2 .orange.key.admin.v1.PASETOTokenR\x06tokens\x12&\n" +
+	"\v_page_token\"{\n" +
+	"\x12ListTokensResponse\x12=\n" +
+	"\x06tokens\x18\x01 \x03(\v2%.orange.keyentry.admin.v1.PASETOTokenR\x06tokens\x12&\n" +
 	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\":\n" +
 	"\x12RevokeTokenRequest\x12$\n" +
 	"\btoken_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\atokenId\"\x15\n" +
-	"\x13RevokeTokenResponse\"\xc0\x02\n" +
+	"\x13RevokeTokenResponse\"\xcb\x02\n" +
 	"\vPASETOToken\x12\x19\n" +
-	"\btoken_id\x18\x01 \x01(\tR\atokenId\x12\x15\n" +
-	"\x06key_id\x18\x02 \x01(\tR\x05keyId\x12\x10\n" +
+	"\btoken_id\x18\x01 \x01(\tR\atokenId\x12 \n" +
+	"\fkey_entry_id\x18\x02 \x01(\tR\n" +
+	"keyEntryId\x12\x10\n" +
 	"\x03jti\x18\x03 \x01(\tR\x03jti\x12,\n" +
 	"\x03iat\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x03iat\x12,\n" +
 	"\x03exp\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\x03exp\x12\x15\n" +
@@ -1865,44 +2017,47 @@ const file_orange_key_admin_v1_admin_proto_rawDesc = "" +
 	"\arevoked\x18\b \x01(\bR\arevoked\x129\n" +
 	"\n" +
 	"created_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAtB\x06\n" +
-	"\x04_pol\"\xd2\x01\n" +
-	"\x16CreateKeySecretRequest\x12 \n" +
-	"\x06key_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\x05keyId\x123\n" +
+	"\x04_pol\"\xdd\x01\n" +
+	"\x16CreateKeySecretRequest\x12+\n" +
+	"\fkey_entry_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\n" +
+	"keyEntryId\x123\n" +
 	"\x0fupstream_target\x18\x02 \x01(\tB\n" +
 	"\xbaH\ar\x05\x10\x01\x18\xff\x01R\x0eupstreamTarget\x12 \n" +
 	"\x05value\x18\x03 \x01(\tB\n" +
 	"\xbaH\ar\x05\x10\x01\x18\x80@R\x05value\x12/\n" +
 	"\vdescription\x18\x04 \x01(\tB\b\xbaH\x05r\x03\x18\x80\bH\x00R\vdescription\x88\x01\x01B\x0e\n" +
-	"\f_description\"Q\n" +
-	"\x17CreateKeySecretResponse\x126\n" +
-	"\x06secret\x18\x01 \x01(\v2\x1e.orange.key.admin.v1.KeySecretR\x06secret\"D\n" +
+	"\f_description\"V\n" +
+	"\x17CreateKeySecretResponse\x12;\n" +
+	"\x06secret\x18\x01 \x01(\v2#.orange.keyentry.admin.v1.KeySecretR\x06secret\"D\n" +
 	"\x13GetKeySecretRequest\x12-\n" +
-	"\rkey_secret_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\vkeySecretId\"N\n" +
-	"\x14GetKeySecretResponse\x126\n" +
-	"\x06secret\x18\x01 \x01(\v2\x1e.orange.key.admin.v1.KeySecretR\x06secret\"\x9d\x01\n" +
-	"\x15ListKeySecretsRequest\x12 \n" +
-	"\x06key_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\x05keyId\x12%\n" +
+	"\rkey_secret_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\vkeySecretId\"S\n" +
+	"\x14GetKeySecretResponse\x12;\n" +
+	"\x06secret\x18\x01 \x01(\v2#.orange.keyentry.admin.v1.KeySecretR\x06secret\"\xa8\x01\n" +
+	"\x15ListKeySecretsRequest\x12+\n" +
+	"\fkey_entry_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\n" +
+	"keyEntryId\x12%\n" +
 	"\x05limit\x18\x02 \x01(\x05B\n" +
 	"\xbaH\a\x1a\x05\x18\xe8\a(\x00H\x00R\x05limit\x88\x01\x01\x12\"\n" +
 	"\n" +
 	"page_token\x18\x03 \x01(\tH\x01R\tpageToken\x88\x01\x01B\b\n" +
 	"\x06_limitB\r\n" +
-	"\v_page_token\"z\n" +
-	"\x16ListKeySecretsResponse\x128\n" +
-	"\asecrets\x18\x01 \x03(\v2\x1e.orange.key.admin.v1.KeySecretR\asecrets\x12&\n" +
+	"\v_page_token\"\x7f\n" +
+	"\x16ListKeySecretsResponse\x12=\n" +
+	"\asecrets\x18\x01 \x03(\v2#.orange.keyentry.admin.v1.KeySecretR\asecrets\x12&\n" +
 	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"i\n" +
 	"\x16RotateKeySecretRequest\x12-\n" +
 	"\rkey_secret_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\vkeySecretId\x12 \n" +
 	"\x05value\x18\x02 \x01(\tB\n" +
-	"\xbaH\ar\x05\x10\x01\x18\x80@R\x05value\"Q\n" +
-	"\x17RotateKeySecretResponse\x126\n" +
-	"\x06secret\x18\x01 \x01(\v2\x1e.orange.key.admin.v1.KeySecretR\x06secret\"G\n" +
+	"\xbaH\ar\x05\x10\x01\x18\x80@R\x05value\"V\n" +
+	"\x17RotateKeySecretResponse\x12;\n" +
+	"\x06secret\x18\x01 \x01(\v2#.orange.keyentry.admin.v1.KeySecretR\x06secret\"G\n" +
 	"\x16DeleteKeySecretRequest\x12-\n" +
 	"\rkey_secret_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\vkeySecretId\"\x19\n" +
-	"\x17DeleteKeySecretResponse\"\xce\x02\n" +
+	"\x17DeleteKeySecretResponse\"\xd9\x02\n" +
 	"\tKeySecret\x12\"\n" +
-	"\rkey_secret_id\x18\x01 \x01(\tR\vkeySecretId\x12\x15\n" +
-	"\x06key_id\x18\x02 \x01(\tR\x05keyId\x12'\n" +
+	"\rkey_secret_id\x18\x01 \x01(\tR\vkeySecretId\x12 \n" +
+	"\fkey_entry_id\x18\x02 \x01(\tR\n" +
+	"keyEntryId\x12'\n" +
 	"\x0fupstream_target\x18\x03 \x01(\tR\x0eupstreamTarget\x12\x18\n" +
 	"\aversion\x18\x04 \x01(\x05R\aversion\x12\x16\n" +
 	"\x06active\x18\x05 \x01(\bR\x06active\x12%\n" +
@@ -1911,190 +2066,199 @@ const file_orange_key_admin_v1_admin_proto_rawDesc = "" +
 	"created_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
 	"updated_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAtB\x0e\n" +
-	"\f_description2\xd6\f\n" +
-	"\x0fKeyAdminService\x12j\n" +
-	"\tCreateKey\x12%.orange.key.admin.v1.CreateKeyRequest\x1a&.orange.key.admin.v1.CreateKeyResponse\"\x0e\xc2\xf3\x18\n" +
+	"\f_description2\xfb\x0e\n" +
+	"\x14KeyEntryAdminService\x12t\n" +
+	"\tCreateKey\x12*.orange.keyentry.admin.v1.CreateKeyRequest\x1a+.orange.keyentry.admin.v1.CreateKeyResponse\"\x0e\xc2\xf3\x18\n" +
 	"\n" +
-	"\x01\x01\x12\x05admin\x12d\n" +
-	"\x06GetKey\x12\".orange.key.admin.v1.GetKeyRequest\x1a#.orange.key.admin.v1.GetKeyResponse\"\x11\xc2\xf3\x18\n" +
+	"\x01\x01\x12\x05admin\x12n\n" +
+	"\x06GetKey\x12'.orange.keyentry.admin.v1.GetKeyRequest\x1a(.orange.keyentry.admin.v1.GetKeyResponse\"\x11\xc2\xf3\x18\n" +
 	"\n" +
-	"\x01\x01\x12\x05admin\x90\x02\x01\x12j\n" +
-	"\bListKeys\x12$.orange.key.admin.v1.ListKeysRequest\x1a%.orange.key.admin.v1.ListKeysResponse\"\x11\xc2\xf3\x18\n" +
+	"\x01\x01\x12\x05admin\x90\x02\x01\x12t\n" +
+	"\bListKeys\x12).orange.keyentry.admin.v1.ListKeysRequest\x1a*.orange.keyentry.admin.v1.ListKeysResponse\"\x11\xc2\xf3\x18\n" +
 	"\n" +
-	"\x01\x01\x12\x05admin\x90\x02\x01\x12j\n" +
-	"\tUpdateKey\x12%.orange.key.admin.v1.UpdateKeyRequest\x1a&.orange.key.admin.v1.UpdateKeyResponse\"\x0e\xc2\xf3\x18\n" +
+	"\x01\x01\x12\x05admin\x90\x02\x01\x12t\n" +
+	"\tUpdateKey\x12*.orange.keyentry.admin.v1.UpdateKeyRequest\x1a+.orange.keyentry.admin.v1.UpdateKeyResponse\"\x0e\xc2\xf3\x18\n" +
 	"\n" +
-	"\x01\x01\x12\x05admin\x12j\n" +
-	"\tDeleteKey\x12%.orange.key.admin.v1.DeleteKeyRequest\x1a&.orange.key.admin.v1.DeleteKeyResponse\"\x0e\xc2\xf3\x18\n" +
+	"\x01\x01\x12\x05admin\x12t\n" +
+	"\tDeleteKey\x12*.orange.keyentry.admin.v1.DeleteKeyRequest\x1a+.orange.keyentry.admin.v1.DeleteKeyResponse\"\x0e\xc2\xf3\x18\n" +
 	"\n" +
-	"\x01\x01\x12\x05admin\x12m\n" +
+	"\x01\x01\x12\x05admin\x12w\n" +
 	"\n" +
-	"IssueToken\x12&.orange.key.admin.v1.IssueTokenRequest\x1a'.orange.key.admin.v1.IssueTokenResponse\"\x0e\xc2\xf3\x18\n" +
+	"IssueToken\x12+.orange.keyentry.admin.v1.IssueTokenRequest\x1a,.orange.keyentry.admin.v1.IssueTokenResponse\"\x0e\xc2\xf3\x18\n" +
 	"\n" +
-	"\x01\x01\x12\x05admin\x12j\n" +
-	"\bGetToken\x12$.orange.key.admin.v1.GetTokenRequest\x1a%.orange.key.admin.v1.GetTokenResponse\"\x11\xc2\xf3\x18\n" +
+	"\x01\x01\x12\x05admin\x12\x8c\x01\n" +
+	"\x0fIssueNamedToken\x120.orange.keyentry.admin.v1.IssueNamedTokenRequest\x1a1.orange.keyentry.admin.v1.IssueNamedTokenResponse\"\x14\xc2\xf3\x18\x10\n" +
+	"\x01\x01\x12\vtoken:issue\x12t\n" +
+	"\bGetToken\x12).orange.keyentry.admin.v1.GetTokenRequest\x1a*.orange.keyentry.admin.v1.GetTokenResponse\"\x11\xc2\xf3\x18\n" +
 	"\n" +
-	"\x01\x01\x12\x05admin\x90\x02\x01\x12p\n" +
+	"\x01\x01\x12\x05admin\x90\x02\x01\x12z\n" +
 	"\n" +
-	"ListTokens\x12&.orange.key.admin.v1.ListTokensRequest\x1a'.orange.key.admin.v1.ListTokensResponse\"\x11\xc2\xf3\x18\n" +
+	"ListTokens\x12+.orange.keyentry.admin.v1.ListTokensRequest\x1a,.orange.keyentry.admin.v1.ListTokensResponse\"\x11\xc2\xf3\x18\n" +
 	"\n" +
-	"\x01\x01\x12\x05admin\x90\x02\x01\x12p\n" +
-	"\vRevokeToken\x12'.orange.key.admin.v1.RevokeTokenRequest\x1a(.orange.key.admin.v1.RevokeTokenResponse\"\x0e\xc2\xf3\x18\n" +
+	"\x01\x01\x12\x05admin\x90\x02\x01\x12z\n" +
+	"\vRevokeToken\x12,.orange.keyentry.admin.v1.RevokeTokenRequest\x1a-.orange.keyentry.admin.v1.RevokeTokenResponse\"\x0e\xc2\xf3\x18\n" +
 	"\n" +
-	"\x01\x01\x12\x05admin\x12|\n" +
-	"\x0fCreateKeySecret\x12+.orange.key.admin.v1.CreateKeySecretRequest\x1a,.orange.key.admin.v1.CreateKeySecretResponse\"\x0e\xc2\xf3\x18\n" +
+	"\x01\x01\x12\x05admin\x12\x86\x01\n" +
+	"\x0fCreateKeySecret\x120.orange.keyentry.admin.v1.CreateKeySecretRequest\x1a1.orange.keyentry.admin.v1.CreateKeySecretResponse\"\x0e\xc2\xf3\x18\n" +
 	"\n" +
-	"\x01\x01\x12\x05admin\x12v\n" +
-	"\fGetKeySecret\x12(.orange.key.admin.v1.GetKeySecretRequest\x1a).orange.key.admin.v1.GetKeySecretResponse\"\x11\xc2\xf3\x18\n" +
+	"\x01\x01\x12\x05admin\x12\x80\x01\n" +
+	"\fGetKeySecret\x12-.orange.keyentry.admin.v1.GetKeySecretRequest\x1a..orange.keyentry.admin.v1.GetKeySecretResponse\"\x11\xc2\xf3\x18\n" +
 	"\n" +
-	"\x01\x01\x12\x05admin\x90\x02\x01\x12|\n" +
-	"\x0eListKeySecrets\x12*.orange.key.admin.v1.ListKeySecretsRequest\x1a+.orange.key.admin.v1.ListKeySecretsResponse\"\x11\xc2\xf3\x18\n" +
+	"\x01\x01\x12\x05admin\x90\x02\x01\x12\x86\x01\n" +
+	"\x0eListKeySecrets\x12/.orange.keyentry.admin.v1.ListKeySecretsRequest\x1a0.orange.keyentry.admin.v1.ListKeySecretsResponse\"\x11\xc2\xf3\x18\n" +
 	"\n" +
-	"\x01\x01\x12\x05admin\x90\x02\x01\x12|\n" +
-	"\x0fRotateKeySecret\x12+.orange.key.admin.v1.RotateKeySecretRequest\x1a,.orange.key.admin.v1.RotateKeySecretResponse\"\x0e\xc2\xf3\x18\n" +
+	"\x01\x01\x12\x05admin\x90\x02\x01\x12\x86\x01\n" +
+	"\x0fRotateKeySecret\x120.orange.keyentry.admin.v1.RotateKeySecretRequest\x1a1.orange.keyentry.admin.v1.RotateKeySecretResponse\"\x0e\xc2\xf3\x18\n" +
 	"\n" +
-	"\x01\x01\x12\x05admin\x12|\n" +
-	"\x0fDeleteKeySecret\x12+.orange.key.admin.v1.DeleteKeySecretRequest\x1a,.orange.key.admin.v1.DeleteKeySecretResponse\"\x0e\xc2\xf3\x18\n" +
+	"\x01\x01\x12\x05admin\x12\x86\x01\n" +
+	"\x0fDeleteKeySecret\x120.orange.keyentry.admin.v1.DeleteKeySecretRequest\x1a1.orange.keyentry.admin.v1.DeleteKeySecretResponse\"\x0e\xc2\xf3\x18\n" +
 	"\n" +
-	"\x01\x01\x12\x05adminB\xdc\x01\n" +
-	"\x17com.orange.key.admin.v1B\n" +
-	"AdminProtoP\x01ZFgithub.com/dio/transit/examples/orange/api/orange/key/admin/v1;adminv1\xa2\x02\x03OKA\xaa\x02\x13Orange.Key.Admin.V1\xca\x02\x13Orange\\Key\\Admin\\V1\xe2\x02\x1fOrange\\Key\\Admin\\V1\\GPBMetadata\xea\x02\x16Orange::Key::Admin::V1b\x06proto3"
+	"\x01\x01\x12\x05adminB\xfa\x01\n" +
+	"\x1ccom.orange.keyentry.admin.v1B\n" +
+	"AdminProtoP\x01ZKgithub.com/dio/transit/examples/orange/api/orange/keyentry/admin/v1;adminv1\xa2\x02\x03OKA\xaa\x02\x18Orange.Keyentry.Admin.V1\xca\x02\x18Orange\\Keyentry\\Admin\\V1\xe2\x02$Orange\\Keyentry\\Admin\\V1\\GPBMetadata\xea\x02\x1bOrange::Keyentry::Admin::V1b\x06proto3"
 
 var (
-	file_orange_key_admin_v1_admin_proto_rawDescOnce sync.Once
-	file_orange_key_admin_v1_admin_proto_rawDescData []byte
+	file_orange_keyentry_admin_v1_admin_proto_rawDescOnce sync.Once
+	file_orange_keyentry_admin_v1_admin_proto_rawDescData []byte
 )
 
-func file_orange_key_admin_v1_admin_proto_rawDescGZIP() []byte {
-	file_orange_key_admin_v1_admin_proto_rawDescOnce.Do(func() {
-		file_orange_key_admin_v1_admin_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_orange_key_admin_v1_admin_proto_rawDesc), len(file_orange_key_admin_v1_admin_proto_rawDesc)))
+func file_orange_keyentry_admin_v1_admin_proto_rawDescGZIP() []byte {
+	file_orange_keyentry_admin_v1_admin_proto_rawDescOnce.Do(func() {
+		file_orange_keyentry_admin_v1_admin_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_orange_keyentry_admin_v1_admin_proto_rawDesc), len(file_orange_keyentry_admin_v1_admin_proto_rawDesc)))
 	})
-	return file_orange_key_admin_v1_admin_proto_rawDescData
+	return file_orange_keyentry_admin_v1_admin_proto_rawDescData
 }
 
-var file_orange_key_admin_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
-var file_orange_key_admin_v1_admin_proto_goTypes = []any{
-	(*CreateKeyRequest)(nil),        // 0: orange.key.admin.v1.CreateKeyRequest
-	(*CreateKeyResponse)(nil),       // 1: orange.key.admin.v1.CreateKeyResponse
-	(*GetKeyRequest)(nil),           // 2: orange.key.admin.v1.GetKeyRequest
-	(*GetKeyResponse)(nil),          // 3: orange.key.admin.v1.GetKeyResponse
-	(*ListKeysRequest)(nil),         // 4: orange.key.admin.v1.ListKeysRequest
-	(*ListKeysResponse)(nil),        // 5: orange.key.admin.v1.ListKeysResponse
-	(*UpdateKeyRequest)(nil),        // 6: orange.key.admin.v1.UpdateKeyRequest
-	(*UpdateKeyResponse)(nil),       // 7: orange.key.admin.v1.UpdateKeyResponse
-	(*DeleteKeyRequest)(nil),        // 8: orange.key.admin.v1.DeleteKeyRequest
-	(*DeleteKeyResponse)(nil),       // 9: orange.key.admin.v1.DeleteKeyResponse
-	(*Key)(nil),                     // 10: orange.key.admin.v1.Key
-	(*IssueTokenRequest)(nil),       // 11: orange.key.admin.v1.IssueTokenRequest
-	(*IssueTokenResponse)(nil),      // 12: orange.key.admin.v1.IssueTokenResponse
-	(*GetTokenRequest)(nil),         // 13: orange.key.admin.v1.GetTokenRequest
-	(*GetTokenResponse)(nil),        // 14: orange.key.admin.v1.GetTokenResponse
-	(*ListTokensRequest)(nil),       // 15: orange.key.admin.v1.ListTokensRequest
-	(*ListTokensResponse)(nil),      // 16: orange.key.admin.v1.ListTokensResponse
-	(*RevokeTokenRequest)(nil),      // 17: orange.key.admin.v1.RevokeTokenRequest
-	(*RevokeTokenResponse)(nil),     // 18: orange.key.admin.v1.RevokeTokenResponse
-	(*PASETOToken)(nil),             // 19: orange.key.admin.v1.PASETOToken
-	(*CreateKeySecretRequest)(nil),  // 20: orange.key.admin.v1.CreateKeySecretRequest
-	(*CreateKeySecretResponse)(nil), // 21: orange.key.admin.v1.CreateKeySecretResponse
-	(*GetKeySecretRequest)(nil),     // 22: orange.key.admin.v1.GetKeySecretRequest
-	(*GetKeySecretResponse)(nil),    // 23: orange.key.admin.v1.GetKeySecretResponse
-	(*ListKeySecretsRequest)(nil),   // 24: orange.key.admin.v1.ListKeySecretsRequest
-	(*ListKeySecretsResponse)(nil),  // 25: orange.key.admin.v1.ListKeySecretsResponse
-	(*RotateKeySecretRequest)(nil),  // 26: orange.key.admin.v1.RotateKeySecretRequest
-	(*RotateKeySecretResponse)(nil), // 27: orange.key.admin.v1.RotateKeySecretResponse
-	(*DeleteKeySecretRequest)(nil),  // 28: orange.key.admin.v1.DeleteKeySecretRequest
-	(*DeleteKeySecretResponse)(nil), // 29: orange.key.admin.v1.DeleteKeySecretResponse
-	(*KeySecret)(nil),               // 30: orange.key.admin.v1.KeySecret
-	(*v1.RoutingOverride)(nil),      // 31: orange.routing.v1.RoutingOverride
-	(*timestamppb.Timestamp)(nil),   // 32: google.protobuf.Timestamp
+var file_orange_keyentry_admin_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
+var file_orange_keyentry_admin_v1_admin_proto_goTypes = []any{
+	(*CreateKeyRequest)(nil),        // 0: orange.keyentry.admin.v1.CreateKeyRequest
+	(*CreateKeyResponse)(nil),       // 1: orange.keyentry.admin.v1.CreateKeyResponse
+	(*GetKeyRequest)(nil),           // 2: orange.keyentry.admin.v1.GetKeyRequest
+	(*GetKeyResponse)(nil),          // 3: orange.keyentry.admin.v1.GetKeyResponse
+	(*ListKeysRequest)(nil),         // 4: orange.keyentry.admin.v1.ListKeysRequest
+	(*ListKeysResponse)(nil),        // 5: orange.keyentry.admin.v1.ListKeysResponse
+	(*UpdateKeyRequest)(nil),        // 6: orange.keyentry.admin.v1.UpdateKeyRequest
+	(*UpdateKeyResponse)(nil),       // 7: orange.keyentry.admin.v1.UpdateKeyResponse
+	(*DeleteKeyRequest)(nil),        // 8: orange.keyentry.admin.v1.DeleteKeyRequest
+	(*DeleteKeyResponse)(nil),       // 9: orange.keyentry.admin.v1.DeleteKeyResponse
+	(*Key)(nil),                     // 10: orange.keyentry.admin.v1.Key
+	(*IssueTokenRequest)(nil),       // 11: orange.keyentry.admin.v1.IssueTokenRequest
+	(*IssueTokenResponse)(nil),      // 12: orange.keyentry.admin.v1.IssueTokenResponse
+	(*IssueNamedTokenRequest)(nil),  // 13: orange.keyentry.admin.v1.IssueNamedTokenRequest
+	(*IssueNamedTokenResponse)(nil), // 14: orange.keyentry.admin.v1.IssueNamedTokenResponse
+	(*GetTokenRequest)(nil),         // 15: orange.keyentry.admin.v1.GetTokenRequest
+	(*GetTokenResponse)(nil),        // 16: orange.keyentry.admin.v1.GetTokenResponse
+	(*ListTokensRequest)(nil),       // 17: orange.keyentry.admin.v1.ListTokensRequest
+	(*ListTokensResponse)(nil),      // 18: orange.keyentry.admin.v1.ListTokensResponse
+	(*RevokeTokenRequest)(nil),      // 19: orange.keyentry.admin.v1.RevokeTokenRequest
+	(*RevokeTokenResponse)(nil),     // 20: orange.keyentry.admin.v1.RevokeTokenResponse
+	(*PASETOToken)(nil),             // 21: orange.keyentry.admin.v1.PASETOToken
+	(*CreateKeySecretRequest)(nil),  // 22: orange.keyentry.admin.v1.CreateKeySecretRequest
+	(*CreateKeySecretResponse)(nil), // 23: orange.keyentry.admin.v1.CreateKeySecretResponse
+	(*GetKeySecretRequest)(nil),     // 24: orange.keyentry.admin.v1.GetKeySecretRequest
+	(*GetKeySecretResponse)(nil),    // 25: orange.keyentry.admin.v1.GetKeySecretResponse
+	(*ListKeySecretsRequest)(nil),   // 26: orange.keyentry.admin.v1.ListKeySecretsRequest
+	(*ListKeySecretsResponse)(nil),  // 27: orange.keyentry.admin.v1.ListKeySecretsResponse
+	(*RotateKeySecretRequest)(nil),  // 28: orange.keyentry.admin.v1.RotateKeySecretRequest
+	(*RotateKeySecretResponse)(nil), // 29: orange.keyentry.admin.v1.RotateKeySecretResponse
+	(*DeleteKeySecretRequest)(nil),  // 30: orange.keyentry.admin.v1.DeleteKeySecretRequest
+	(*DeleteKeySecretResponse)(nil), // 31: orange.keyentry.admin.v1.DeleteKeySecretResponse
+	(*KeySecret)(nil),               // 32: orange.keyentry.admin.v1.KeySecret
+	(*v1.RoutingOverride)(nil),      // 33: orange.routing.v1.RoutingOverride
+	(*timestamppb.Timestamp)(nil),   // 34: google.protobuf.Timestamp
 }
-var file_orange_key_admin_v1_admin_proto_depIdxs = []int32{
-	31, // 0: orange.key.admin.v1.CreateKeyRequest.routing_overrides:type_name -> orange.routing.v1.RoutingOverride
-	10, // 1: orange.key.admin.v1.CreateKeyResponse.key:type_name -> orange.key.admin.v1.Key
-	10, // 2: orange.key.admin.v1.GetKeyResponse.key:type_name -> orange.key.admin.v1.Key
-	10, // 3: orange.key.admin.v1.ListKeysResponse.keys:type_name -> orange.key.admin.v1.Key
-	31, // 4: orange.key.admin.v1.UpdateKeyRequest.routing_overrides:type_name -> orange.routing.v1.RoutingOverride
-	10, // 5: orange.key.admin.v1.UpdateKeyResponse.key:type_name -> orange.key.admin.v1.Key
-	31, // 6: orange.key.admin.v1.Key.routing_overrides:type_name -> orange.routing.v1.RoutingOverride
-	32, // 7: orange.key.admin.v1.Key.created_at:type_name -> google.protobuf.Timestamp
-	32, // 8: orange.key.admin.v1.Key.updated_at:type_name -> google.protobuf.Timestamp
-	19, // 9: orange.key.admin.v1.IssueTokenResponse.metadata:type_name -> orange.key.admin.v1.PASETOToken
-	19, // 10: orange.key.admin.v1.GetTokenResponse.token:type_name -> orange.key.admin.v1.PASETOToken
-	19, // 11: orange.key.admin.v1.ListTokensResponse.tokens:type_name -> orange.key.admin.v1.PASETOToken
-	32, // 12: orange.key.admin.v1.PASETOToken.iat:type_name -> google.protobuf.Timestamp
-	32, // 13: orange.key.admin.v1.PASETOToken.exp:type_name -> google.protobuf.Timestamp
-	32, // 14: orange.key.admin.v1.PASETOToken.created_at:type_name -> google.protobuf.Timestamp
-	30, // 15: orange.key.admin.v1.CreateKeySecretResponse.secret:type_name -> orange.key.admin.v1.KeySecret
-	30, // 16: orange.key.admin.v1.GetKeySecretResponse.secret:type_name -> orange.key.admin.v1.KeySecret
-	30, // 17: orange.key.admin.v1.ListKeySecretsResponse.secrets:type_name -> orange.key.admin.v1.KeySecret
-	30, // 18: orange.key.admin.v1.RotateKeySecretResponse.secret:type_name -> orange.key.admin.v1.KeySecret
-	32, // 19: orange.key.admin.v1.KeySecret.created_at:type_name -> google.protobuf.Timestamp
-	32, // 20: orange.key.admin.v1.KeySecret.updated_at:type_name -> google.protobuf.Timestamp
-	0,  // 21: orange.key.admin.v1.KeyAdminService.CreateKey:input_type -> orange.key.admin.v1.CreateKeyRequest
-	2,  // 22: orange.key.admin.v1.KeyAdminService.GetKey:input_type -> orange.key.admin.v1.GetKeyRequest
-	4,  // 23: orange.key.admin.v1.KeyAdminService.ListKeys:input_type -> orange.key.admin.v1.ListKeysRequest
-	6,  // 24: orange.key.admin.v1.KeyAdminService.UpdateKey:input_type -> orange.key.admin.v1.UpdateKeyRequest
-	8,  // 25: orange.key.admin.v1.KeyAdminService.DeleteKey:input_type -> orange.key.admin.v1.DeleteKeyRequest
-	11, // 26: orange.key.admin.v1.KeyAdminService.IssueToken:input_type -> orange.key.admin.v1.IssueTokenRequest
-	13, // 27: orange.key.admin.v1.KeyAdminService.GetToken:input_type -> orange.key.admin.v1.GetTokenRequest
-	15, // 28: orange.key.admin.v1.KeyAdminService.ListTokens:input_type -> orange.key.admin.v1.ListTokensRequest
-	17, // 29: orange.key.admin.v1.KeyAdminService.RevokeToken:input_type -> orange.key.admin.v1.RevokeTokenRequest
-	20, // 30: orange.key.admin.v1.KeyAdminService.CreateKeySecret:input_type -> orange.key.admin.v1.CreateKeySecretRequest
-	22, // 31: orange.key.admin.v1.KeyAdminService.GetKeySecret:input_type -> orange.key.admin.v1.GetKeySecretRequest
-	24, // 32: orange.key.admin.v1.KeyAdminService.ListKeySecrets:input_type -> orange.key.admin.v1.ListKeySecretsRequest
-	26, // 33: orange.key.admin.v1.KeyAdminService.RotateKeySecret:input_type -> orange.key.admin.v1.RotateKeySecretRequest
-	28, // 34: orange.key.admin.v1.KeyAdminService.DeleteKeySecret:input_type -> orange.key.admin.v1.DeleteKeySecretRequest
-	1,  // 35: orange.key.admin.v1.KeyAdminService.CreateKey:output_type -> orange.key.admin.v1.CreateKeyResponse
-	3,  // 36: orange.key.admin.v1.KeyAdminService.GetKey:output_type -> orange.key.admin.v1.GetKeyResponse
-	5,  // 37: orange.key.admin.v1.KeyAdminService.ListKeys:output_type -> orange.key.admin.v1.ListKeysResponse
-	7,  // 38: orange.key.admin.v1.KeyAdminService.UpdateKey:output_type -> orange.key.admin.v1.UpdateKeyResponse
-	9,  // 39: orange.key.admin.v1.KeyAdminService.DeleteKey:output_type -> orange.key.admin.v1.DeleteKeyResponse
-	12, // 40: orange.key.admin.v1.KeyAdminService.IssueToken:output_type -> orange.key.admin.v1.IssueTokenResponse
-	14, // 41: orange.key.admin.v1.KeyAdminService.GetToken:output_type -> orange.key.admin.v1.GetTokenResponse
-	16, // 42: orange.key.admin.v1.KeyAdminService.ListTokens:output_type -> orange.key.admin.v1.ListTokensResponse
-	18, // 43: orange.key.admin.v1.KeyAdminService.RevokeToken:output_type -> orange.key.admin.v1.RevokeTokenResponse
-	21, // 44: orange.key.admin.v1.KeyAdminService.CreateKeySecret:output_type -> orange.key.admin.v1.CreateKeySecretResponse
-	23, // 45: orange.key.admin.v1.KeyAdminService.GetKeySecret:output_type -> orange.key.admin.v1.GetKeySecretResponse
-	25, // 46: orange.key.admin.v1.KeyAdminService.ListKeySecrets:output_type -> orange.key.admin.v1.ListKeySecretsResponse
-	27, // 47: orange.key.admin.v1.KeyAdminService.RotateKeySecret:output_type -> orange.key.admin.v1.RotateKeySecretResponse
-	29, // 48: orange.key.admin.v1.KeyAdminService.DeleteKeySecret:output_type -> orange.key.admin.v1.DeleteKeySecretResponse
-	35, // [35:49] is the sub-list for method output_type
-	21, // [21:35] is the sub-list for method input_type
-	21, // [21:21] is the sub-list for extension type_name
-	21, // [21:21] is the sub-list for extension extendee
-	0,  // [0:21] is the sub-list for field type_name
+var file_orange_keyentry_admin_v1_admin_proto_depIdxs = []int32{
+	33, // 0: orange.keyentry.admin.v1.CreateKeyRequest.routing_overrides:type_name -> orange.routing.v1.RoutingOverride
+	10, // 1: orange.keyentry.admin.v1.CreateKeyResponse.key:type_name -> orange.keyentry.admin.v1.Key
+	10, // 2: orange.keyentry.admin.v1.GetKeyResponse.key:type_name -> orange.keyentry.admin.v1.Key
+	10, // 3: orange.keyentry.admin.v1.ListKeysResponse.keys:type_name -> orange.keyentry.admin.v1.Key
+	33, // 4: orange.keyentry.admin.v1.UpdateKeyRequest.routing_overrides:type_name -> orange.routing.v1.RoutingOverride
+	10, // 5: orange.keyentry.admin.v1.UpdateKeyResponse.key:type_name -> orange.keyentry.admin.v1.Key
+	33, // 6: orange.keyentry.admin.v1.Key.routing_overrides:type_name -> orange.routing.v1.RoutingOverride
+	34, // 7: orange.keyentry.admin.v1.Key.created_at:type_name -> google.protobuf.Timestamp
+	34, // 8: orange.keyentry.admin.v1.Key.updated_at:type_name -> google.protobuf.Timestamp
+	21, // 9: orange.keyentry.admin.v1.IssueTokenResponse.metadata:type_name -> orange.keyentry.admin.v1.PASETOToken
+	21, // 10: orange.keyentry.admin.v1.IssueNamedTokenResponse.metadata:type_name -> orange.keyentry.admin.v1.PASETOToken
+	10, // 11: orange.keyentry.admin.v1.IssueNamedTokenResponse.key:type_name -> orange.keyentry.admin.v1.Key
+	21, // 12: orange.keyentry.admin.v1.GetTokenResponse.token:type_name -> orange.keyentry.admin.v1.PASETOToken
+	21, // 13: orange.keyentry.admin.v1.ListTokensResponse.tokens:type_name -> orange.keyentry.admin.v1.PASETOToken
+	34, // 14: orange.keyentry.admin.v1.PASETOToken.iat:type_name -> google.protobuf.Timestamp
+	34, // 15: orange.keyentry.admin.v1.PASETOToken.exp:type_name -> google.protobuf.Timestamp
+	34, // 16: orange.keyentry.admin.v1.PASETOToken.created_at:type_name -> google.protobuf.Timestamp
+	32, // 17: orange.keyentry.admin.v1.CreateKeySecretResponse.secret:type_name -> orange.keyentry.admin.v1.KeySecret
+	32, // 18: orange.keyentry.admin.v1.GetKeySecretResponse.secret:type_name -> orange.keyentry.admin.v1.KeySecret
+	32, // 19: orange.keyentry.admin.v1.ListKeySecretsResponse.secrets:type_name -> orange.keyentry.admin.v1.KeySecret
+	32, // 20: orange.keyentry.admin.v1.RotateKeySecretResponse.secret:type_name -> orange.keyentry.admin.v1.KeySecret
+	34, // 21: orange.keyentry.admin.v1.KeySecret.created_at:type_name -> google.protobuf.Timestamp
+	34, // 22: orange.keyentry.admin.v1.KeySecret.updated_at:type_name -> google.protobuf.Timestamp
+	0,  // 23: orange.keyentry.admin.v1.KeyEntryAdminService.CreateKey:input_type -> orange.keyentry.admin.v1.CreateKeyRequest
+	2,  // 24: orange.keyentry.admin.v1.KeyEntryAdminService.GetKey:input_type -> orange.keyentry.admin.v1.GetKeyRequest
+	4,  // 25: orange.keyentry.admin.v1.KeyEntryAdminService.ListKeys:input_type -> orange.keyentry.admin.v1.ListKeysRequest
+	6,  // 26: orange.keyentry.admin.v1.KeyEntryAdminService.UpdateKey:input_type -> orange.keyentry.admin.v1.UpdateKeyRequest
+	8,  // 27: orange.keyentry.admin.v1.KeyEntryAdminService.DeleteKey:input_type -> orange.keyentry.admin.v1.DeleteKeyRequest
+	11, // 28: orange.keyentry.admin.v1.KeyEntryAdminService.IssueToken:input_type -> orange.keyentry.admin.v1.IssueTokenRequest
+	13, // 29: orange.keyentry.admin.v1.KeyEntryAdminService.IssueNamedToken:input_type -> orange.keyentry.admin.v1.IssueNamedTokenRequest
+	15, // 30: orange.keyentry.admin.v1.KeyEntryAdminService.GetToken:input_type -> orange.keyentry.admin.v1.GetTokenRequest
+	17, // 31: orange.keyentry.admin.v1.KeyEntryAdminService.ListTokens:input_type -> orange.keyentry.admin.v1.ListTokensRequest
+	19, // 32: orange.keyentry.admin.v1.KeyEntryAdminService.RevokeToken:input_type -> orange.keyentry.admin.v1.RevokeTokenRequest
+	22, // 33: orange.keyentry.admin.v1.KeyEntryAdminService.CreateKeySecret:input_type -> orange.keyentry.admin.v1.CreateKeySecretRequest
+	24, // 34: orange.keyentry.admin.v1.KeyEntryAdminService.GetKeySecret:input_type -> orange.keyentry.admin.v1.GetKeySecretRequest
+	26, // 35: orange.keyentry.admin.v1.KeyEntryAdminService.ListKeySecrets:input_type -> orange.keyentry.admin.v1.ListKeySecretsRequest
+	28, // 36: orange.keyentry.admin.v1.KeyEntryAdminService.RotateKeySecret:input_type -> orange.keyentry.admin.v1.RotateKeySecretRequest
+	30, // 37: orange.keyentry.admin.v1.KeyEntryAdminService.DeleteKeySecret:input_type -> orange.keyentry.admin.v1.DeleteKeySecretRequest
+	1,  // 38: orange.keyentry.admin.v1.KeyEntryAdminService.CreateKey:output_type -> orange.keyentry.admin.v1.CreateKeyResponse
+	3,  // 39: orange.keyentry.admin.v1.KeyEntryAdminService.GetKey:output_type -> orange.keyentry.admin.v1.GetKeyResponse
+	5,  // 40: orange.keyentry.admin.v1.KeyEntryAdminService.ListKeys:output_type -> orange.keyentry.admin.v1.ListKeysResponse
+	7,  // 41: orange.keyentry.admin.v1.KeyEntryAdminService.UpdateKey:output_type -> orange.keyentry.admin.v1.UpdateKeyResponse
+	9,  // 42: orange.keyentry.admin.v1.KeyEntryAdminService.DeleteKey:output_type -> orange.keyentry.admin.v1.DeleteKeyResponse
+	12, // 43: orange.keyentry.admin.v1.KeyEntryAdminService.IssueToken:output_type -> orange.keyentry.admin.v1.IssueTokenResponse
+	14, // 44: orange.keyentry.admin.v1.KeyEntryAdminService.IssueNamedToken:output_type -> orange.keyentry.admin.v1.IssueNamedTokenResponse
+	16, // 45: orange.keyentry.admin.v1.KeyEntryAdminService.GetToken:output_type -> orange.keyentry.admin.v1.GetTokenResponse
+	18, // 46: orange.keyentry.admin.v1.KeyEntryAdminService.ListTokens:output_type -> orange.keyentry.admin.v1.ListTokensResponse
+	20, // 47: orange.keyentry.admin.v1.KeyEntryAdminService.RevokeToken:output_type -> orange.keyentry.admin.v1.RevokeTokenResponse
+	23, // 48: orange.keyentry.admin.v1.KeyEntryAdminService.CreateKeySecret:output_type -> orange.keyentry.admin.v1.CreateKeySecretResponse
+	25, // 49: orange.keyentry.admin.v1.KeyEntryAdminService.GetKeySecret:output_type -> orange.keyentry.admin.v1.GetKeySecretResponse
+	27, // 50: orange.keyentry.admin.v1.KeyEntryAdminService.ListKeySecrets:output_type -> orange.keyentry.admin.v1.ListKeySecretsResponse
+	29, // 51: orange.keyentry.admin.v1.KeyEntryAdminService.RotateKeySecret:output_type -> orange.keyentry.admin.v1.RotateKeySecretResponse
+	31, // 52: orange.keyentry.admin.v1.KeyEntryAdminService.DeleteKeySecret:output_type -> orange.keyentry.admin.v1.DeleteKeySecretResponse
+	38, // [38:53] is the sub-list for method output_type
+	23, // [23:38] is the sub-list for method input_type
+	23, // [23:23] is the sub-list for extension type_name
+	23, // [23:23] is the sub-list for extension extendee
+	0,  // [0:23] is the sub-list for field type_name
 }
 
-func init() { file_orange_key_admin_v1_admin_proto_init() }
-func file_orange_key_admin_v1_admin_proto_init() {
-	if File_orange_key_admin_v1_admin_proto != nil {
+func init() { file_orange_keyentry_admin_v1_admin_proto_init() }
+func file_orange_keyentry_admin_v1_admin_proto_init() {
+	if File_orange_keyentry_admin_v1_admin_proto != nil {
 		return
 	}
-	file_orange_key_admin_v1_admin_proto_msgTypes[0].OneofWrappers = []any{}
-	file_orange_key_admin_v1_admin_proto_msgTypes[4].OneofWrappers = []any{}
-	file_orange_key_admin_v1_admin_proto_msgTypes[6].OneofWrappers = []any{}
-	file_orange_key_admin_v1_admin_proto_msgTypes[10].OneofWrappers = []any{}
-	file_orange_key_admin_v1_admin_proto_msgTypes[11].OneofWrappers = []any{}
-	file_orange_key_admin_v1_admin_proto_msgTypes[15].OneofWrappers = []any{}
-	file_orange_key_admin_v1_admin_proto_msgTypes[19].OneofWrappers = []any{}
-	file_orange_key_admin_v1_admin_proto_msgTypes[20].OneofWrappers = []any{}
-	file_orange_key_admin_v1_admin_proto_msgTypes[24].OneofWrappers = []any{}
-	file_orange_key_admin_v1_admin_proto_msgTypes[30].OneofWrappers = []any{}
+	file_orange_keyentry_admin_v1_admin_proto_msgTypes[0].OneofWrappers = []any{}
+	file_orange_keyentry_admin_v1_admin_proto_msgTypes[4].OneofWrappers = []any{}
+	file_orange_keyentry_admin_v1_admin_proto_msgTypes[6].OneofWrappers = []any{}
+	file_orange_keyentry_admin_v1_admin_proto_msgTypes[10].OneofWrappers = []any{}
+	file_orange_keyentry_admin_v1_admin_proto_msgTypes[11].OneofWrappers = []any{}
+	file_orange_keyentry_admin_v1_admin_proto_msgTypes[13].OneofWrappers = []any{}
+	file_orange_keyentry_admin_v1_admin_proto_msgTypes[17].OneofWrappers = []any{}
+	file_orange_keyentry_admin_v1_admin_proto_msgTypes[21].OneofWrappers = []any{}
+	file_orange_keyentry_admin_v1_admin_proto_msgTypes[22].OneofWrappers = []any{}
+	file_orange_keyentry_admin_v1_admin_proto_msgTypes[26].OneofWrappers = []any{}
+	file_orange_keyentry_admin_v1_admin_proto_msgTypes[32].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orange_key_admin_v1_admin_proto_rawDesc), len(file_orange_key_admin_v1_admin_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orange_keyentry_admin_v1_admin_proto_rawDesc), len(file_orange_keyentry_admin_v1_admin_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   31,
+			NumMessages:   33,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_orange_key_admin_v1_admin_proto_goTypes,
-		DependencyIndexes: file_orange_key_admin_v1_admin_proto_depIdxs,
-		MessageInfos:      file_orange_key_admin_v1_admin_proto_msgTypes,
+		GoTypes:           file_orange_keyentry_admin_v1_admin_proto_goTypes,
+		DependencyIndexes: file_orange_keyentry_admin_v1_admin_proto_depIdxs,
+		MessageInfos:      file_orange_keyentry_admin_v1_admin_proto_msgTypes,
 	}.Build()
-	File_orange_key_admin_v1_admin_proto = out.File
-	file_orange_key_admin_v1_admin_proto_goTypes = nil
-	file_orange_key_admin_v1_admin_proto_depIdxs = nil
+	File_orange_keyentry_admin_v1_admin_proto = out.File
+	file_orange_keyentry_admin_v1_admin_proto_goTypes = nil
+	file_orange_keyentry_admin_v1_admin_proto_depIdxs = nil
 }

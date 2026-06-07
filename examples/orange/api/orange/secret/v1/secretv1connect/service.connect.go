@@ -1,13 +1,15 @@
 // service.proto — SecretResolverService: client-facing secret delivery.
 //
 // Mirrors the config SnapshotService pattern but for named secrets managed
-// by SecretAdminService. There are three entry points:
+// by SecretAdminService. All RPCs require AUTH_TYPE_EGRESS_ASSERTION; workspace_id
+// is derived from the caller's authenticated identity and not accepted in requests.
+// There are three entry points:
 //
 //   Resolve — hot path, per-secret, conditional.
-//     The caller presents (workspace_id, realm, secret_id) plus optional
-//     freshness hints (if_version, if_checksum). When both hints still match
-//     the current store state the server returns Unchanged, saving a full
-//     decrypt-and-copy round trip. Returns plaintext material.
+//     The caller presents (realm, secret_id) plus optional freshness hints
+//     (if_version, if_checksum). When both hints still match the current store
+//     state the server returns Unchanged, saving a full decrypt-and-copy round trip.
+//     Returns plaintext material.
 //
 //   Watch — metadata-only streaming channel.
 //     The server pushes a fresh SecretSetSnapshot whenever any secret in the
@@ -76,15 +78,18 @@ type SecretResolverServiceClient interface {
 	// Resolve is the hot path. Returns plaintext material for one secret.
 	// When both if_version and if_checksum match the current store state,
 	// returns Unchanged instead of decrypting and copying material.
+	// workspace_id is derived from the caller's egress assertion and not accepted in the request.
 	Resolve(context.Context, *connect.Request[v1.ResolveRequest]) (*connect.Response[v1.ResolveResponse], error)
 	// Watch is the metadata-only streaming channel.
 	// The server pushes a SecretSetSnapshot on any change in the workspace
 	// and emits a Heartbeat on the idle timer to prove liveness.
 	// Clients use the snapshot to invalidate caches; material is fetched via Resolve.
+	// workspace_id is derived from the caller's egress assertion and not accepted in the request.
 	Watch(context.Context, *connect.Request[v1.WatchRequest]) (*connect.ServerStreamForClient[v1.WatchResponse], error)
 	// Fetch is the unary cold-start / reconnect equivalent of Watch.
 	// Returns the current SecretSetSnapshot or Unchanged when freshness hints match.
 	// Also suitable for polling clients that cannot hold a long-lived Watch stream.
+	// workspace_id is derived from the caller's egress assertion and not accepted in the request.
 	Fetch(context.Context, *connect.Request[v1.FetchRequest]) (*connect.Response[v1.FetchResponse], error)
 }
 
@@ -148,15 +153,18 @@ type SecretResolverServiceHandler interface {
 	// Resolve is the hot path. Returns plaintext material for one secret.
 	// When both if_version and if_checksum match the current store state,
 	// returns Unchanged instead of decrypting and copying material.
+	// workspace_id is derived from the caller's egress assertion and not accepted in the request.
 	Resolve(context.Context, *connect.Request[v1.ResolveRequest]) (*connect.Response[v1.ResolveResponse], error)
 	// Watch is the metadata-only streaming channel.
 	// The server pushes a SecretSetSnapshot on any change in the workspace
 	// and emits a Heartbeat on the idle timer to prove liveness.
 	// Clients use the snapshot to invalidate caches; material is fetched via Resolve.
+	// workspace_id is derived from the caller's egress assertion and not accepted in the request.
 	Watch(context.Context, *connect.Request[v1.WatchRequest], *connect.ServerStream[v1.WatchResponse]) error
 	// Fetch is the unary cold-start / reconnect equivalent of Watch.
 	// Returns the current SecretSetSnapshot or Unchanged when freshness hints match.
 	// Also suitable for polling clients that cannot hold a long-lived Watch stream.
+	// workspace_id is derived from the caller's egress assertion and not accepted in the request.
 	Fetch(context.Context, *connect.Request[v1.FetchRequest]) (*connect.Response[v1.FetchResponse], error)
 }
 

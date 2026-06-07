@@ -29,10 +29,10 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// HeartbeatRequest carries no fields; egress_id and workspace_id are extracted
+// from the X-Egress-Assertion header by the server-side interceptor.
 type HeartbeatRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	EgressId      string                 `protobuf:"bytes,1,opt,name=egress_id,json=egressId,proto3" json:"egress_id,omitempty"`
-	WorkspaceId   string                 `protobuf:"bytes,2,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -65,20 +65,6 @@ func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use HeartbeatRequest.ProtoReflect.Descriptor instead.
 func (*HeartbeatRequest) Descriptor() ([]byte, []int) {
 	return file_orange_egress_v1_service_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *HeartbeatRequest) GetEgressId() string {
-	if x != nil {
-		return x.EgressId
-	}
-	return ""
-}
-
-func (x *HeartbeatRequest) GetWorkspaceId() string {
-	if x != nil {
-		return x.WorkspaceId
-	}
-	return ""
 }
 
 type HeartbeatResponse struct {
@@ -129,10 +115,8 @@ var File_orange_egress_v1_service_proto protoreflect.FileDescriptor
 
 const file_orange_egress_v1_service_proto_rawDesc = "" +
 	"\n" +
-	"\x1eorange/egress/v1/service.proto\x12\x10orange.egress.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a!orange/auth/v1/auth_options.proto\"R\n" +
-	"\x10HeartbeatRequest\x12\x1b\n" +
-	"\tegress_id\x18\x01 \x01(\tR\begressId\x12!\n" +
-	"\fworkspace_id\x18\x02 \x01(\tR\vworkspaceId\"P\n" +
+	"\x1eorange/egress/v1/service.proto\x12\x10orange.egress.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a!orange/auth/v1/auth_options.proto\"\x12\n" +
+	"\x10HeartbeatRequest\"P\n" +
 	"\x11HeartbeatResponse\x12;\n" +
 	"\vserver_time\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"serverTime2n\n" +

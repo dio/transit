@@ -1,13 +1,15 @@
 // service.proto — SecretResolverService: client-facing secret delivery.
 //
 // Mirrors the config SnapshotService pattern but for named secrets managed
-// by SecretAdminService. There are three entry points:
+// by SecretAdminService. All RPCs require AUTH_TYPE_EGRESS_ASSERTION; workspace_id
+// is derived from the caller's authenticated identity and not accepted in requests.
+// There are three entry points:
 //
 //   Resolve — hot path, per-secret, conditional.
-//     The caller presents (workspace_id, realm, secret_id) plus optional
-//     freshness hints (if_version, if_checksum). When both hints still match
-//     the current store state the server returns Unchanged, saving a full
-//     decrypt-and-copy round trip. Returns plaintext material.
+//     The caller presents (realm, secret_id) plus optional freshness hints
+//     (if_version, if_checksum). When both hints still match the current store
+//     state the server returns Unchanged, saving a full decrypt-and-copy round trip.
+//     Returns plaintext material.
 //
 //   Watch — metadata-only streaming channel.
 //     The server pushes a fresh SecretSetSnapshot whenever any secret in the
@@ -35,6 +37,7 @@ package secretv1
 
 import (
 	_ "buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
+	_ "github.com/dio/transit/examples/orange/api/orange/auth/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
@@ -52,18 +55,14 @@ const (
 
 type ResolveRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// workspace_id identifies the tenant. Derived from caller identity on the
-	// upstream wire; carry as an empty string for local Unix-socket calls where
-	// the Worker populates it from peer-cred context.
-	WorkspaceId string `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
 	// realm groups secrets by purpose within a workspace (e.g. "api-keys", "certs").
-	Realm string `protobuf:"bytes,2,opt,name=realm,proto3" json:"realm,omitempty"`
+	Realm string `protobuf:"bytes,1,opt,name=realm,proto3" json:"realm,omitempty"`
 	// secret_id is the logical name of the secret within the realm.
-	SecretId string `protobuf:"bytes,3,opt,name=secret_id,json=secretId,proto3" json:"secret_id,omitempty"`
+	SecretId string `protobuf:"bytes,2,opt,name=secret_id,json=secretId,proto3" json:"secret_id,omitempty"`
 	// Conditional resolve: when both fields are set and both still match the
 	// current store state, the server returns Unchanged instead of the full payload.
-	IfVersion     *string `protobuf:"bytes,4,opt,name=if_version,json=ifVersion,proto3,oneof" json:"if_version,omitempty"`    // UUID7 of the last known enabled version
-	IfChecksum    *string `protobuf:"bytes,5,opt,name=if_checksum,json=ifChecksum,proto3,oneof" json:"if_checksum,omitempty"` // hex SHA-256 of the last known plaintext material
+	IfVersion     *string `protobuf:"bytes,3,opt,name=if_version,json=ifVersion,proto3,oneof" json:"if_version,omitempty"`    // UUID7 of the last known enabled version
+	IfChecksum    *string `protobuf:"bytes,4,opt,name=if_checksum,json=ifChecksum,proto3,oneof" json:"if_checksum,omitempty"` // hex SHA-256 of the last known plaintext material
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -96,13 +95,6 @@ func (x *ResolveRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use ResolveRequest.ProtoReflect.Descriptor instead.
 func (*ResolveRequest) Descriptor() ([]byte, []int) {
 	return file_orange_secret_v1_service_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *ResolveRequest) GetWorkspaceId() string {
-	if x != nil {
-		return x.WorkspaceId
-	}
-	return ""
 }
 
 func (x *ResolveRequest) GetRealm() string {
@@ -216,12 +208,11 @@ func (*ResolveResponse_Payload) isResolveResponse_Result() {}
 func (*ResolveResponse_Unchanged) isResolveResponse_Result() {}
 
 type WatchRequest struct {
-	state       protoimpl.MessageState `protogen:"open.v1"`
-	WorkspaceId string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
 	// from_version is an optional resume hint (UUID7). If the server has
 	// garbage-collected history past this version it returns OutOfRange;
 	// the client recovers by issuing a fresh unconditional Fetch.
-	FromVersion   *string `protobuf:"bytes,2,opt,name=from_version,json=fromVersion,proto3,oneof" json:"from_version,omitempty"`
+	FromVersion   *string `protobuf:"bytes,1,opt,name=from_version,json=fromVersion,proto3,oneof" json:"from_version,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -254,13 +245,6 @@ func (x *WatchRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use WatchRequest.ProtoReflect.Descriptor instead.
 func (*WatchRequest) Descriptor() ([]byte, []int) {
 	return file_orange_secret_v1_service_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *WatchRequest) GetWorkspaceId() string {
-	if x != nil {
-		return x.WorkspaceId
-	}
-	return ""
 }
 
 func (x *WatchRequest) GetFromVersion() string {
@@ -353,12 +337,11 @@ func (*WatchResponse_Snapshot) isWatchResponse_Event() {}
 func (*WatchResponse_Heartbeat) isWatchResponse_Event() {}
 
 type FetchRequest struct {
-	state       protoimpl.MessageState `protogen:"open.v1"`
-	WorkspaceId string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
 	// Conditional fetch: when both fields are set and both still match,
 	// the response is Unchanged.
-	IfVersion     *string `protobuf:"bytes,2,opt,name=if_version,json=ifVersion,proto3,oneof" json:"if_version,omitempty"`
-	IfChecksum    *string `protobuf:"bytes,3,opt,name=if_checksum,json=ifChecksum,proto3,oneof" json:"if_checksum,omitempty"`
+	IfVersion     *string `protobuf:"bytes,1,opt,name=if_version,json=ifVersion,proto3,oneof" json:"if_version,omitempty"`
+	IfChecksum    *string `protobuf:"bytes,2,opt,name=if_checksum,json=ifChecksum,proto3,oneof" json:"if_checksum,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -391,13 +374,6 @@ func (x *FetchRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use FetchRequest.ProtoReflect.Descriptor instead.
 func (*FetchRequest) Descriptor() ([]byte, []int) {
 	return file_orange_secret_v1_service_proto_rawDescGZIP(), []int{4}
-}
-
-func (x *FetchRequest) GetWorkspaceId() string {
-	if x != nil {
-		return x.WorkspaceId
-	}
-	return ""
 }
 
 func (x *FetchRequest) GetIfVersion() string {
@@ -858,34 +834,31 @@ var File_orange_secret_v1_service_proto protoreflect.FileDescriptor
 
 const file_orange_secret_v1_service_proto_rawDesc = "" +
 	"\n" +
-	"\x1eorange/secret/v1/service.proto\x12\x10orange.secret.v1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xe1\x01\n" +
-	"\x0eResolveRequest\x12!\n" +
-	"\fworkspace_id\x18\x01 \x01(\tR\vworkspaceId\x12\x1d\n" +
-	"\x05realm\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05realm\x12$\n" +
-	"\tsecret_id\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bsecretId\x12\"\n" +
+	"\x1eorange/secret/v1/service.proto\x12\x10orange.secret.v1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a!orange/auth/v1/auth_options.proto\"\xbe\x01\n" +
+	"\x0eResolveRequest\x12\x1d\n" +
+	"\x05realm\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05realm\x12$\n" +
+	"\tsecret_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bsecretId\x12\"\n" +
 	"\n" +
-	"if_version\x18\x04 \x01(\tH\x00R\tifVersion\x88\x01\x01\x12$\n" +
-	"\vif_checksum\x18\x05 \x01(\tH\x01R\n" +
+	"if_version\x18\x03 \x01(\tH\x00R\tifVersion\x88\x01\x01\x12$\n" +
+	"\vif_checksum\x18\x04 \x01(\tH\x01R\n" +
 	"ifChecksum\x88\x01\x01B\r\n" +
 	"\v_if_versionB\x0e\n" +
 	"\f_if_checksum\"\x9c\x01\n" +
 	"\x0fResolveResponse\x12;\n" +
 	"\apayload\x18\x01 \x01(\v2\x1f.orange.secret.v1.SecretPayloadH\x00R\apayload\x12;\n" +
 	"\tunchanged\x18\x02 \x01(\v2\x1b.orange.secret.v1.UnchangedH\x00R\tunchangedB\x0f\n" +
-	"\x06result\x12\x05\xbaH\x02\b\x01\"j\n" +
-	"\fWatchRequest\x12!\n" +
-	"\fworkspace_id\x18\x01 \x01(\tR\vworkspaceId\x12&\n" +
-	"\ffrom_version\x18\x02 \x01(\tH\x00R\vfromVersion\x88\x01\x01B\x0f\n" +
+	"\x06result\x12\x05\xbaH\x02\b\x01\"G\n" +
+	"\fWatchRequest\x12&\n" +
+	"\ffrom_version\x18\x01 \x01(\tH\x00R\vfromVersion\x88\x01\x01B\x0f\n" +
 	"\r_from_version\"\x9f\x01\n" +
 	"\rWatchResponse\x12A\n" +
 	"\bsnapshot\x18\x01 \x01(\v2#.orange.secret.v1.SecretSetSnapshotH\x00R\bsnapshot\x12;\n" +
 	"\theartbeat\x18\x02 \x01(\v2\x1b.orange.secret.v1.HeartbeatH\x00R\theartbeatB\x0e\n" +
-	"\x05event\x12\x05\xbaH\x02\b\x01\"\x9a\x01\n" +
-	"\fFetchRequest\x12!\n" +
-	"\fworkspace_id\x18\x01 \x01(\tR\vworkspaceId\x12\"\n" +
+	"\x05event\x12\x05\xbaH\x02\b\x01\"w\n" +
+	"\fFetchRequest\x12\"\n" +
 	"\n" +
-	"if_version\x18\x02 \x01(\tH\x00R\tifVersion\x88\x01\x01\x12$\n" +
-	"\vif_checksum\x18\x03 \x01(\tH\x01R\n" +
+	"if_version\x18\x01 \x01(\tH\x00R\tifVersion\x88\x01\x01\x12$\n" +
+	"\vif_checksum\x18\x02 \x01(\tH\x01R\n" +
 	"ifChecksum\x88\x01\x01B\r\n" +
 	"\v_if_versionB\x0e\n" +
 	"\f_if_checksum\"\xdd\x01\n" +
@@ -921,11 +894,14 @@ const file_orange_secret_v1_service_proto_rawDesc = "" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x1a\n" +
 	"\bchecksum\x18\x02 \x01(\tR\bchecksum\"7\n" +
 	"\tHeartbeat\x12*\n" +
-	"\x02at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\x02at2\xfd\x01\n" +
-	"\x15SecretResolverService\x12N\n" +
-	"\aResolve\x12 .orange.secret.v1.ResolveRequest\x1a!.orange.secret.v1.ResolveResponse\x12J\n" +
-	"\x05Watch\x12\x1e.orange.secret.v1.WatchRequest\x1a\x1f.orange.secret.v1.WatchResponse0\x01\x12H\n" +
-	"\x05Fetch\x12\x1e.orange.secret.v1.FetchRequest\x1a\x1f.orange.secret.v1.FetchResponseB\xcc\x01\n" +
+	"\x02at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\x02at2\x98\x02\n" +
+	"\x15SecretResolverService\x12W\n" +
+	"\aResolve\x12 .orange.secret.v1.ResolveRequest\x1a!.orange.secret.v1.ResolveResponse\"\a\xc2\xf3\x18\x03\n" +
+	"\x01\x03\x12S\n" +
+	"\x05Watch\x12\x1e.orange.secret.v1.WatchRequest\x1a\x1f.orange.secret.v1.WatchResponse\"\a\xc2\xf3\x18\x03\n" +
+	"\x01\x030\x01\x12Q\n" +
+	"\x05Fetch\x12\x1e.orange.secret.v1.FetchRequest\x1a\x1f.orange.secret.v1.FetchResponse\"\a\xc2\xf3\x18\x03\n" +
+	"\x01\x03B\xcc\x01\n" +
 	"\x14com.orange.secret.v1B\fServiceProtoP\x01ZDgithub.com/dio/transit/examples/orange/api/orange/secret/v1;secretv1\xa2\x02\x03OSX\xaa\x02\x10Orange.Secret.V1\xca\x02\x10Orange\\Secret\\V1\xe2\x02\x1cOrange\\Secret\\V1\\GPBMetadata\xea\x02\x12Orange::Secret::V1b\x06proto3"
 
 var (

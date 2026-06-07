@@ -88,4 +88,5 @@ message Project {
   optional string description = 4;
   google.protobuf.Timestamp created_at = 5;
   google.protobuf.Timestamp updated_at = 6;
+  string slug = 7;          // short auto-generated ID, e.g. "proj-abc12def"
 }

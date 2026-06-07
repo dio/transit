@@ -525,6 +525,7 @@ type Project struct {
 	Description   *string                `protobuf:"bytes,4,opt,name=description,proto3,oneof" json:"description,omitempty"`
 	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	Slug          string                 `protobuf:"bytes,7,opt,name=slug,proto3" json:"slug,omitempty"` // short auto-generated ID, e.g. "proj-abc12def"
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -601,6 +602,13 @@ func (x *Project) GetUpdatedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *Project) GetSlug() string {
+	if x != nil {
+		return x.Slug
+	}
+	return ""
+}
+
 var File_orange_project_admin_v1_admin_proto protoreflect.FileDescriptor
 
 const file_orange_project_admin_v1_admin_proto_rawDesc = "" +
@@ -639,7 +647,7 @@ const file_orange_project_admin_v1_admin_proto_rawDesc = "" +
 	"\x14DeleteProjectRequest\x12(\n" +
 	"\n" +
 	"project_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\tprojectId\"\x17\n" +
-	"\x15DeleteProjectResponse\"\x80\x02\n" +
+	"\x15DeleteProjectResponse\"\x94\x02\n" +
 	"\aProject\x12\x1d\n" +
 	"\n" +
 	"project_id\x18\x01 \x01(\tR\tprojectId\x12\x15\n" +
@@ -649,7 +657,8 @@ const file_orange_project_admin_v1_admin_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
-	"updated_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAtB\x0e\n" +
+	"updated_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12\x12\n" +
+	"\x04slug\x18\a \x01(\tR\x04slugB\x0e\n" +
 	"\f_description2\x8f\x05\n" +
 	"\x13ProjectAdminService\x12~\n" +
 	"\rCreateProject\x12-.orange.project.admin.v1.CreateProjectRequest\x1a..orange.project.admin.v1.CreateProjectResponse\"\x0e\xc2\xf3\x18\n" +

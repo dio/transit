@@ -507,6 +507,7 @@ type Org struct {
 	Description   *string                `protobuf:"bytes,3,opt,name=description,proto3,oneof" json:"description,omitempty"`
 	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	Slug          string                 `protobuf:"bytes,6,opt,name=slug,proto3" json:"slug,omitempty"` // short auto-generated ID, e.g. "org-abc12def"
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -576,6 +577,13 @@ func (x *Org) GetUpdatedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *Org) GetSlug() string {
+	if x != nil {
+		return x.Slug
+	}
+	return ""
+}
+
 var File_orange_org_admin_v1_admin_proto protoreflect.FileDescriptor
 
 const file_orange_org_admin_v1_admin_proto_rawDesc = "" +
@@ -609,7 +617,7 @@ const file_orange_org_admin_v1_admin_proto_rawDesc = "" +
 	"\x03org\x18\x01 \x01(\v2\x18.orange.org.admin.v1.OrgR\x03org\"4\n" +
 	"\x10DeleteOrgRequest\x12 \n" +
 	"\x06org_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\x05orgId\"\x13\n" +
-	"\x11DeleteOrgResponse\"\xdd\x01\n" +
+	"\x11DeleteOrgResponse\"\xf1\x01\n" +
 	"\x03Org\x12\x15\n" +
 	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12%\n" +
@@ -617,7 +625,8 @@ const file_orange_org_admin_v1_admin_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
-	"updated_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAtB\x0e\n" +
+	"updated_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12\x12\n" +
+	"\x04slug\x18\x06 \x01(\tR\x04slugB\x0e\n" +
 	"\f_description2\xa7\x04\n" +
 	"\x0fOrgAdminService\x12j\n" +
 	"\tCreateOrg\x12%.orange.org.admin.v1.CreateOrgRequest\x1a&.orange.org.admin.v1.CreateOrgResponse\"\x0e\xc2\xf3\x18\n" +

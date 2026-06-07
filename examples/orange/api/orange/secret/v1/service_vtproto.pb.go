@@ -55,33 +55,26 @@ func (m *ResolveRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		copy(dAtA[i:], *m.IfChecksum)
 		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(*m.IfChecksum)))
 		i--
-		dAtA[i] = 0x2a
+		dAtA[i] = 0x22
 	}
 	if m.IfVersion != nil {
 		i -= len(*m.IfVersion)
 		copy(dAtA[i:], *m.IfVersion)
 		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(*m.IfVersion)))
 		i--
-		dAtA[i] = 0x22
+		dAtA[i] = 0x1a
 	}
 	if len(m.SecretId) > 0 {
 		i -= len(m.SecretId)
 		copy(dAtA[i:], m.SecretId)
 		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.SecretId)))
 		i--
-		dAtA[i] = 0x1a
+		dAtA[i] = 0x12
 	}
 	if len(m.Realm) > 0 {
 		i -= len(m.Realm)
 		copy(dAtA[i:], m.Realm)
 		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.Realm)))
-		i--
-		dAtA[i] = 0x12
-	}
-	if len(m.WorkspaceId) > 0 {
-		i -= len(m.WorkspaceId)
-		copy(dAtA[i:], m.WorkspaceId)
-		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.WorkspaceId)))
 		i--
 		dAtA[i] = 0xa
 	}
@@ -203,13 +196,6 @@ func (m *WatchRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		copy(dAtA[i:], *m.FromVersion)
 		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(*m.FromVersion)))
 		i--
-		dAtA[i] = 0x12
-	}
-	if len(m.WorkspaceId) > 0 {
-		i -= len(m.WorkspaceId)
-		copy(dAtA[i:], m.WorkspaceId)
-		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.WorkspaceId)))
-		i--
 		dAtA[i] = 0xa
 	}
 	return len(dAtA) - i, nil
@@ -330,19 +316,12 @@ func (m *FetchRequest) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		copy(dAtA[i:], *m.IfChecksum)
 		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(*m.IfChecksum)))
 		i--
-		dAtA[i] = 0x1a
+		dAtA[i] = 0x12
 	}
 	if m.IfVersion != nil {
 		i -= len(*m.IfVersion)
 		copy(dAtA[i:], *m.IfVersion)
 		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(*m.IfVersion)))
-		i--
-		dAtA[i] = 0x12
-	}
-	if len(m.WorkspaceId) > 0 {
-		i -= len(m.WorkspaceId)
-		copy(dAtA[i:], m.WorkspaceId)
-		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.WorkspaceId)))
 		i--
 		dAtA[i] = 0xa
 	}
@@ -766,10 +745,6 @@ func (m *ResolveRequest) SizeVT() (n int) {
 	}
 	var l int
 	_ = l
-	l = len(m.WorkspaceId)
-	if l > 0 {
-		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
-	}
 	l = len(m.Realm)
 	if l > 0 {
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
@@ -833,10 +808,6 @@ func (m *WatchRequest) SizeVT() (n int) {
 	}
 	var l int
 	_ = l
-	l = len(m.WorkspaceId)
-	if l > 0 {
-		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
-	}
 	if m.FromVersion != nil {
 		l = len(*m.FromVersion)
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
@@ -888,10 +859,6 @@ func (m *FetchRequest) SizeVT() (n int) {
 	}
 	var l int
 	_ = l
-	l = len(m.WorkspaceId)
-	if l > 0 {
-		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
-	}
 	if m.IfVersion != nil {
 		l = len(*m.IfVersion)
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
@@ -1112,38 +1079,6 @@ func (m *ResolveRequest) UnmarshalVT(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field WorkspaceId", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return protohelpers.ErrIntOverflow
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return protohelpers.ErrInvalidLength
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return protohelpers.ErrInvalidLength
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.WorkspaceId = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 2:
-			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Realm", wireType)
 			}
 			var stringLen uint64
@@ -1174,7 +1109,7 @@ func (m *ResolveRequest) UnmarshalVT(dAtA []byte) error {
 			}
 			m.Realm = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
-		case 3:
+		case 2:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field SecretId", wireType)
 			}
@@ -1206,7 +1141,7 @@ func (m *ResolveRequest) UnmarshalVT(dAtA []byte) error {
 			}
 			m.SecretId = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
-		case 4:
+		case 3:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field IfVersion", wireType)
 			}
@@ -1239,7 +1174,7 @@ func (m *ResolveRequest) UnmarshalVT(dAtA []byte) error {
 			s := string(dAtA[iNdEx:postIndex])
 			m.IfVersion = &s
 			iNdEx = postIndex
-		case 5:
+		case 4:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field IfChecksum", wireType)
 			}
@@ -1458,38 +1393,6 @@ func (m *WatchRequest) UnmarshalVT(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field WorkspaceId", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return protohelpers.ErrIntOverflow
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return protohelpers.ErrInvalidLength
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return protohelpers.ErrInvalidLength
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.WorkspaceId = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 2:
-			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field FromVersion", wireType)
 			}
 			var stringLen uint64
@@ -1707,38 +1610,6 @@ func (m *FetchRequest) UnmarshalVT(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field WorkspaceId", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return protohelpers.ErrIntOverflow
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return protohelpers.ErrInvalidLength
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return protohelpers.ErrInvalidLength
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.WorkspaceId = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 2:
-			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field IfVersion", wireType)
 			}
 			var stringLen uint64
@@ -1770,7 +1641,7 @@ func (m *FetchRequest) UnmarshalVT(dAtA []byte) error {
 			s := string(dAtA[iNdEx:postIndex])
 			m.IfVersion = &s
 			iNdEx = postIndex
-		case 3:
+		case 2:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field IfChecksum", wireType)
 			}

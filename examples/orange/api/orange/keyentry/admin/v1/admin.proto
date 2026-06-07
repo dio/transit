@@ -1,8 +1,8 @@
-// admin.proto — KeyAdminService: Key, PASETOToken, and KeySecret management.
+// admin.proto — KeyEntryAdminService: Key, PASETOToken, and KeySecret management.
 //
 // A Key is permanently bound to a single Workspace and a single User.
 // key_format is always "paseto_v4.public" (Ed25519).
-// key_id is server-assigned as a UUID7.
+// key_entry_id is server-assigned as a UUID7.
 //
 // PASETOToken records metadata and hash of an issued PASETO v4 token;
 // the token itself is never stored.
@@ -16,14 +16,14 @@
 
 syntax = "proto3";
 
-package orange.key.admin.v1;
+package orange.keyentry.admin.v1;
 
 import "buf/validate/validate.proto";
 import "google/protobuf/timestamp.proto";
 import "orange/auth/v1/auth_options.proto";
 import "orange/routing/v1/routing.proto";
 
-service KeyAdminService {
+service KeyEntryAdminService {
   // ── Key CRUD ──────────────────────────────────────────────────────────────
 
   rpc CreateKey(CreateKeyRequest) returns (CreateKeyResponse) {
@@ -49,6 +49,11 @@ service KeyAdminService {
   // IssueToken issues a new PASETO v4 token and stores its metadata.
   rpc IssueToken(IssueTokenRequest) returns (IssueTokenResponse) {
     option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["admin"]};
+  }
+  // IssueNamedToken atomically creates (or reuses) the named key entry and issues
+  // a PASETO v4 token against it. Requires scope "token:issue" rather than "admin".
+  rpc IssueNamedToken(IssueNamedTokenRequest) returns (IssueNamedTokenResponse) {
+    option (orange.auth.v1.auth) = {auth_types: [AUTH_TYPE_API_KEY] scopes: ["token:issue"]};
   }
   // GetToken returns metadata for a previously issued token.
   rpc GetToken(GetTokenRequest) returns (GetTokenResponse) {
@@ -108,7 +113,7 @@ message CreateKeyRequest {
 message CreateKeyResponse { Key key = 1; }
 
 message GetKeyRequest {
-  string key_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+  string key_entry_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
 }
 
 message GetKeyResponse { Key key = 1; }
@@ -126,7 +131,7 @@ message ListKeysResponse {
 }
 
 message UpdateKeyRequest {
-  string key_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+  string key_entry_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
   optional string description = 2 [(buf.validate.field).string.max_len = 1024];
   repeated orange.routing.v1.RoutingOverride routing_overrides = 3;
 }
@@ -134,14 +139,14 @@ message UpdateKeyRequest {
 message UpdateKeyResponse { Key key = 1; }
 
 message DeleteKeyRequest {
-  string key_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+  string key_entry_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
 }
 
 message DeleteKeyResponse {}
 
 // Key is permanently bound to a Workspace and User. key_format is always "paseto_v4.public".
 message Key {
-  string key_id = 1;          // UUID7, server-assigned
+  string key_entry_id = 1;          // UUID7, server-assigned
   string workspace_id = 2;    // owning workspace; immutable
   string user_id = 3;         // owning user; immutable
   string name = 4;            // unique within workspace+user
@@ -157,7 +162,7 @@ message Key {
 // ── PASETOToken messages ──────────────────────────────────────────────────────
 
 message IssueTokenRequest {
-  string key_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+  string key_entry_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
   // exp is the token expiry in seconds from now.
   int64 ttl_seconds = 2 [(buf.validate.field).int64 = {gte: 1 lte: 86400}];
   // pol is an optional embedded policy JSON attached to the token.
@@ -170,6 +175,28 @@ message IssueTokenResponse {
   PASETOToken metadata = 2;
 }
 
+// IssueNamedTokenRequest derives workspace_id and user_id from the authenticated
+// API key record injected into the context by the apikeys interceptor.
+message IssueNamedTokenRequest {
+  string name = 1 [(buf.validate.field).string = {
+    pattern: "^[a-z0-9][a-z0-9-]*[a-z0-9]$"
+    min_len: 2
+    max_len: 63
+  }];
+  // ttl_seconds controls token lifetime. 0 = no expiry.
+  int64 ttl_seconds = 2 [(buf.validate.field).int64.gte = 0];
+  optional string pol = 3 [(buf.validate.field).string.max_len = 4096];
+  optional string description = 4 [(buf.validate.field).string.max_len = 1024];
+}
+
+message IssueNamedTokenResponse {
+  // token is the signed PASETO v4 token — only returned once; not stored.
+  string token = 1;
+  PASETOToken metadata = 2;
+  // key is the key entry that was created or already existed.
+  Key key = 3;
+}
+
 message GetTokenRequest {
   string token_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
 }
@@ -177,7 +204,7 @@ message GetTokenRequest {
 message GetTokenResponse { PASETOToken token = 1; }
 
 message ListTokensRequest {
-  string key_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+  string key_entry_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
   optional bool include_revoked = 2;
   optional int32 limit = 3 [(buf.validate.field).int32 = {gte: 0 lte: 1000}];
   optional string page_token = 4;
@@ -197,7 +224,7 @@ message RevokeTokenResponse {}
 // PASETOToken stores token metadata only; the bearer token itself is never stored.
 message PASETOToken {
   string token_id = 1;    // UUID7, server-assigned
-  string key_id = 2;      // owning key
+  string key_entry_id = 2;      // owning key
   string jti = 3;         // JWT ID embedded in token
   google.protobuf.Timestamp iat = 4;
   google.protobuf.Timestamp exp = 5;
@@ -210,7 +237,7 @@ message PASETOToken {
 // ── KeySecret (BYOK) messages ─────────────────────────────────────────────────
 
 message CreateKeySecretRequest {
-  string key_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+  string key_entry_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
   // upstream_target identifies the upstream (e.g. "openai", "anthropic").
   string upstream_target = 2 [(buf.validate.field).string = {min_len: 1 max_len: 255}];
   // value is the plaintext credential; stored encrypted, never returned.
@@ -227,7 +254,7 @@ message GetKeySecretRequest {
 message GetKeySecretResponse { KeySecret secret = 1; }
 
 message ListKeySecretsRequest {
-  string key_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
+  string key_entry_id = 1 [(buf.validate.field).string = {min_len: 1 max_len: 36}];
   optional int32 limit = 2 [(buf.validate.field).int32 = {gte: 0 lte: 1000}];
   optional string page_token = 3;
 }
@@ -254,7 +281,7 @@ message DeleteKeySecretResponse {}
 // Overrides Workspace Secret during request dispatch for the same upstream_target.
 message KeySecret {
   string key_secret_id = 1;    // UUID7, server-assigned
-  string key_id = 2;           // owning key; immutable
+  string key_entry_id = 2;           // owning key; immutable
   string upstream_target = 3;  // e.g. "openai"
   int32 version = 4;           // increments on rotate
   bool active = 5;

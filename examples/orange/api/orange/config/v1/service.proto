@@ -9,6 +9,9 @@
 // both still match, the server returns Unchanged instead of re-sending the full
 // payload; otherwise it returns the current SnapshotEnvelope.
 //
+// All RPCs require AUTH_TYPE_EGRESS_ASSERTION; workspace_id is derived from the
+// caller's authenticated identity and not accepted in requests.
+//
 // All request messages are annotated with buf.validate constraints. The server
 // should call protovalidate.Validate() on every incoming request before
 // processing. Generated clients may call it on response messages as an
@@ -51,13 +54,8 @@ service SnapshotService {
 
 // WatchRequest opens a live-update stream. last_version = 0 is the bootstrap
 // request: the server sends the current snapshot unconditionally.
+// workspace_id is derived from the caller's egress assertion and not accepted in the request.
 message WatchRequest {
-  // workspace_id is the UUID7 workspace whose config snapshot to stream.
-  string workspace_id = 1 [(buf.validate.field).string = {
-    min_len: 1
-    max_len: 36
-  }];
-
   // last_version is the highest version the client has already applied.
   // The server skips sending if its current version equals last_version.
   // Use 0 for a bootstrap request (always receive the current snapshot).
@@ -79,13 +77,8 @@ message WatchResponse {
 // last_version and last_checksum still match the server's current snapshot,
 // the server replies with Unchanged. Send last_version = 0 and omit
 // last_checksum for an unconditional fetch.
+// workspace_id is derived from the caller's egress assertion and not accepted in the request.
 message FetchRequest {
-  // workspace_id is the UUID7 workspace whose config snapshot to fetch.
-  string workspace_id = 1 [(buf.validate.field).string = {
-    min_len: 1
-    max_len: 36
-  }];
-
   // last_version is the highest version the client has applied; 0 = unconditional.
   uint64 last_version = 2;
 

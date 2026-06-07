@@ -9,6 +9,9 @@
 // both still match, the server returns Unchanged instead of re-sending the full
 // payload; otherwise it returns the current SnapshotEnvelope.
 //
+// All RPCs require AUTH_TYPE_EGRESS_ASSERTION; workspace_id is derived from the
+// caller's authenticated identity and not accepted in requests.
+//
 // All request messages are annotated with buf.validate constraints. The server
 // should call protovalidate.Validate() on every incoming request before
 // processing. Generated clients may call it on response messages as an
