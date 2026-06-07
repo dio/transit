@@ -48,6 +48,7 @@ func newEgressEmulateCmd() *cobra.Command {
 		bundlePath string
 		interval   time.Duration
 		once       bool
+		replMode   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "emulate",
@@ -98,12 +99,16 @@ Use --once to do a single pass and exit. Interrupt with CTRL-C.`,
 			if err != nil {
 				return fmt.Errorf("load bundle: %w", err)
 			}
+			if replMode {
+				return runEgressEmulateREPL(cmd.Context(), bundle, interval)
+			}
 			return runEgressEmulate(cmd.Context(), bundle, interval, once)
 		},
 	}
 	cmd.Flags().StringVar(&bundlePath, "bundle", "", "bundle dir or .tar.gz path (env: ORANGE_EGRESS_BUNDLE)")
 	cmd.Flags().DurationVar(&interval, "interval", 30*time.Second, "poll interval")
 	cmd.Flags().BoolVar(&once, "once", false, "run a single pass and exit")
+	cmd.Flags().BoolVar(&replMode, "repl", false, "run interactive REPL (poll mode); --once is ignored")
 	return cmd
 }
 

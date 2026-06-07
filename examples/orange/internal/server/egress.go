@@ -101,11 +101,13 @@ directory. Use --out to control the destination:
   --out ./mydir/        write loose files into a directory`,
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if egressID == "" {
-				egressID = os.Getenv("ORANGE_EGRESS_ID")
-			}
 			if workspaceID == "" {
 				workspaceID = os.Getenv("ORANGE_WS_ID")
+			}
+			// Only fall back to ORANGE_EGRESS_ID when no workspace source is available;
+			// a provided workspace always takes precedence and resolves the egress ID.
+			if egressID == "" && workspaceID == "" {
+				egressID = os.Getenv("ORANGE_EGRESS_ID")
 			}
 			if egressID == "" && workspaceID == "" {
 				return fmt.Errorf("--egress-id or --workspace-id is required (or set ORANGE_EGRESS_ID / ORANGE_WS_ID)")
