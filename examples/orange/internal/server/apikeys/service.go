@@ -8,6 +8,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	apikeyv1 "github.com/dio/transit/examples/orange/api/orange/apikey/admin/v1"
+	"github.com/dio/transit/examples/orange/internal/server/scopes"
 )
 
 // Service implements APIKeyAdminServiceHandler on top of Store.
@@ -64,6 +65,50 @@ func (s *Service) IssueKey(ctx context.Context, req *connect.Request[apikeyv1.Is
 		Key:       recordToProto(rec),
 		Plaintext: plaintext,
 	}), nil
+}
+
+func (s *Service) GetKey(ctx context.Context, req *connect.Request[apikeyv1.GetKeyRequest]) (*connect.Response[apikeyv1.GetKeyResponse], error) {
+	rec, err := s.store.Get(ctx, req.Msg.GetKeyId())
+	if err != nil {
+		if err == ErrKeyNotFound {
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&apikeyv1.GetKeyResponse{Key: recordToProto(rec)}), nil
+}
+
+func (s *Service) UpdateKeyScopes(ctx context.Context, req *connect.Request[apikeyv1.UpdateKeyScopesRequest]) (*connect.Response[apikeyv1.UpdateKeyScopesResponse], error) {
+	add := req.Msg.GetAddScopes()
+
+	switch req.Msg.GetTemplate() {
+	case "ws-member":
+		wsID := req.Msg.GetWorkspaceId()
+		if wsID == "" {
+			return nil, connect.NewError(connect.CodeInvalidArgument,
+				fmt.Errorf("workspace_id is required for template=ws-member"))
+		}
+		add = append(add, scopes.WorkspaceMemberScopes(wsID)...)
+	case "":
+		// no template
+	default:
+		return nil, connect.NewError(connect.CodeInvalidArgument,
+			fmt.Errorf("unknown template %q — supported: ws-member", req.Msg.GetTemplate()))
+	}
+
+	if len(add) == 0 {
+		return nil, connect.NewError(connect.CodeInvalidArgument,
+			fmt.Errorf("no scopes to add: provide --scope or --template"))
+	}
+
+	rec, err := s.store.AppendScopes(ctx, req.Msg.GetKeyId(), add)
+	if err != nil {
+		if err == ErrKeyNotFound {
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&apikeyv1.UpdateKeyScopesResponse{Key: recordToProto(rec)}), nil
 }
 
 func (s *Service) ListKeys(ctx context.Context, req *connect.Request[apikeyv1.ListKeysRequest]) (*connect.Response[apikeyv1.ListKeysResponse], error) {
