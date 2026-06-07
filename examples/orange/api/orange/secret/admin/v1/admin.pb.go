@@ -121,13 +121,14 @@ func (VersionState) EnumDescriptor() ([]byte, []int) {
 // Material is present only in CreateVersion and ResolveVersion responses;
 // it is absent in all List* responses.
 type SecretVersion struct {
-	state       protoimpl.MessageState `protogen:"open.v1"`
-	WorkspaceId string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
-	Realm       string                 `protobuf:"bytes,2,opt,name=realm,proto3" json:"realm,omitempty"`
-	SecretId    string                 `protobuf:"bytes,3,opt,name=secret_id,json=secretId,proto3" json:"secret_id,omitempty"`
-	VersionId   string                 `protobuf:"bytes,4,opt,name=version_id,json=versionId,proto3" json:"version_id,omitempty"` // UUID7, sortable by creation time; server-assigned
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// realm is the canonical scope: "org/<uuid>/<purpose>", "proj/<uuid>/<purpose>",
+	// or "ws/<uuid>/<purpose>". Controls which egress paths can resolve this secret.
+	Realm     string `protobuf:"bytes,1,opt,name=realm,proto3" json:"realm,omitempty"`
+	SecretId  string `protobuf:"bytes,2,opt,name=secret_id,json=secretId,proto3" json:"secret_id,omitempty"`
+	VersionId string `protobuf:"bytes,3,opt,name=version_id,json=versionId,proto3" json:"version_id,omitempty"` // UUID7, sortable by creation time; server-assigned
 	// Plaintext material. Present only in CreateVersion/ResolveVersion responses.
-	Material []byte       `protobuf:"bytes,5,opt,name=material,proto3,oneof" json:"material,omitempty"`
+	Material []byte       `protobuf:"bytes,4,opt,name=material,proto3,oneof" json:"material,omitempty"`
 	Checksum string       `protobuf:"bytes,10,opt,name=checksum,proto3" json:"checksum,omitempty"` // hex SHA-256 of the plaintext material bytes
 	State    VersionState `protobuf:"varint,11,opt,name=state,proto3,enum=orange.secret.admin.v1.VersionState" json:"state,omitempty"`
 	// Audit fields — populated by the server, never by callers.
@@ -172,13 +173,6 @@ func (x *SecretVersion) ProtoReflect() protoreflect.Message {
 // Deprecated: Use SecretVersion.ProtoReflect.Descriptor instead.
 func (*SecretVersion) Descriptor() ([]byte, []int) {
 	return file_orange_secret_admin_v1_admin_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *SecretVersion) GetWorkspaceId() string {
-	if x != nil {
-		return x.WorkspaceId
-	}
-	return ""
 }
 
 func (x *SecretVersion) GetRealm() string {
@@ -288,10 +282,10 @@ func (x *SecretVersion) GetShreddedAt() *timestamppb.Timestamp {
 
 type CreateServiceKEKRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Set both for a per-boundary SERVICE_KEK (idempotent).
-	// Leave both empty to create a new pool-level SERVICE_KEK.
-	WorkspaceId   string `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
-	Realm         string `protobuf:"bytes,2,opt,name=realm,proto3" json:"realm,omitempty"`
+	// realm is the canonical realm for a per-boundary SERVICE_KEK
+	// ("org/<uuid>/purpose", "proj/<uuid>/purpose", "ws/<uuid>/purpose").
+	// Leave empty to create a new pool-level SERVICE_KEK.
+	Realm         string `protobuf:"bytes,1,opt,name=realm,proto3" json:"realm,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -324,13 +318,6 @@ func (x *CreateServiceKEKRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use CreateServiceKEKRequest.ProtoReflect.Descriptor instead.
 func (*CreateServiceKEKRequest) Descriptor() ([]byte, []int) {
 	return file_orange_secret_admin_v1_admin_proto_rawDescGZIP(), []int{1}
-}
-
-func (x *CreateServiceKEKRequest) GetWorkspaceId() string {
-	if x != nil {
-		return x.WorkspaceId
-	}
-	return ""
 }
 
 func (x *CreateServiceKEKRequest) GetRealm() string {
@@ -396,10 +383,9 @@ func (x *CreateServiceKEKResponse) GetKekVersion() int32 {
 
 type RotateServiceKEKRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Per-boundary rotation: set both fields.
-	// Pool rotation: leave both empty to re-wrap all active pool members.
-	WorkspaceId   string `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
-	Realm         string `protobuf:"bytes,2,opt,name=realm,proto3" json:"realm,omitempty"`
+	// realm is the canonical realm for per-boundary rotation. Leave empty to
+	// re-wrap all active pool members.
+	Realm         string `protobuf:"bytes,1,opt,name=realm,proto3" json:"realm,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -432,13 +418,6 @@ func (x *RotateServiceKEKRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use RotateServiceKEKRequest.ProtoReflect.Descriptor instead.
 func (*RotateServiceKEKRequest) Descriptor() ([]byte, []int) {
 	return file_orange_secret_admin_v1_admin_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *RotateServiceKEKRequest) GetWorkspaceId() string {
-	if x != nil {
-		return x.WorkspaceId
-	}
-	return ""
 }
 
 func (x *RotateServiceKEKRequest) GetRealm() string {
@@ -563,16 +542,17 @@ func (x *RotatedKEK) GetMasterKekVersion() int32 {
 }
 
 type CreateVersionRequest struct {
-	state       protoimpl.MessageState `protogen:"open.v1"`
-	WorkspaceId string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
-	Realm       string                 `protobuf:"bytes,2,opt,name=realm,proto3" json:"realm,omitempty"`
-	SecretId    string                 `protobuf:"bytes,3,opt,name=secret_id,json=secretId,proto3" json:"secret_id,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// realm is the canonical scope: "org/<uuid>/<purpose>", "proj/<uuid>/<purpose>",
+	// or "ws/<uuid>/<purpose>".
+	Realm    string `protobuf:"bytes,1,opt,name=realm,proto3" json:"realm,omitempty"`
+	SecretId string `protobuf:"bytes,2,opt,name=secret_id,json=secretId,proto3" json:"secret_id,omitempty"`
 	// material is the plaintext secret bytes. The server encrypts and stores them;
 	// the plaintext is never persisted.
-	Material []byte `protobuf:"bytes,4,opt,name=material,proto3" json:"material,omitempty"`
+	Material []byte `protobuf:"bytes,3,opt,name=material,proto3" json:"material,omitempty"`
 	// enable causes the version to be immediately enabled after creation.
 	// Default: false (version starts in DISABLED state).
-	Enable        bool `protobuf:"varint,5,opt,name=enable,proto3" json:"enable,omitempty"`
+	Enable        bool `protobuf:"varint,4,opt,name=enable,proto3" json:"enable,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -605,13 +585,6 @@ func (x *CreateVersionRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use CreateVersionRequest.ProtoReflect.Descriptor instead.
 func (*CreateVersionRequest) Descriptor() ([]byte, []int) {
 	return file_orange_secret_admin_v1_admin_proto_rawDescGZIP(), []int{6}
-}
-
-func (x *CreateVersionRequest) GetWorkspaceId() string {
-	if x != nil {
-		return x.WorkspaceId
-	}
-	return ""
 }
 
 func (x *CreateVersionRequest) GetRealm() string {
@@ -688,10 +661,9 @@ func (x *CreateVersionResponse) GetVersion() *SecretVersion {
 
 type EnableVersionRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	WorkspaceId   string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
-	Realm         string                 `protobuf:"bytes,2,opt,name=realm,proto3" json:"realm,omitempty"`
-	SecretId      string                 `protobuf:"bytes,3,opt,name=secret_id,json=secretId,proto3" json:"secret_id,omitempty"`
-	VersionId     string                 `protobuf:"bytes,4,opt,name=version_id,json=versionId,proto3" json:"version_id,omitempty"`
+	Realm         string                 `protobuf:"bytes,1,opt,name=realm,proto3" json:"realm,omitempty"`
+	SecretId      string                 `protobuf:"bytes,2,opt,name=secret_id,json=secretId,proto3" json:"secret_id,omitempty"`
+	VersionId     string                 `protobuf:"bytes,3,opt,name=version_id,json=versionId,proto3" json:"version_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -724,13 +696,6 @@ func (x *EnableVersionRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use EnableVersionRequest.ProtoReflect.Descriptor instead.
 func (*EnableVersionRequest) Descriptor() ([]byte, []int) {
 	return file_orange_secret_admin_v1_admin_proto_rawDescGZIP(), []int{8}
-}
-
-func (x *EnableVersionRequest) GetWorkspaceId() string {
-	if x != nil {
-		return x.WorkspaceId
-	}
-	return ""
 }
 
 func (x *EnableVersionRequest) GetRealm() string {
@@ -800,10 +765,9 @@ func (x *EnableVersionResponse) GetVersion() *SecretVersion {
 
 type DisableVersionRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	WorkspaceId   string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
-	Realm         string                 `protobuf:"bytes,2,opt,name=realm,proto3" json:"realm,omitempty"`
-	SecretId      string                 `protobuf:"bytes,3,opt,name=secret_id,json=secretId,proto3" json:"secret_id,omitempty"`
-	VersionId     string                 `protobuf:"bytes,4,opt,name=version_id,json=versionId,proto3" json:"version_id,omitempty"`
+	Realm         string                 `protobuf:"bytes,1,opt,name=realm,proto3" json:"realm,omitempty"`
+	SecretId      string                 `protobuf:"bytes,2,opt,name=secret_id,json=secretId,proto3" json:"secret_id,omitempty"`
+	VersionId     string                 `protobuf:"bytes,3,opt,name=version_id,json=versionId,proto3" json:"version_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -836,13 +800,6 @@ func (x *DisableVersionRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use DisableVersionRequest.ProtoReflect.Descriptor instead.
 func (*DisableVersionRequest) Descriptor() ([]byte, []int) {
 	return file_orange_secret_admin_v1_admin_proto_rawDescGZIP(), []int{10}
-}
-
-func (x *DisableVersionRequest) GetWorkspaceId() string {
-	if x != nil {
-		return x.WorkspaceId
-	}
-	return ""
 }
 
 func (x *DisableVersionRequest) GetRealm() string {
@@ -911,14 +868,13 @@ func (x *DisableVersionResponse) GetVersion() *SecretVersion {
 }
 
 type RetireVersionRequest struct {
-	state       protoimpl.MessageState `protogen:"open.v1"`
-	WorkspaceId string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
-	Realm       string                 `protobuf:"bytes,2,opt,name=realm,proto3" json:"realm,omitempty"`
-	SecretId    string                 `protobuf:"bytes,3,opt,name=secret_id,json=secretId,proto3" json:"secret_id,omitempty"`
-	VersionId   string                 `protobuf:"bytes,4,opt,name=version_id,json=versionId,proto3" json:"version_id,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Realm     string                 `protobuf:"bytes,1,opt,name=realm,proto3" json:"realm,omitempty"`
+	SecretId  string                 `protobuf:"bytes,2,opt,name=secret_id,json=secretId,proto3" json:"secret_id,omitempty"`
+	VersionId string                 `protobuf:"bytes,3,opt,name=version_id,json=versionId,proto3" json:"version_id,omitempty"`
 	// shred zeros the material bytes after retiring for compliance use cases.
 	// Metadata (checksum, version, timestamps) is retained regardless.
-	Shred         bool `protobuf:"varint,5,opt,name=shred,proto3" json:"shred,omitempty"`
+	Shred         bool `protobuf:"varint,4,opt,name=shred,proto3" json:"shred,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -951,13 +907,6 @@ func (x *RetireVersionRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use RetireVersionRequest.ProtoReflect.Descriptor instead.
 func (*RetireVersionRequest) Descriptor() ([]byte, []int) {
 	return file_orange_secret_admin_v1_admin_proto_rawDescGZIP(), []int{12}
-}
-
-func (x *RetireVersionRequest) GetWorkspaceId() string {
-	if x != nil {
-		return x.WorkspaceId
-	}
-	return ""
 }
 
 func (x *RetireVersionRequest) GetRealm() string {
@@ -1035,9 +984,8 @@ func (x *RetireVersionResponse) GetVersion() *SecretVersion {
 
 type ResolveVersionRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	WorkspaceId   string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
-	Realm         string                 `protobuf:"bytes,2,opt,name=realm,proto3" json:"realm,omitempty"`
-	SecretId      string                 `protobuf:"bytes,3,opt,name=secret_id,json=secretId,proto3" json:"secret_id,omitempty"`
+	Realm         string                 `protobuf:"bytes,1,opt,name=realm,proto3" json:"realm,omitempty"`
+	SecretId      string                 `protobuf:"bytes,2,opt,name=secret_id,json=secretId,proto3" json:"secret_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1070,13 +1018,6 @@ func (x *ResolveVersionRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use ResolveVersionRequest.ProtoReflect.Descriptor instead.
 func (*ResolveVersionRequest) Descriptor() ([]byte, []int) {
 	return file_orange_secret_admin_v1_admin_proto_rawDescGZIP(), []int{14}
-}
-
-func (x *ResolveVersionRequest) GetWorkspaceId() string {
-	if x != nil {
-		return x.WorkspaceId
-	}
-	return ""
 }
 
 func (x *ResolveVersionRequest) GetRealm() string {
@@ -1139,9 +1080,8 @@ func (x *ResolveVersionResponse) GetVersion() *SecretVersion {
 
 type ListVersionsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	WorkspaceId   string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
-	Realm         string                 `protobuf:"bytes,2,opt,name=realm,proto3" json:"realm,omitempty"`
-	SecretId      string                 `protobuf:"bytes,3,opt,name=secret_id,json=secretId,proto3" json:"secret_id,omitempty"`
+	Realm         string                 `protobuf:"bytes,1,opt,name=realm,proto3" json:"realm,omitempty"`
+	SecretId      string                 `protobuf:"bytes,2,opt,name=secret_id,json=secretId,proto3" json:"secret_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1174,13 +1114,6 @@ func (x *ListVersionsRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use ListVersionsRequest.ProtoReflect.Descriptor instead.
 func (*ListVersionsRequest) Descriptor() ([]byte, []int) {
 	return file_orange_secret_admin_v1_admin_proto_rawDescGZIP(), []int{16}
-}
-
-func (x *ListVersionsRequest) GetWorkspaceId() string {
-	if x != nil {
-		return x.WorkspaceId
-	}
-	return ""
 }
 
 func (x *ListVersionsRequest) GetRealm() string {
@@ -1244,10 +1177,13 @@ func (x *ListVersionsResponse) GetVersions() []*SecretVersion {
 }
 
 type ListSecretsRequest struct {
-	state       protoimpl.MessageState `protogen:"open.v1"`
-	WorkspaceId string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
-	// realm is optional. When empty, lists secrets across all realms in the workspace.
-	Realm         string `protobuf:"bytes,2,opt,name=realm,proto3" json:"realm,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// realm is a prefix filter. Examples:
+	//
+	//	"org/<uuid>/"          — all secrets under an org
+	//	"proj/<uuid>/api-keys" — exact realm
+	//	""                     — all secrets (org-admin only)
+	Realm         string `protobuf:"bytes,1,opt,name=realm,proto3" json:"realm,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1280,13 +1216,6 @@ func (x *ListSecretsRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use ListSecretsRequest.ProtoReflect.Descriptor instead.
 func (*ListSecretsRequest) Descriptor() ([]byte, []int) {
 	return file_orange_secret_admin_v1_admin_proto_rawDescGZIP(), []int{18}
-}
-
-func (x *ListSecretsRequest) GetWorkspaceId() string {
-	if x != nil {
-		return x.WorkspaceId
-	}
-	return ""
 }
 
 func (x *ListSecretsRequest) GetRealm() string {
@@ -1342,10 +1271,10 @@ func (x *ListSecretsResponse) GetSecrets() []*SecretSummary {
 
 // SecretSummary is a lightweight identity record. No material or version details.
 type SecretSummary struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	WorkspaceId   string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
-	Realm         string                 `protobuf:"bytes,2,opt,name=realm,proto3" json:"realm,omitempty"`
-	SecretId      string                 `protobuf:"bytes,3,opt,name=secret_id,json=secretId,proto3" json:"secret_id,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// realm is the canonical scope of the secret.
+	Realm         string `protobuf:"bytes,1,opt,name=realm,proto3" json:"realm,omitempty"`
+	SecretId      string `protobuf:"bytes,2,opt,name=secret_id,json=secretId,proto3" json:"secret_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1380,13 +1309,6 @@ func (*SecretSummary) Descriptor() ([]byte, []int) {
 	return file_orange_secret_admin_v1_admin_proto_rawDescGZIP(), []int{20}
 }
 
-func (x *SecretSummary) GetWorkspaceId() string {
-	if x != nil {
-		return x.WorkspaceId
-	}
-	return ""
-}
-
 func (x *SecretSummary) GetRealm() string {
 	if x != nil {
 		return x.Realm
@@ -1405,10 +1327,9 @@ func (x *SecretSummary) GetSecretId() string {
 // Subscribers call Resolve to get fresh material; the event carries no material.
 type SecretChangedEvent struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	WorkspaceId   string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
-	Realm         string                 `protobuf:"bytes,2,opt,name=realm,proto3" json:"realm,omitempty"`
-	SecretId      string                 `protobuf:"bytes,3,opt,name=secret_id,json=secretId,proto3" json:"secret_id,omitempty"`
-	VersionId     string                 `protobuf:"bytes,4,opt,name=version_id,json=versionId,proto3" json:"version_id,omitempty"` // version_id of the version that changed state
+	Realm         string                 `protobuf:"bytes,1,opt,name=realm,proto3" json:"realm,omitempty"`
+	SecretId      string                 `protobuf:"bytes,2,opt,name=secret_id,json=secretId,proto3" json:"secret_id,omitempty"`
+	VersionId     string                 `protobuf:"bytes,3,opt,name=version_id,json=versionId,proto3" json:"version_id,omitempty"` // version_id of the version that changed state
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1443,13 +1364,6 @@ func (*SecretChangedEvent) Descriptor() ([]byte, []int) {
 	return file_orange_secret_admin_v1_admin_proto_rawDescGZIP(), []int{21}
 }
 
-func (x *SecretChangedEvent) GetWorkspaceId() string {
-	if x != nil {
-		return x.WorkspaceId
-	}
-	return ""
-}
-
 func (x *SecretChangedEvent) GetRealm() string {
 	if x != nil {
 		return x.Realm
@@ -1475,14 +1389,13 @@ var File_orange_secret_admin_v1_admin_proto protoreflect.FileDescriptor
 
 const file_orange_secret_admin_v1_admin_proto_rawDesc = "" +
 	"\n" +
-	"\"orange/secret/admin/v1/admin.proto\x12\x16orange.secret.admin.v1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a!orange/auth/v1/auth_options.proto\"\xce\x05\n" +
-	"\rSecretVersion\x12*\n" +
-	"\fworkspace_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\vworkspaceId\x12\x1d\n" +
-	"\x05realm\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05realm\x12$\n" +
-	"\tsecret_id\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bsecretId\x12\x1d\n" +
+	"\"orange/secret/admin/v1/admin.proto\x12\x16orange.secret.admin.v1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a!orange/auth/v1/auth_options.proto\"\xa2\x05\n" +
+	"\rSecretVersion\x12\x1d\n" +
+	"\x05realm\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05realm\x12$\n" +
+	"\tsecret_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bsecretId\x12\x1d\n" +
 	"\n" +
-	"version_id\x18\x04 \x01(\tR\tversionId\x12\x1f\n" +
-	"\bmaterial\x18\x05 \x01(\fH\x00R\bmaterial\x88\x01\x01\x12\x1a\n" +
+	"version_id\x18\x03 \x01(\tR\tversionId\x12\x1f\n" +
+	"\bmaterial\x18\x04 \x01(\fH\x00R\bmaterial\x88\x01\x01\x12\x1a\n" +
 	"\bchecksum\x18\n" +
 	" \x01(\tR\bchecksum\x12:\n" +
 	"\x05state\x18\v \x01(\x0e2$.orange.secret.admin.v1.VersionStateR\x05state\x129\n" +
@@ -1504,17 +1417,15 @@ const file_orange_secret_admin_v1_admin_proto_rawDesc = "" +
 	"retired_by\x18\x1b \x01(\tR\tretiredBy\x12;\n" +
 	"\vshredded_at\x18\x1c \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"shreddedAtB\v\n" +
-	"\t_material\"R\n" +
-	"\x17CreateServiceKEKRequest\x12!\n" +
-	"\fworkspace_id\x18\x01 \x01(\tR\vworkspaceId\x12\x14\n" +
-	"\x05realm\x18\x02 \x01(\tR\x05realm\"R\n" +
+	"\t_material\"/\n" +
+	"\x17CreateServiceKEKRequest\x12\x14\n" +
+	"\x05realm\x18\x01 \x01(\tR\x05realm\"R\n" +
 	"\x18CreateServiceKEKResponse\x12\x15\n" +
 	"\x06kek_id\x18\x01 \x01(\tR\x05kekId\x12\x1f\n" +
 	"\vkek_version\x18\x02 \x01(\x05R\n" +
-	"kekVersion\"R\n" +
-	"\x17RotateServiceKEKRequest\x12!\n" +
-	"\fworkspace_id\x18\x01 \x01(\tR\vworkspaceId\x12\x14\n" +
-	"\x05realm\x18\x02 \x01(\tR\x05realm\"X\n" +
+	"kekVersion\"/\n" +
+	"\x17RotateServiceKEKRequest\x12\x14\n" +
+	"\x05realm\x18\x01 \x01(\tR\x05realm\"X\n" +
 	"\x18RotateServiceKEKResponse\x12<\n" +
 	"\arotated\x18\x01 \x03(\v2\".orange.secret.admin.v1.RotatedKEKR\arotated\"\x93\x01\n" +
 	"\n" +
@@ -1524,67 +1435,58 @@ const file_orange_secret_admin_v1_admin_proto_rawDesc = "" +
 	"oldVersion\x12\x1f\n" +
 	"\vnew_version\x18\x03 \x01(\x05R\n" +
 	"newVersion\x12,\n" +
-	"\x12master_kek_version\x18\x04 \x01(\x05R\x10masterKekVersion\"\xc4\x01\n" +
-	"\x14CreateVersionRequest\x12*\n" +
-	"\fworkspace_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\vworkspaceId\x12\x1d\n" +
-	"\x05realm\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05realm\x12$\n" +
-	"\tsecret_id\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bsecretId\x12#\n" +
-	"\bmaterial\x18\x04 \x01(\fB\a\xbaH\x04z\x02\x10\x01R\bmaterial\x12\x16\n" +
-	"\x06enable\x18\x05 \x01(\bR\x06enable\"X\n" +
+	"\x12master_kek_version\x18\x04 \x01(\x05R\x10masterKekVersion\"\x98\x01\n" +
+	"\x14CreateVersionRequest\x12\x1d\n" +
+	"\x05realm\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05realm\x12$\n" +
+	"\tsecret_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bsecretId\x12#\n" +
+	"\bmaterial\x18\x03 \x01(\fB\a\xbaH\x04z\x02\x10\x01R\bmaterial\x12\x16\n" +
+	"\x06enable\x18\x04 \x01(\bR\x06enable\"X\n" +
 	"\x15CreateVersionResponse\x12?\n" +
-	"\aversion\x18\x01 \x01(\v2%.orange.secret.admin.v1.SecretVersionR\aversion\"\xaf\x01\n" +
-	"\x14EnableVersionRequest\x12*\n" +
-	"\fworkspace_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\vworkspaceId\x12\x1d\n" +
-	"\x05realm\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05realm\x12$\n" +
-	"\tsecret_id\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bsecretId\x12&\n" +
+	"\aversion\x18\x01 \x01(\v2%.orange.secret.admin.v1.SecretVersionR\aversion\"\x83\x01\n" +
+	"\x14EnableVersionRequest\x12\x1d\n" +
+	"\x05realm\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05realm\x12$\n" +
+	"\tsecret_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bsecretId\x12&\n" +
 	"\n" +
-	"version_id\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tversionId\"X\n" +
+	"version_id\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tversionId\"X\n" +
 	"\x15EnableVersionResponse\x12?\n" +
-	"\aversion\x18\x01 \x01(\v2%.orange.secret.admin.v1.SecretVersionR\aversion\"\xb0\x01\n" +
-	"\x15DisableVersionRequest\x12*\n" +
-	"\fworkspace_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\vworkspaceId\x12\x1d\n" +
-	"\x05realm\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05realm\x12$\n" +
-	"\tsecret_id\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bsecretId\x12&\n" +
+	"\aversion\x18\x01 \x01(\v2%.orange.secret.admin.v1.SecretVersionR\aversion\"\x84\x01\n" +
+	"\x15DisableVersionRequest\x12\x1d\n" +
+	"\x05realm\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05realm\x12$\n" +
+	"\tsecret_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bsecretId\x12&\n" +
 	"\n" +
-	"version_id\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tversionId\"Y\n" +
+	"version_id\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tversionId\"Y\n" +
 	"\x16DisableVersionResponse\x12?\n" +
-	"\aversion\x18\x01 \x01(\v2%.orange.secret.admin.v1.SecretVersionR\aversion\"\xc5\x01\n" +
-	"\x14RetireVersionRequest\x12*\n" +
-	"\fworkspace_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\vworkspaceId\x12\x1d\n" +
-	"\x05realm\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05realm\x12$\n" +
-	"\tsecret_id\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bsecretId\x12&\n" +
+	"\aversion\x18\x01 \x01(\v2%.orange.secret.admin.v1.SecretVersionR\aversion\"\x99\x01\n" +
+	"\x14RetireVersionRequest\x12\x1d\n" +
+	"\x05realm\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05realm\x12$\n" +
+	"\tsecret_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bsecretId\x12&\n" +
 	"\n" +
-	"version_id\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tversionId\x12\x14\n" +
-	"\x05shred\x18\x05 \x01(\bR\x05shred\"X\n" +
+	"version_id\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tversionId\x12\x14\n" +
+	"\x05shred\x18\x04 \x01(\bR\x05shred\"X\n" +
 	"\x15RetireVersionResponse\x12?\n" +
-	"\aversion\x18\x01 \x01(\v2%.orange.secret.admin.v1.SecretVersionR\aversion\"\x88\x01\n" +
-	"\x15ResolveVersionRequest\x12*\n" +
-	"\fworkspace_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\vworkspaceId\x12\x1d\n" +
-	"\x05realm\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05realm\x12$\n" +
-	"\tsecret_id\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bsecretId\"Y\n" +
+	"\aversion\x18\x01 \x01(\v2%.orange.secret.admin.v1.SecretVersionR\aversion\"\\\n" +
+	"\x15ResolveVersionRequest\x12\x1d\n" +
+	"\x05realm\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05realm\x12$\n" +
+	"\tsecret_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bsecretId\"Y\n" +
 	"\x16ResolveVersionResponse\x12?\n" +
-	"\aversion\x18\x01 \x01(\v2%.orange.secret.admin.v1.SecretVersionR\aversion\"\x86\x01\n" +
-	"\x13ListVersionsRequest\x12*\n" +
-	"\fworkspace_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\vworkspaceId\x12\x1d\n" +
-	"\x05realm\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05realm\x12$\n" +
-	"\tsecret_id\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bsecretId\"Y\n" +
+	"\aversion\x18\x01 \x01(\v2%.orange.secret.admin.v1.SecretVersionR\aversion\"Z\n" +
+	"\x13ListVersionsRequest\x12\x1d\n" +
+	"\x05realm\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05realm\x12$\n" +
+	"\tsecret_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bsecretId\"Y\n" +
 	"\x14ListVersionsResponse\x12A\n" +
-	"\bversions\x18\x01 \x03(\v2%.orange.secret.admin.v1.SecretVersionR\bversions\"V\n" +
-	"\x12ListSecretsRequest\x12*\n" +
-	"\fworkspace_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\vworkspaceId\x12\x14\n" +
-	"\x05realm\x18\x02 \x01(\tR\x05realm\"V\n" +
+	"\bversions\x18\x01 \x03(\v2%.orange.secret.admin.v1.SecretVersionR\bversions\"*\n" +
+	"\x12ListSecretsRequest\x12\x14\n" +
+	"\x05realm\x18\x01 \x01(\tR\x05realm\"V\n" +
 	"\x13ListSecretsResponse\x12?\n" +
-	"\asecrets\x18\x01 \x03(\v2%.orange.secret.admin.v1.SecretSummaryR\asecrets\"e\n" +
-	"\rSecretSummary\x12!\n" +
-	"\fworkspace_id\x18\x01 \x01(\tR\vworkspaceId\x12\x14\n" +
-	"\x05realm\x18\x02 \x01(\tR\x05realm\x12\x1b\n" +
-	"\tsecret_id\x18\x03 \x01(\tR\bsecretId\"\x89\x01\n" +
-	"\x12SecretChangedEvent\x12!\n" +
-	"\fworkspace_id\x18\x01 \x01(\tR\vworkspaceId\x12\x14\n" +
-	"\x05realm\x18\x02 \x01(\tR\x05realm\x12\x1b\n" +
-	"\tsecret_id\x18\x03 \x01(\tR\bsecretId\x12\x1d\n" +
+	"\asecrets\x18\x01 \x03(\v2%.orange.secret.admin.v1.SecretSummaryR\asecrets\"B\n" +
+	"\rSecretSummary\x12\x14\n" +
+	"\x05realm\x18\x01 \x01(\tR\x05realm\x12\x1b\n" +
+	"\tsecret_id\x18\x02 \x01(\tR\bsecretId\"f\n" +
+	"\x12SecretChangedEvent\x12\x14\n" +
+	"\x05realm\x18\x01 \x01(\tR\x05realm\x12\x1b\n" +
+	"\tsecret_id\x18\x02 \x01(\tR\bsecretId\x12\x1d\n" +
 	"\n" +
-	"version_id\x18\x04 \x01(\tR\tversionId*\x7f\n" +
+	"version_id\x18\x03 \x01(\tR\tversionId*\x7f\n" +
 	"\fVersionState\x12\x1d\n" +
 	"\x19VERSION_STATE_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15VERSION_STATE_ENABLED\x10\x01\x12\x1a\n" +
