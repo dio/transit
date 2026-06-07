@@ -168,7 +168,14 @@ func runServer(parent context.Context, cfg serverCfg) error {
 	if err := workspaceSvc.EnsureSchema(ctx); err != nil {
 		return fmt.Errorf("init workspace schema: %w", err)
 	}
-	userSvc := resources.NewUserService(pool, cfg.logger.With("component", "user"))
+	// ── API key store (initialized early; userSvc depends on it for scope binding)
+
+	keyStore, err := apikeys.NewStore(ctx, pool)
+	if err != nil {
+		return fmt.Errorf("init api key store: %w", err)
+	}
+
+	userSvc := resources.NewUserService(pool, cfg.logger.With("component", "user"), keyStore)
 	if err := userSvc.EnsureSchema(ctx); err != nil {
 		return fmt.Errorf("init user schema: %w", err)
 	}
@@ -195,13 +202,6 @@ func runServer(parent context.Context, cfg serverCfg) error {
 		return fmt.Errorf("init profile service: %w", err)
 	}
 
-	// ── API key store ─────────────────────────────────────────────────────────
-
-	keyStore, err := apikeys.NewStore(ctx, pool)
-	if err != nil {
-		return fmt.Errorf("init api key store: %w", err)
-	}
-
 	// ── Config snapshot store + service ───────────────────────────────────────
 
 	snapshotStore, err := config.NewPgSnapshotStore(ctx, pool)
@@ -215,7 +215,7 @@ func runServer(parent context.Context, cfg serverCfg) error {
 	codecOpt := connect.WithCodec(vtprotocodec.Codec{})
 	authOpt := connect.WithInterceptors(apikeys.Interceptor(keyStore))
 	egressAuthStore := egressauth.NewStore(pool)
-	egressAuthOpt := connect.WithInterceptors(egressauth.Interceptor(egressAuthStore))
+	egressAuthOpt := connect.WithInterceptors(egressauth.Interceptor(egressAuthStore, egressAuthStore))
 	opts := []connect.HandlerOption{codecOpt, authOpt}
 
 	mux := http.NewServeMux()

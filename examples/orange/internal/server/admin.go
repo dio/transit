@@ -20,5 +20,7 @@ Run 'orange admin <command> --help' for command-specific help.`,
 	cmd.AddCommand(newAPIKeyCmd())
 	cmd.AddCommand(newEgressCmd())
 	cmd.AddCommand(newConfigCmd())
+	cmd.AddCommand(newListCmd())
+	cmd.AddCommand(newReplCmd())
 	return cmd
 }

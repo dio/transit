@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spf13/cobra"
 
+	egressadminv1 "github.com/dio/transit/examples/orange/api/orange/egress/admin/v1"
 	projectv1 "github.com/dio/transit/examples/orange/api/orange/project/admin/v1"
 	secretv1 "github.com/dio/transit/examples/orange/api/orange/secret/admin/v1"
 	userv1 "github.com/dio/transit/examples/orange/api/orange/user/admin/v1"
@@ -34,6 +35,7 @@ func newBootstrapCmd() *cobra.Command {
 		include   string
 		assign    string
 		entries   string
+		actions   string
 		port      string
 		publicURL string
 	)
@@ -62,7 +64,16 @@ Or use --entries for a compact notation (comma-separated tokens):
     usr@          → create user, no workspace assignment
     usr@proj/ws   → create user + project + workspace, assign user to ws
 
---include and --entries can be combined. --assign adds extra assignments on top.`,
+--include and --entries can be combined. --assign adds extra assignments on top.
+
+Use --actions to run post-bootstrap operations on created resources:
+
+  orange bootstrap --local --org=orange.io \
+    --entries=dio@proj1/ws1,kai@proj1/ws1 \
+    --actions=download:egress-bundle@ws1,download:egress-bundle@ws2
+
+  Action grammar (comma-separated):
+    download:egress-bundle@<wsName>  → write <egressID>.tar.gz in current directory`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if org == "" {
@@ -80,6 +91,7 @@ Or use --entries for a compact notation (comma-separated tokens):
 				include:   include,
 				assign:    assign,
 				entries:   entries,
+				actions:   actions,
 				port:      port,
 				publicURL: publicURL,
 				logger:    logger,
@@ -94,6 +106,7 @@ Or use --entries for a compact notation (comma-separated tokens):
 	cmd.Flags().StringVar(&include, "include", "", "comma-separated resources: proj[=name],ws[=name],usr[=name]")
 	cmd.Flags().StringVar(&assign, "assign", "", "extra user:workspace assignments, e.g. dio:ws1,kai:ws1")
 	cmd.Flags().StringVar(&entries, "entries", "", "compact resource spec, e.g. dio@proj1/ws1,kai@,proj2/ws2,proj3")
+	cmd.Flags().StringVar(&actions, "actions", "", "post-bootstrap actions, e.g. download:egress-bundle@ws1,download:egress-bundle@ws2")
 	cmd.Flags().StringVar(&port, "port", envOr("PORT", "8080"), "server port used as fallback for egress server_url")
 	cmd.Flags().StringVar(&publicURL, "public-url", envOr("ORANGE_PUBLIC_URL", ""), "public URL written into egress bundles (env: ORANGE_PUBLIC_URL; default: http://localhost:<port>)")
 
@@ -108,6 +121,7 @@ type bootstrapCfg struct {
 	include   string
 	assign    string
 	entries   string
+	actions   string
 	port      string
 	publicURL string
 	logger    *slog.Logger
@@ -343,6 +357,42 @@ func parseAssign(s string) ([]assignPair, error) {
 	return pairs, nil
 }
 
+// ── --actions parser ───────────────────────────────────────────────────────────
+
+// bootstrapAction is one post-bootstrap operation.
+// Format: verb:resource@target  (e.g. download:egress-bundle@ws1).
+type bootstrapAction struct {
+	verb     string // e.g. "download"
+	resource string // e.g. "egress-bundle"
+	target   string // workspace name as given in --entries or --include
+}
+
+func parseActions(s string) ([]bootstrapAction, error) {
+	if s == "" {
+		return nil, nil
+	}
+	var out []bootstrapAction
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		verb, rest, ok := strings.Cut(part, ":")
+		if !ok {
+			return nil, fmt.Errorf("--actions token %q: expected verb:resource@target", part)
+		}
+		resource, target, ok := strings.Cut(rest, "@")
+		if !ok {
+			return nil, fmt.Errorf("--actions token %q: expected resource@target after %q:", part, verb)
+		}
+		if verb == "" || resource == "" || target == "" {
+			return nil, fmt.Errorf("--actions token %q: verb, resource, and target must all be non-empty", part)
+		}
+		out = append(out, bootstrapAction{verb: verb, resource: resource, target: target})
+	}
+	return out, nil
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 func stringOr(s, fallback string) string {
@@ -432,7 +482,13 @@ func runBootstrap(parent context.Context, cfg bootstrapCfg) error {
 	if err := workspaceSvc.EnsureSchema(ctx); err != nil {
 		return fmt.Errorf("init workspace schema: %w", err)
 	}
-	userSvc := resources.NewUserService(pool, cfg.logger.With("component", "user"))
+
+	keyStore, err := apikeys.NewStore(ctx, pool)
+	if err != nil {
+		return fmt.Errorf("init api key store: %w", err)
+	}
+
+	userSvc := resources.NewUserService(pool, cfg.logger.With("component", "user"), keyStore)
 	if err := userSvc.EnsureSchema(ctx); err != nil {
 		return fmt.Errorf("init user schema: %w", err)
 	}
@@ -445,11 +501,6 @@ func runBootstrap(parent context.Context, cfg bootstrapCfg) error {
 		return fmt.Errorf("init egress service: %w", err)
 	}
 	workspaceSvc.SetEgressService(egressSvc)
-
-	keyStore, err := apikeys.NewStore(ctx, pool)
-	if err != nil {
-		return fmt.Errorf("init api key store: %w", err)
-	}
 
 	// ── Parse flags into a merged resource spec ────────────────────────────
 
@@ -473,6 +524,12 @@ func runBootstrap(parent context.Context, cfg bootstrapCfg) error {
 		return err
 	}
 	allAssign := append(spec.autoAssign, extraAssign...)
+
+	// Parse --actions early so bad syntax is caught before any DB writes.
+	acts, err := parseActions(cfg.actions)
+	if err != nil {
+		return err
+	}
 
 	// ── Bootstrap: org + admin user + API key + KEK pool ──────────────────
 
@@ -515,7 +572,7 @@ func runBootstrap(parent context.Context, cfg bootstrapCfg) error {
 		return err
 	}
 
-	plaintext, _, err := keyStore.Issue(ctx, orgID, adminID, "", []string{apikeys.ScopeAdmin}, "bootstrap admin key")
+	plaintext, _, err := keyStore.Issue(ctx, orgID, adminID, "", []string{apikeys.ScopeOrgAdmin}, "bootstrap admin key")
 	if err != nil {
 		return fmt.Errorf("issue bootstrap key: %w", err)
 	}
@@ -576,7 +633,7 @@ func runBootstrap(parent context.Context, cfg bootstrapCfg) error {
 			return fmt.Errorf("create user %q: %w", uEmail, err)
 		}
 		uid := resp.Msg.GetUser().GetUserId()
-		apiKey, _, err := keyStore.Issue(ctx, orgID, uid, "", []string{apikeys.ScopeUser}, "bootstrap user key")
+		apiKey, _, err := keyStore.Issue(ctx, orgID, uid, "", []string{apikeys.ScopeUserRead}, "bootstrap user key")
 		if err != nil {
 			return fmt.Errorf("issue user key for %q: %w", uEmail, err)
 		}
@@ -585,9 +642,6 @@ func runBootstrap(parent context.Context, cfg bootstrapCfg) error {
 	}
 
 	// ── Assignments ────────────────────────────────────────────────────────
-
-	type tokenKeyEntry struct{ usrName, wsName, key string }
-	var tokenKeys []tokenKeyEntry
 
 	for _, pair := range allAssign {
 		ui, ok := usrInfos[pair.usrName]
@@ -604,19 +658,37 @@ func runBootstrap(parent context.Context, cfg bootstrapCfg) error {
 		})); err != nil {
 			return fmt.Errorf("assign %q to workspace %q: %w", pair.usrName, pair.wsName, err)
 		}
-		cfg.logger.Info("assigned user to workspace", "user", pair.usrName, "workspace", pair.wsName)
+		// AddWorkspaceMember atomically supersedes the user's existing key(s) with
+		// workspace-scoped permissions (secret:read, secret:write, token:issue).
+		cfg.logger.Info("assigned user to workspace and updated key scopes",
+			"user", pair.usrName, "workspace", pair.wsName)
+	}
 
-		// Issue a workspace-scoped token:issue key so the user can call
-		// `orange token create` immediately after bootstrap.
-		tkPlaintext, _, err := keyStore.Issue(ctx, orgID, ui.id, wi.id,
-			[]string{apikeys.ScopeTokenIssue},
-			"token key "+pair.usrName+"@"+pair.wsName,
-		)
-		if err != nil {
-			return fmt.Errorf("issue token key for %q@%q: %w", pair.usrName, pair.wsName, err)
+	// ── Execute post-bootstrap actions ────────────────────────────────────────
+
+	// bundlePaths collects wsName→filePath for egress-bundle downloads so they
+	// appear in the env-var summary below.
+	bundlePaths := map[string]string{}
+	for _, a := range acts {
+		switch a.verb + ":" + a.resource {
+		case "download:egress-bundle":
+			wi, ok := wsInfos[a.target]
+			if !ok {
+				return fmt.Errorf("action download:egress-bundle@%s: unknown workspace %q — must be listed in --entries or --include", a.target, a.target)
+			}
+			resp, err := egressSvc.GetEgressBundle(ctx, connect.NewRequest(&egressadminv1.GetEgressBundleRequest{EgressId: wi.egressID}))
+			if err != nil {
+				return fmt.Errorf("download egress bundle for workspace %q: %w", a.target, err)
+			}
+			outPath := wi.egressID + ".tar.gz"
+			if err := writeBundleTarGz(outPath, bundleFiles(resp.Msg.GetBundle())); err != nil {
+				return fmt.Errorf("write egress bundle for workspace %q: %w", a.target, err)
+			}
+			bundlePaths[a.target] = outPath
+			cfg.logger.Info("downloaded egress bundle", "workspace", a.target, "egress_id", wi.egressID, "path", outPath)
+		default:
+			return fmt.Errorf("unknown action %q — supported: download:egress-bundle", a.verb+":"+a.resource)
 		}
-		tokenKeys = append(tokenKeys, tokenKeyEntry{usrName: pair.usrName, wsName: pair.wsName, key: tkPlaintext})
-		cfg.logger.Info("issued token key", "user", pair.usrName, "workspace", pair.wsName)
 	}
 
 	// ── Print summary ──────────────────────────────────────────────────────
@@ -636,17 +708,15 @@ func runBootstrap(parent context.Context, cfg bootstrapCfg) error {
 		fmt.Fprintf(os.Stdout, "\n# workspace %s  (proj: %s)\n", wName, spec.wsProj[wName])
 		fmt.Fprintf(os.Stdout, "export ORANGE_WS_ID_%s=%s\n", envLabel(wName), wi.id)
 		fmt.Fprintf(os.Stdout, "export ORANGE_EGRESS_ID_%s=%s\n", envLabel(wName), wi.egressID)
+		if p, ok := bundlePaths[wName]; ok {
+			fmt.Fprintf(os.Stdout, "export ORANGE_EGRESS_BUNDLE_%s=%s\n", envLabel(wName), p)
+		}
 	}
 	for _, uName := range spec.usrOrder {
 		ui := usrInfos[uName]
 		fmt.Fprintf(os.Stdout, "\n# user %s\n", ui.email)
 		fmt.Fprintf(os.Stdout, "export ORANGE_USER_ID_%s=%s\n", envLabel(uName), ui.id)
 		fmt.Fprintf(os.Stdout, "export ORANGE_USER_API_KEY_%s=%s\n", envLabel(uName), ui.apiKey)
-	}
-
-	for _, tk := range tokenKeys {
-		fmt.Fprintf(os.Stdout, "\n# token key %s → %s (scope: token:issue)\n", tk.usrName, tk.wsName)
-		fmt.Fprintf(os.Stdout, "export ORANGE_TOKEN_KEY_%s_%s=%s\n", envLabel(tk.usrName), envLabel(tk.wsName), tk.key)
 	}
 
 	fmt.Fprintf(os.Stdout, "\n# start the server:\n#   orange server --local\n")
