@@ -3,7 +3,7 @@ llm:
     claude-haiku-4-5:
       provider: anthropic
       name: claude-haiku-4-5-20251001
-      endpoints:
+      endpoint_overrides:
         chat_completions: anthropic_openai_compat
     claude-haiku-4-5-20251001:
       provider: anthropic
@@ -207,76 +207,69 @@ llm:
         secret_ref: env://GCP_SERVICE_ACCOUNT_JSON
 
 keys:
+  # Default: direct routing to upstream providers with no overrides.
+  demo/dio/sk-default: {}
+
   # Fallback demo: three unreachable primaries → vertex_anthropic as real fallback.
-  demo/maya/sk-fallback:
-    workspace: demo
-    user: maya
-    llm:
-      models:
-        claude-haiku-4-5:
-          routing:
-            chain:
-              retry:
-                retry_on: "connect-failure,reset,5xx,retriable-status-codes"
-                per_try_timeout_ms: 10000
-              children:
-                - target: { provider: fallback_p1, name: claude-haiku-4-5 }
-                - target: { provider: fallback_p2, name: claude-haiku-4-5 }
-                - target: { provider: fallback_p3, name: claude-haiku-4-5 }
-                - target: { provider: vertex_anthropic, name: claude-opus-4@20250514 }
+  demo/dio/sk-fallback:
+    routing_overrides:
+      claude-haiku-4-5:
+        chain:
+          retry:
+            retry_on: "connect-failure,reset,5xx,retriable-status-codes"
+            per_try_timeout_ms: 10000
+          children:
+            - target: { provider: fallback_p1, name: claude-haiku-4-5 }
+            - target: { provider: fallback_p2, name: claude-haiku-4-5 }
+            - target: { provider: fallback_p3, name: claude-haiku-4-5 }
+            - target: { provider: vertex_anthropic, name: claude-opus-4@20250514 }
 
   # Split demo: 34/33/33 weight split across three Vertex AI endpoints.
-  demo/maya/sk-split:
-    workspace: demo
-    user: maya
-    llm:
-      models:
-        claude-haiku-4-5:
-          routing:
-            split:
-              children:
-                - weight: 34
-                  target: { provider: split_p1, name: claude-haiku-4-5 }
-                - weight: 33
-                  target: { provider: split_p2, name: claude-haiku-4-5 }
-                - weight: 33
-                  target: { provider: split_p3, name: claude-haiku-4-5 }
+  demo/dio/sk-split:
+    routing_overrides:
+      claude-haiku-4-5:
+        split:
+          children:
+            - weight: 34
+              target: { provider: split_p1, name: claude-haiku-4-5 }
+            - weight: 33
+              target: { provider: split_p2, name: claude-haiku-4-5 }
+            - weight: 33
+              target: { provider: split_p3, name: claude-haiku-4-5 }
+
+profiles:
+  demo/dio/default:
+    tools:
+      kiwi:
+        include: ["search-flight"]
+      aws-knowledge:
+        include: ["read_documentation", "search_documentation"]
+        optional: true  # session succeeds even if aws-knowledge is unreachable
+      github:
+        include: ["search_repositories"]
+        optional: true  # session succeeds even if github is unreachable
+    auth:
+      github:
+        type: bearer
+        secret_ref: env://GITHUB_TOKEN
+  demo/dio/kiwi-only:
+    tools:
+      kiwi: {}
 
 mcp:
-  profiles:
-    default:
-      tools:
-        kiwi:
-          include: ["search-flight"]
-        aws-knowledge:
-          include: ["read_documentation", "search_documentation"]
-          optional: true  # session succeeds even if aws-knowledge is unreachable
-        github:
-          include: ["search_repositories"]
-          optional: true  # session succeeds even if github is unreachable
-      auth:
-        github:
-          type: bearer
-          secret_ref: env://GITHUB_TOKEN
-    kiwi-only:
-      tools:
-        kiwi: {}
   servers:
     kiwi:
       endpoint: https://mcp.kiwi.com
       namespace: kiwi
-      tools:
-        include: ["search-flight"]
+      tools_include: ["search-flight"]
     aws-knowledge:
       endpoint: https://knowledge-mcp.global.api.aws
       namespace: aws
-      tools:
-        include: ["read_documentation", "search_documentation"]
+      tools_include: ["read_documentation", "search_documentation"]
     github:
       endpoint: https://api.githubcopilot.com/mcp/
       namespace: github
       auth:
         type: bearer
         secret_ref: env://GITHUB_TOKEN # This to be used as default, but profile's secret_ref can override it.
-      tools:
-        include: ["search_repositories", "get_file_contents"]
+      tools_include: ["search_repositories", "get_file_contents"]

@@ -1,6 +1,10 @@
 // Package main is the dynamic-module entrypoint. It blank-imports the orange
 // subpackages so their init() registrations land in the shared SDK registry
 // before Envoy queries it.
+//
+// config/loader runs after the pipeline inits (Go initialises packages in
+// dependency order) and distributes the ORANGE_CONFIG-sourced AppState to
+// each package.
 package main
 
 import (
@@ -17,6 +21,7 @@ import (
 	_ "github.com/dio/transit/examples/orange/internal/pipeline/responsesws/loopback"
 	_ "github.com/dio/transit/examples/orange/internal/pipeline/tracer"
 	_ "github.com/dio/transit/examples/orange/internal/translator"
+	_ "github.com/dio/transit/examples/orange/internal/config/loader"
 )
 
 func main() {}

@@ -11,8 +11,12 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.41.10
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.11
 	github.com/aws/aws-sdk-go-v2/config v1.32.21
+	github.com/chzyer/readline v1.5.1
 	github.com/dio/transit v0.0.0
 	github.com/envoyproxy/envoy/source/extensions/dynamic_modules v0.0.0-20260521055639-0d6e3c60aa55
+	github.com/envoyproxy/go-control-plane v0.14.0
+	github.com/envoyproxy/go-control-plane/envoy v1.36.0
+	github.com/envoyproxy/go-control-plane/ratelimit v0.1.1-0.20260131204543-4ca8b9cded3e
 	github.com/fergusstrange/embedded-postgres v1.34.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/google/go-cmp v0.7.0
@@ -43,7 +47,7 @@ require (
 	golang.org/x/crypto v0.51.0
 	golang.org/x/net v0.55.0
 	google.golang.org/genai v1.58.0
-	google.golang.org/grpc v1.81.1
+	google.golang.org/grpc v1.81.0-dev
 	google.golang.org/protobuf v1.36.11
 	k8s.io/utils v0.0.0-20260507154919-ff6756f316d2
 )
@@ -53,6 +57,7 @@ require (
 	cloud.google.com/go v0.116.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
+	github.com/alicebob/miniredis/v2 v2.38.0 // indirect
 	github.com/andybalholm/brotli v1.2.1 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.20 // indirect
@@ -72,7 +77,9 @@ require (
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/chzyer/readline v1.5.1 // indirect
+	github.com/cncf/xds/go v0.0.0-20251210132809-ee656c7534f5 // indirect
+	github.com/envoyproxy/protoc-gen-validate v1.3.0 // indirect
+	github.com/envoyproxy/ratelimit v1.4.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
@@ -92,12 +99,14 @@ require (
 	github.com/prometheus/common v0.67.5 // indirect
 	github.com/prometheus/otlptranslator v1.0.0 // indirect
 	github.com/prometheus/procfs v0.20.1 // indirect
+	github.com/redis/go-redis/v9 v9.20.0 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8 // indirect
+	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/bridges/prometheus v0.68.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.67.0 // indirect
@@ -119,6 +128,7 @@ require (
 	go.opentelemetry.io/otel/metric v1.43.0 // indirect
 	go.opentelemetry.io/otel/sdk/log v0.19.0 // indirect
 	go.opentelemetry.io/otel/sdk/metric v1.43.0 // indirect
+	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	golang.org/x/exp v0.0.0-20250813145105-42675adae3e6 // indirect

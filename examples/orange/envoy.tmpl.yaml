@@ -170,7 +170,7 @@ static_resources:
                               retry_on: "5xx,gateway-error,reset,connect-failure,refused-stream,retriable-status-codes"
                               retriable_status_codes: [429]
                               num_retries: 7
-                              per_try_timeout: 30s
+                              per_try_timeout: 900s
                               retry_back_off:
                                 base_interval: 0.1s
                                 max_interval: 1s
