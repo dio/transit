@@ -1977,20 +1977,784 @@ func (x *AuthOverride) GetSecretRef() string {
 	return ""
 }
 
+type CreateRateLimitTierRequest struct {
+	state                   protoimpl.MessageState `protogen:"open.v1"`
+	WorkspaceId             string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	Name                    string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	UsdPerMinute            float64                `protobuf:"fixed64,3,opt,name=usd_per_minute,json=usdPerMinute,proto3" json:"usd_per_minute,omitempty"`
+	UsdPerHour              float64                `protobuf:"fixed64,4,opt,name=usd_per_hour,json=usdPerHour,proto3" json:"usd_per_hour,omitempty"`
+	UsdPerDay               float64                `protobuf:"fixed64,5,opt,name=usd_per_day,json=usdPerDay,proto3" json:"usd_per_day,omitempty"`
+	Rpm                     int32                  `protobuf:"varint,6,opt,name=rpm,proto3" json:"rpm,omitempty"`
+	Rph                     int32                  `protobuf:"varint,7,opt,name=rph,proto3" json:"rph,omitempty"`
+	Rpd                     int32                  `protobuf:"varint,8,opt,name=rpd,proto3" json:"rpd,omitempty"`
+	InputTokensPerMinute    int32                  `protobuf:"varint,9,opt,name=input_tokens_per_minute,json=inputTokensPerMinute,proto3" json:"input_tokens_per_minute,omitempty"`
+	InputTokensPerHour      int32                  `protobuf:"varint,10,opt,name=input_tokens_per_hour,json=inputTokensPerHour,proto3" json:"input_tokens_per_hour,omitempty"`
+	InputTokensPerDay       int32                  `protobuf:"varint,11,opt,name=input_tokens_per_day,json=inputTokensPerDay,proto3" json:"input_tokens_per_day,omitempty"`
+	OutputTokensPerMinute   int32                  `protobuf:"varint,12,opt,name=output_tokens_per_minute,json=outputTokensPerMinute,proto3" json:"output_tokens_per_minute,omitempty"`
+	OutputTokensPerHour     int32                  `protobuf:"varint,13,opt,name=output_tokens_per_hour,json=outputTokensPerHour,proto3" json:"output_tokens_per_hour,omitempty"`
+	OutputTokensPerDay      int32                  `protobuf:"varint,14,opt,name=output_tokens_per_day,json=outputTokensPerDay,proto3" json:"output_tokens_per_day,omitempty"`
+	CacheReadTokensPerHour  int32                  `protobuf:"varint,15,opt,name=cache_read_tokens_per_hour,json=cacheReadTokensPerHour,proto3" json:"cache_read_tokens_per_hour,omitempty"`
+	CacheReadTokensPerDay   int32                  `protobuf:"varint,16,opt,name=cache_read_tokens_per_day,json=cacheReadTokensPerDay,proto3" json:"cache_read_tokens_per_day,omitempty"`
+	CacheWriteTokensPerHour int32                  `protobuf:"varint,17,opt,name=cache_write_tokens_per_hour,json=cacheWriteTokensPerHour,proto3" json:"cache_write_tokens_per_hour,omitempty"`
+	CacheWriteTokensPerDay  int32                  `protobuf:"varint,18,opt,name=cache_write_tokens_per_day,json=cacheWriteTokensPerDay,proto3" json:"cache_write_tokens_per_day,omitempty"`
+	OnExceed                OnExceed               `protobuf:"varint,19,opt,name=on_exceed,json=onExceed,proto3,enum=orange.config.admin.v1.OnExceed" json:"on_exceed,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
+}
+
+func (x *CreateRateLimitTierRequest) Reset() {
+	*x = CreateRateLimitTierRequest{}
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateRateLimitTierRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateRateLimitTierRequest) ProtoMessage() {}
+
+func (x *CreateRateLimitTierRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateRateLimitTierRequest.ProtoReflect.Descriptor instead.
+func (*CreateRateLimitTierRequest) Descriptor() ([]byte, []int) {
+	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *CreateRateLimitTierRequest) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return ""
+}
+
+func (x *CreateRateLimitTierRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *CreateRateLimitTierRequest) GetUsdPerMinute() float64 {
+	if x != nil {
+		return x.UsdPerMinute
+	}
+	return 0
+}
+
+func (x *CreateRateLimitTierRequest) GetUsdPerHour() float64 {
+	if x != nil {
+		return x.UsdPerHour
+	}
+	return 0
+}
+
+func (x *CreateRateLimitTierRequest) GetUsdPerDay() float64 {
+	if x != nil {
+		return x.UsdPerDay
+	}
+	return 0
+}
+
+func (x *CreateRateLimitTierRequest) GetRpm() int32 {
+	if x != nil {
+		return x.Rpm
+	}
+	return 0
+}
+
+func (x *CreateRateLimitTierRequest) GetRph() int32 {
+	if x != nil {
+		return x.Rph
+	}
+	return 0
+}
+
+func (x *CreateRateLimitTierRequest) GetRpd() int32 {
+	if x != nil {
+		return x.Rpd
+	}
+	return 0
+}
+
+func (x *CreateRateLimitTierRequest) GetInputTokensPerMinute() int32 {
+	if x != nil {
+		return x.InputTokensPerMinute
+	}
+	return 0
+}
+
+func (x *CreateRateLimitTierRequest) GetInputTokensPerHour() int32 {
+	if x != nil {
+		return x.InputTokensPerHour
+	}
+	return 0
+}
+
+func (x *CreateRateLimitTierRequest) GetInputTokensPerDay() int32 {
+	if x != nil {
+		return x.InputTokensPerDay
+	}
+	return 0
+}
+
+func (x *CreateRateLimitTierRequest) GetOutputTokensPerMinute() int32 {
+	if x != nil {
+		return x.OutputTokensPerMinute
+	}
+	return 0
+}
+
+func (x *CreateRateLimitTierRequest) GetOutputTokensPerHour() int32 {
+	if x != nil {
+		return x.OutputTokensPerHour
+	}
+	return 0
+}
+
+func (x *CreateRateLimitTierRequest) GetOutputTokensPerDay() int32 {
+	if x != nil {
+		return x.OutputTokensPerDay
+	}
+	return 0
+}
+
+func (x *CreateRateLimitTierRequest) GetCacheReadTokensPerHour() int32 {
+	if x != nil {
+		return x.CacheReadTokensPerHour
+	}
+	return 0
+}
+
+func (x *CreateRateLimitTierRequest) GetCacheReadTokensPerDay() int32 {
+	if x != nil {
+		return x.CacheReadTokensPerDay
+	}
+	return 0
+}
+
+func (x *CreateRateLimitTierRequest) GetCacheWriteTokensPerHour() int32 {
+	if x != nil {
+		return x.CacheWriteTokensPerHour
+	}
+	return 0
+}
+
+func (x *CreateRateLimitTierRequest) GetCacheWriteTokensPerDay() int32 {
+	if x != nil {
+		return x.CacheWriteTokensPerDay
+	}
+	return 0
+}
+
+func (x *CreateRateLimitTierRequest) GetOnExceed() OnExceed {
+	if x != nil {
+		return x.OnExceed
+	}
+	return OnExceed_ON_EXCEED_UNSPECIFIED
+}
+
+type CreateRateLimitTierResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Tier          *RateLimitTier         `protobuf:"bytes,1,opt,name=tier,proto3" json:"tier,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateRateLimitTierResponse) Reset() {
+	*x = CreateRateLimitTierResponse{}
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateRateLimitTierResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateRateLimitTierResponse) ProtoMessage() {}
+
+func (x *CreateRateLimitTierResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateRateLimitTierResponse.ProtoReflect.Descriptor instead.
+func (*CreateRateLimitTierResponse) Descriptor() ([]byte, []int) {
+	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *CreateRateLimitTierResponse) GetTier() *RateLimitTier {
+	if x != nil {
+		return x.Tier
+	}
+	return nil
+}
+
+type GetRateLimitTierRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	WorkspaceId   string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetRateLimitTierRequest) Reset() {
+	*x = GetRateLimitTierRequest{}
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetRateLimitTierRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetRateLimitTierRequest) ProtoMessage() {}
+
+func (x *GetRateLimitTierRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetRateLimitTierRequest.ProtoReflect.Descriptor instead.
+func (*GetRateLimitTierRequest) Descriptor() ([]byte, []int) {
+	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *GetRateLimitTierRequest) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return ""
+}
+
+func (x *GetRateLimitTierRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type GetRateLimitTierResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Tier          *RateLimitTier         `protobuf:"bytes,1,opt,name=tier,proto3" json:"tier,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetRateLimitTierResponse) Reset() {
+	*x = GetRateLimitTierResponse{}
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetRateLimitTierResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetRateLimitTierResponse) ProtoMessage() {}
+
+func (x *GetRateLimitTierResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetRateLimitTierResponse.ProtoReflect.Descriptor instead.
+func (*GetRateLimitTierResponse) Descriptor() ([]byte, []int) {
+	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *GetRateLimitTierResponse) GetTier() *RateLimitTier {
+	if x != nil {
+		return x.Tier
+	}
+	return nil
+}
+
+type UpdateRateLimitTierRequest struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	WorkspaceId string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	Name        string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// All limit fields are replaced in full — unset fields reset to unconstrained.
+	UsdPerMinute            float64  `protobuf:"fixed64,3,opt,name=usd_per_minute,json=usdPerMinute,proto3" json:"usd_per_minute,omitempty"`
+	UsdPerHour              float64  `protobuf:"fixed64,4,opt,name=usd_per_hour,json=usdPerHour,proto3" json:"usd_per_hour,omitempty"`
+	UsdPerDay               float64  `protobuf:"fixed64,5,opt,name=usd_per_day,json=usdPerDay,proto3" json:"usd_per_day,omitempty"`
+	Rpm                     int32    `protobuf:"varint,6,opt,name=rpm,proto3" json:"rpm,omitempty"`
+	Rph                     int32    `protobuf:"varint,7,opt,name=rph,proto3" json:"rph,omitempty"`
+	Rpd                     int32    `protobuf:"varint,8,opt,name=rpd,proto3" json:"rpd,omitempty"`
+	InputTokensPerMinute    int32    `protobuf:"varint,9,opt,name=input_tokens_per_minute,json=inputTokensPerMinute,proto3" json:"input_tokens_per_minute,omitempty"`
+	InputTokensPerHour      int32    `protobuf:"varint,10,opt,name=input_tokens_per_hour,json=inputTokensPerHour,proto3" json:"input_tokens_per_hour,omitempty"`
+	InputTokensPerDay       int32    `protobuf:"varint,11,opt,name=input_tokens_per_day,json=inputTokensPerDay,proto3" json:"input_tokens_per_day,omitempty"`
+	OutputTokensPerMinute   int32    `protobuf:"varint,12,opt,name=output_tokens_per_minute,json=outputTokensPerMinute,proto3" json:"output_tokens_per_minute,omitempty"`
+	OutputTokensPerHour     int32    `protobuf:"varint,13,opt,name=output_tokens_per_hour,json=outputTokensPerHour,proto3" json:"output_tokens_per_hour,omitempty"`
+	OutputTokensPerDay      int32    `protobuf:"varint,14,opt,name=output_tokens_per_day,json=outputTokensPerDay,proto3" json:"output_tokens_per_day,omitempty"`
+	CacheReadTokensPerHour  int32    `protobuf:"varint,15,opt,name=cache_read_tokens_per_hour,json=cacheReadTokensPerHour,proto3" json:"cache_read_tokens_per_hour,omitempty"`
+	CacheReadTokensPerDay   int32    `protobuf:"varint,16,opt,name=cache_read_tokens_per_day,json=cacheReadTokensPerDay,proto3" json:"cache_read_tokens_per_day,omitempty"`
+	CacheWriteTokensPerHour int32    `protobuf:"varint,17,opt,name=cache_write_tokens_per_hour,json=cacheWriteTokensPerHour,proto3" json:"cache_write_tokens_per_hour,omitempty"`
+	CacheWriteTokensPerDay  int32    `protobuf:"varint,18,opt,name=cache_write_tokens_per_day,json=cacheWriteTokensPerDay,proto3" json:"cache_write_tokens_per_day,omitempty"`
+	OnExceed                OnExceed `protobuf:"varint,19,opt,name=on_exceed,json=onExceed,proto3,enum=orange.config.admin.v1.OnExceed" json:"on_exceed,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
+}
+
+func (x *UpdateRateLimitTierRequest) Reset() {
+	*x = UpdateRateLimitTierRequest{}
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateRateLimitTierRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateRateLimitTierRequest) ProtoMessage() {}
+
+func (x *UpdateRateLimitTierRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateRateLimitTierRequest.ProtoReflect.Descriptor instead.
+func (*UpdateRateLimitTierRequest) Descriptor() ([]byte, []int) {
+	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *UpdateRateLimitTierRequest) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return ""
+}
+
+func (x *UpdateRateLimitTierRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *UpdateRateLimitTierRequest) GetUsdPerMinute() float64 {
+	if x != nil {
+		return x.UsdPerMinute
+	}
+	return 0
+}
+
+func (x *UpdateRateLimitTierRequest) GetUsdPerHour() float64 {
+	if x != nil {
+		return x.UsdPerHour
+	}
+	return 0
+}
+
+func (x *UpdateRateLimitTierRequest) GetUsdPerDay() float64 {
+	if x != nil {
+		return x.UsdPerDay
+	}
+	return 0
+}
+
+func (x *UpdateRateLimitTierRequest) GetRpm() int32 {
+	if x != nil {
+		return x.Rpm
+	}
+	return 0
+}
+
+func (x *UpdateRateLimitTierRequest) GetRph() int32 {
+	if x != nil {
+		return x.Rph
+	}
+	return 0
+}
+
+func (x *UpdateRateLimitTierRequest) GetRpd() int32 {
+	if x != nil {
+		return x.Rpd
+	}
+	return 0
+}
+
+func (x *UpdateRateLimitTierRequest) GetInputTokensPerMinute() int32 {
+	if x != nil {
+		return x.InputTokensPerMinute
+	}
+	return 0
+}
+
+func (x *UpdateRateLimitTierRequest) GetInputTokensPerHour() int32 {
+	if x != nil {
+		return x.InputTokensPerHour
+	}
+	return 0
+}
+
+func (x *UpdateRateLimitTierRequest) GetInputTokensPerDay() int32 {
+	if x != nil {
+		return x.InputTokensPerDay
+	}
+	return 0
+}
+
+func (x *UpdateRateLimitTierRequest) GetOutputTokensPerMinute() int32 {
+	if x != nil {
+		return x.OutputTokensPerMinute
+	}
+	return 0
+}
+
+func (x *UpdateRateLimitTierRequest) GetOutputTokensPerHour() int32 {
+	if x != nil {
+		return x.OutputTokensPerHour
+	}
+	return 0
+}
+
+func (x *UpdateRateLimitTierRequest) GetOutputTokensPerDay() int32 {
+	if x != nil {
+		return x.OutputTokensPerDay
+	}
+	return 0
+}
+
+func (x *UpdateRateLimitTierRequest) GetCacheReadTokensPerHour() int32 {
+	if x != nil {
+		return x.CacheReadTokensPerHour
+	}
+	return 0
+}
+
+func (x *UpdateRateLimitTierRequest) GetCacheReadTokensPerDay() int32 {
+	if x != nil {
+		return x.CacheReadTokensPerDay
+	}
+	return 0
+}
+
+func (x *UpdateRateLimitTierRequest) GetCacheWriteTokensPerHour() int32 {
+	if x != nil {
+		return x.CacheWriteTokensPerHour
+	}
+	return 0
+}
+
+func (x *UpdateRateLimitTierRequest) GetCacheWriteTokensPerDay() int32 {
+	if x != nil {
+		return x.CacheWriteTokensPerDay
+	}
+	return 0
+}
+
+func (x *UpdateRateLimitTierRequest) GetOnExceed() OnExceed {
+	if x != nil {
+		return x.OnExceed
+	}
+	return OnExceed_ON_EXCEED_UNSPECIFIED
+}
+
+type UpdateRateLimitTierResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Tier          *RateLimitTier         `protobuf:"bytes,1,opt,name=tier,proto3" json:"tier,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateRateLimitTierResponse) Reset() {
+	*x = UpdateRateLimitTierResponse{}
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateRateLimitTierResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateRateLimitTierResponse) ProtoMessage() {}
+
+func (x *UpdateRateLimitTierResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateRateLimitTierResponse.ProtoReflect.Descriptor instead.
+func (*UpdateRateLimitTierResponse) Descriptor() ([]byte, []int) {
+	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *UpdateRateLimitTierResponse) GetTier() *RateLimitTier {
+	if x != nil {
+		return x.Tier
+	}
+	return nil
+}
+
+type DeleteRateLimitTierRequest struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	WorkspaceId string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	// name of the tier to delete. Returns NOT_FOUND if the tier is still
+	// referenced by an active policy entry.
+	Name          string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteRateLimitTierRequest) Reset() {
+	*x = DeleteRateLimitTierRequest{}
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteRateLimitTierRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteRateLimitTierRequest) ProtoMessage() {}
+
+func (x *DeleteRateLimitTierRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteRateLimitTierRequest.ProtoReflect.Descriptor instead.
+func (*DeleteRateLimitTierRequest) Descriptor() ([]byte, []int) {
+	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *DeleteRateLimitTierRequest) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return ""
+}
+
+func (x *DeleteRateLimitTierRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type DeleteRateLimitTierResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteRateLimitTierResponse) Reset() {
+	*x = DeleteRateLimitTierResponse{}
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteRateLimitTierResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteRateLimitTierResponse) ProtoMessage() {}
+
+func (x *DeleteRateLimitTierResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteRateLimitTierResponse.ProtoReflect.Descriptor instead.
+func (*DeleteRateLimitTierResponse) Descriptor() ([]byte, []int) {
+	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{40}
+}
+
+type ListRateLimitTiersRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	WorkspaceId   string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	Limit         *int32                 `protobuf:"varint,2,opt,name=limit,proto3,oneof" json:"limit,omitempty"`
+	PageToken     *string                `protobuf:"bytes,3,opt,name=page_token,json=pageToken,proto3,oneof" json:"page_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListRateLimitTiersRequest) Reset() {
+	*x = ListRateLimitTiersRequest{}
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListRateLimitTiersRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListRateLimitTiersRequest) ProtoMessage() {}
+
+func (x *ListRateLimitTiersRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListRateLimitTiersRequest.ProtoReflect.Descriptor instead.
+func (*ListRateLimitTiersRequest) Descriptor() ([]byte, []int) {
+	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *ListRateLimitTiersRequest) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return ""
+}
+
+func (x *ListRateLimitTiersRequest) GetLimit() int32 {
+	if x != nil && x.Limit != nil {
+		return *x.Limit
+	}
+	return 0
+}
+
+func (x *ListRateLimitTiersRequest) GetPageToken() string {
+	if x != nil && x.PageToken != nil {
+		return *x.PageToken
+	}
+	return ""
+}
+
+type ListRateLimitTiersResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Tiers         []*RateLimitTier       `protobuf:"bytes,1,rep,name=tiers,proto3" json:"tiers,omitempty"`
+	NextPageToken string                 `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListRateLimitTiersResponse) Reset() {
+	*x = ListRateLimitTiersResponse{}
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListRateLimitTiersResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListRateLimitTiersResponse) ProtoMessage() {}
+
+func (x *ListRateLimitTiersResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListRateLimitTiersResponse.ProtoReflect.Descriptor instead.
+func (*ListRateLimitTiersResponse) Descriptor() ([]byte, []int) {
+	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{42}
+}
+
+func (x *ListRateLimitTiersResponse) GetTiers() []*RateLimitTier {
+	if x != nil {
+		return x.Tiers
+	}
+	return nil
+}
+
+func (x *ListRateLimitTiersResponse) GetNextPageToken() string {
+	if x != nil {
+		return x.NextPageToken
+	}
+	return ""
+}
+
 type SetRateLimitScopeRequest struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
 	WorkspaceId string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
-	// user scopes rules to a specific user within the workspace.
-	// Absent means the rules apply at the workspace level.
-	User          *string          `protobuf:"bytes,2,opt,name=user,proto3,oneof" json:"user,omitempty"`
-	Rules         []*RateLimitRule `protobuf:"bytes,3,rep,name=rules,proto3" json:"rules,omitempty"`
+	// user scopes entries to a specific user within the workspace.
+	// Absent means the entries apply at the workspace level.
+	User *string `protobuf:"bytes,2,opt,name=user,proto3,oneof" json:"user,omitempty"`
+	// entries replaces the full ordered list of policy entries for this scope.
+	Entries       []*RateLimitPolicyEntry `protobuf:"bytes,3,rep,name=entries,proto3" json:"entries,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SetRateLimitScopeRequest) Reset() {
 	*x = SetRateLimitScopeRequest{}
-	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[33]
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2002,7 +2766,7 @@ func (x *SetRateLimitScopeRequest) String() string {
 func (*SetRateLimitScopeRequest) ProtoMessage() {}
 
 func (x *SetRateLimitScopeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[33]
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2015,7 +2779,7 @@ func (x *SetRateLimitScopeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetRateLimitScopeRequest.ProtoReflect.Descriptor instead.
 func (*SetRateLimitScopeRequest) Descriptor() ([]byte, []int) {
-	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{33}
+	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *SetRateLimitScopeRequest) GetWorkspaceId() string {
@@ -2032,9 +2796,9 @@ func (x *SetRateLimitScopeRequest) GetUser() string {
 	return ""
 }
 
-func (x *SetRateLimitScopeRequest) GetRules() []*RateLimitRule {
+func (x *SetRateLimitScopeRequest) GetEntries() []*RateLimitPolicyEntry {
 	if x != nil {
-		return x.Rules
+		return x.Entries
 	}
 	return nil
 }
@@ -2048,7 +2812,7 @@ type SetRateLimitScopeResponse struct {
 
 func (x *SetRateLimitScopeResponse) Reset() {
 	*x = SetRateLimitScopeResponse{}
-	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[34]
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2060,7 +2824,7 @@ func (x *SetRateLimitScopeResponse) String() string {
 func (*SetRateLimitScopeResponse) ProtoMessage() {}
 
 func (x *SetRateLimitScopeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[34]
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2073,7 +2837,7 @@ func (x *SetRateLimitScopeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetRateLimitScopeResponse.ProtoReflect.Descriptor instead.
 func (*SetRateLimitScopeResponse) Descriptor() ([]byte, []int) {
-	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{34}
+	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *SetRateLimitScopeResponse) GetScope() *RateLimitScope {
@@ -2094,7 +2858,7 @@ type GetRateLimitScopeRequest struct {
 
 func (x *GetRateLimitScopeRequest) Reset() {
 	*x = GetRateLimitScopeRequest{}
-	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[35]
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2106,7 +2870,7 @@ func (x *GetRateLimitScopeRequest) String() string {
 func (*GetRateLimitScopeRequest) ProtoMessage() {}
 
 func (x *GetRateLimitScopeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[35]
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2119,7 +2883,7 @@ func (x *GetRateLimitScopeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRateLimitScopeRequest.ProtoReflect.Descriptor instead.
 func (*GetRateLimitScopeRequest) Descriptor() ([]byte, []int) {
-	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{35}
+	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *GetRateLimitScopeRequest) GetWorkspaceId() string {
@@ -2145,7 +2909,7 @@ type GetRateLimitScopeResponse struct {
 
 func (x *GetRateLimitScopeResponse) Reset() {
 	*x = GetRateLimitScopeResponse{}
-	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[36]
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2157,7 +2921,7 @@ func (x *GetRateLimitScopeResponse) String() string {
 func (*GetRateLimitScopeResponse) ProtoMessage() {}
 
 func (x *GetRateLimitScopeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[36]
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2170,7 +2934,7 @@ func (x *GetRateLimitScopeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRateLimitScopeResponse.ProtoReflect.Descriptor instead.
 func (*GetRateLimitScopeResponse) Descriptor() ([]byte, []int) {
-	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{36}
+	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *GetRateLimitScopeResponse) GetScope() *RateLimitScope {
@@ -2191,7 +2955,7 @@ type ListRateLimitScopesRequest struct {
 
 func (x *ListRateLimitScopesRequest) Reset() {
 	*x = ListRateLimitScopesRequest{}
-	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[37]
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2203,7 +2967,7 @@ func (x *ListRateLimitScopesRequest) String() string {
 func (*ListRateLimitScopesRequest) ProtoMessage() {}
 
 func (x *ListRateLimitScopesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[37]
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2216,7 +2980,7 @@ func (x *ListRateLimitScopesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRateLimitScopesRequest.ProtoReflect.Descriptor instead.
 func (*ListRateLimitScopesRequest) Descriptor() ([]byte, []int) {
-	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{37}
+	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *ListRateLimitScopesRequest) GetWorkspaceId() string {
@@ -2250,7 +3014,7 @@ type ListRateLimitScopesResponse struct {
 
 func (x *ListRateLimitScopesResponse) Reset() {
 	*x = ListRateLimitScopesResponse{}
-	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[38]
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2262,7 +3026,7 @@ func (x *ListRateLimitScopesResponse) String() string {
 func (*ListRateLimitScopesResponse) ProtoMessage() {}
 
 func (x *ListRateLimitScopesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[38]
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2275,7 +3039,7 @@ func (x *ListRateLimitScopesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRateLimitScopesResponse.ProtoReflect.Descriptor instead.
 func (*ListRateLimitScopesResponse) Descriptor() ([]byte, []int) {
-	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{38}
+	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *ListRateLimitScopesResponse) GetScopes() []*RateLimitScope {
@@ -2303,7 +3067,7 @@ type DeleteRateLimitScopeRequest struct {
 
 func (x *DeleteRateLimitScopeRequest) Reset() {
 	*x = DeleteRateLimitScopeRequest{}
-	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[39]
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2315,7 +3079,7 @@ func (x *DeleteRateLimitScopeRequest) String() string {
 func (*DeleteRateLimitScopeRequest) ProtoMessage() {}
 
 func (x *DeleteRateLimitScopeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[39]
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2328,7 +3092,7 @@ func (x *DeleteRateLimitScopeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteRateLimitScopeRequest.ProtoReflect.Descriptor instead.
 func (*DeleteRateLimitScopeRequest) Descriptor() ([]byte, []int) {
-	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{39}
+	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *DeleteRateLimitScopeRequest) GetWorkspaceId() string {
@@ -2353,7 +3117,7 @@ type DeleteRateLimitScopeResponse struct {
 
 func (x *DeleteRateLimitScopeResponse) Reset() {
 	*x = DeleteRateLimitScopeResponse{}
-	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[40]
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2365,7 +3129,7 @@ func (x *DeleteRateLimitScopeResponse) String() string {
 func (*DeleteRateLimitScopeResponse) ProtoMessage() {}
 
 func (x *DeleteRateLimitScopeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[40]
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2378,23 +3142,23 @@ func (x *DeleteRateLimitScopeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteRateLimitScopeResponse.ProtoReflect.Descriptor instead.
 func (*DeleteRateLimitScopeResponse) Descriptor() ([]byte, []int) {
-	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{40}
+	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{50}
 }
 
-// RateLimitScope groups rate-limit rules under a workspace or user scope.
+// RateLimitScope groups policy entries under a workspace or user scope.
 type RateLimitScope struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
 	WorkspaceId string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
 	// user is absent for workspace-level scopes.
-	User          *string          `protobuf:"bytes,2,opt,name=user,proto3,oneof" json:"user,omitempty"`
-	Rules         []*RateLimitRule `protobuf:"bytes,3,rep,name=rules,proto3" json:"rules,omitempty"`
+	User          *string                 `protobuf:"bytes,2,opt,name=user,proto3,oneof" json:"user,omitempty"`
+	Entries       []*RateLimitPolicyEntry `protobuf:"bytes,3,rep,name=entries,proto3" json:"entries,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RateLimitScope) Reset() {
 	*x = RateLimitScope{}
-	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[41]
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2406,7 +3170,7 @@ func (x *RateLimitScope) String() string {
 func (*RateLimitScope) ProtoMessage() {}
 
 func (x *RateLimitScope) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[41]
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2419,7 +3183,7 @@ func (x *RateLimitScope) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RateLimitScope.ProtoReflect.Descriptor instead.
 func (*RateLimitScope) Descriptor() ([]byte, []int) {
-	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{41}
+	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *RateLimitScope) GetWorkspaceId() string {
@@ -2436,15 +3200,412 @@ func (x *RateLimitScope) GetUser() string {
 	return ""
 }
 
-func (x *RateLimitScope) GetRules() []*RateLimitRule {
+func (x *RateLimitScope) GetEntries() []*RateLimitPolicyEntry {
 	if x != nil {
-		return x.Rules
+		return x.Entries
 	}
 	return nil
 }
 
-// RateLimitRule mirrors the RawRateLimitRule structure. Zero values mean
-// "unconstrained" for that dimension. on_exceed defaults to REJECT.
+// RateLimitTier is a named set of rate-limit limits reusable across policy
+// entries. Tiers are workspace-scoped. Zero values mean unconstrained.
+// The snapshot compiler expands tier references before encoding; the wire
+// format (snapshot.proto) carries only flat RateLimitRule entries.
+type RateLimitTier struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// name is unique within the workspace, e.g. "standard", "premium".
+	Name                    string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	UsdPerMinute            float64                `protobuf:"fixed64,2,opt,name=usd_per_minute,json=usdPerMinute,proto3" json:"usd_per_minute,omitempty"`
+	UsdPerHour              float64                `protobuf:"fixed64,3,opt,name=usd_per_hour,json=usdPerHour,proto3" json:"usd_per_hour,omitempty"`
+	UsdPerDay               float64                `protobuf:"fixed64,4,opt,name=usd_per_day,json=usdPerDay,proto3" json:"usd_per_day,omitempty"`
+	Rpm                     int32                  `protobuf:"varint,5,opt,name=rpm,proto3" json:"rpm,omitempty"`
+	Rph                     int32                  `protobuf:"varint,6,opt,name=rph,proto3" json:"rph,omitempty"`
+	Rpd                     int32                  `protobuf:"varint,7,opt,name=rpd,proto3" json:"rpd,omitempty"`
+	InputTokensPerMinute    int32                  `protobuf:"varint,8,opt,name=input_tokens_per_minute,json=inputTokensPerMinute,proto3" json:"input_tokens_per_minute,omitempty"`
+	InputTokensPerHour      int32                  `protobuf:"varint,9,opt,name=input_tokens_per_hour,json=inputTokensPerHour,proto3" json:"input_tokens_per_hour,omitempty"`
+	InputTokensPerDay       int32                  `protobuf:"varint,10,opt,name=input_tokens_per_day,json=inputTokensPerDay,proto3" json:"input_tokens_per_day,omitempty"`
+	OutputTokensPerMinute   int32                  `protobuf:"varint,11,opt,name=output_tokens_per_minute,json=outputTokensPerMinute,proto3" json:"output_tokens_per_minute,omitempty"`
+	OutputTokensPerHour     int32                  `protobuf:"varint,12,opt,name=output_tokens_per_hour,json=outputTokensPerHour,proto3" json:"output_tokens_per_hour,omitempty"`
+	OutputTokensPerDay      int32                  `protobuf:"varint,13,opt,name=output_tokens_per_day,json=outputTokensPerDay,proto3" json:"output_tokens_per_day,omitempty"`
+	CacheReadTokensPerHour  int32                  `protobuf:"varint,14,opt,name=cache_read_tokens_per_hour,json=cacheReadTokensPerHour,proto3" json:"cache_read_tokens_per_hour,omitempty"`
+	CacheReadTokensPerDay   int32                  `protobuf:"varint,15,opt,name=cache_read_tokens_per_day,json=cacheReadTokensPerDay,proto3" json:"cache_read_tokens_per_day,omitempty"`
+	CacheWriteTokensPerHour int32                  `protobuf:"varint,16,opt,name=cache_write_tokens_per_hour,json=cacheWriteTokensPerHour,proto3" json:"cache_write_tokens_per_hour,omitempty"`
+	CacheWriteTokensPerDay  int32                  `protobuf:"varint,17,opt,name=cache_write_tokens_per_day,json=cacheWriteTokensPerDay,proto3" json:"cache_write_tokens_per_day,omitempty"`
+	OnExceed                OnExceed               `protobuf:"varint,18,opt,name=on_exceed,json=onExceed,proto3,enum=orange.config.admin.v1.OnExceed" json:"on_exceed,omitempty"`
+	CreatedAt               *timestamppb.Timestamp `protobuf:"bytes,19,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	UpdatedAt               *timestamppb.Timestamp `protobuf:"bytes,20,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
+}
+
+func (x *RateLimitTier) Reset() {
+	*x = RateLimitTier{}
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[52]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RateLimitTier) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RateLimitTier) ProtoMessage() {}
+
+func (x *RateLimitTier) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[52]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RateLimitTier.ProtoReflect.Descriptor instead.
+func (*RateLimitTier) Descriptor() ([]byte, []int) {
+	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{52}
+}
+
+func (x *RateLimitTier) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *RateLimitTier) GetUsdPerMinute() float64 {
+	if x != nil {
+		return x.UsdPerMinute
+	}
+	return 0
+}
+
+func (x *RateLimitTier) GetUsdPerHour() float64 {
+	if x != nil {
+		return x.UsdPerHour
+	}
+	return 0
+}
+
+func (x *RateLimitTier) GetUsdPerDay() float64 {
+	if x != nil {
+		return x.UsdPerDay
+	}
+	return 0
+}
+
+func (x *RateLimitTier) GetRpm() int32 {
+	if x != nil {
+		return x.Rpm
+	}
+	return 0
+}
+
+func (x *RateLimitTier) GetRph() int32 {
+	if x != nil {
+		return x.Rph
+	}
+	return 0
+}
+
+func (x *RateLimitTier) GetRpd() int32 {
+	if x != nil {
+		return x.Rpd
+	}
+	return 0
+}
+
+func (x *RateLimitTier) GetInputTokensPerMinute() int32 {
+	if x != nil {
+		return x.InputTokensPerMinute
+	}
+	return 0
+}
+
+func (x *RateLimitTier) GetInputTokensPerHour() int32 {
+	if x != nil {
+		return x.InputTokensPerHour
+	}
+	return 0
+}
+
+func (x *RateLimitTier) GetInputTokensPerDay() int32 {
+	if x != nil {
+		return x.InputTokensPerDay
+	}
+	return 0
+}
+
+func (x *RateLimitTier) GetOutputTokensPerMinute() int32 {
+	if x != nil {
+		return x.OutputTokensPerMinute
+	}
+	return 0
+}
+
+func (x *RateLimitTier) GetOutputTokensPerHour() int32 {
+	if x != nil {
+		return x.OutputTokensPerHour
+	}
+	return 0
+}
+
+func (x *RateLimitTier) GetOutputTokensPerDay() int32 {
+	if x != nil {
+		return x.OutputTokensPerDay
+	}
+	return 0
+}
+
+func (x *RateLimitTier) GetCacheReadTokensPerHour() int32 {
+	if x != nil {
+		return x.CacheReadTokensPerHour
+	}
+	return 0
+}
+
+func (x *RateLimitTier) GetCacheReadTokensPerDay() int32 {
+	if x != nil {
+		return x.CacheReadTokensPerDay
+	}
+	return 0
+}
+
+func (x *RateLimitTier) GetCacheWriteTokensPerHour() int32 {
+	if x != nil {
+		return x.CacheWriteTokensPerHour
+	}
+	return 0
+}
+
+func (x *RateLimitTier) GetCacheWriteTokensPerDay() int32 {
+	if x != nil {
+		return x.CacheWriteTokensPerDay
+	}
+	return 0
+}
+
+func (x *RateLimitTier) GetOnExceed() OnExceed {
+	if x != nil {
+		return x.OnExceed
+	}
+	return OnExceed_ON_EXCEED_UNSPECIFIED
+}
+
+func (x *RateLimitTier) GetCreatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return nil
+}
+
+func (x *RateLimitTier) GetUpdatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.UpdatedAt
+	}
+	return nil
+}
+
+// RateLimitPolicyEntry is one entry in a scope's ordered policy list.
+// tier_name references a named RateLimitTier; non-zero inline limit fields
+// override the tier for that dimension. Either tier_name or at least one
+// inline limit field must be set.
+type RateLimitPolicyEntry struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// models lists model IDs this entry applies to. Use ["*"] for all models.
+	Models []string `protobuf:"bytes,1,rep,name=models,proto3" json:"models,omitempty"`
+	// tier_name references a named tier within the same workspace. Non-zero
+	// inline fields below override the corresponding tier field.
+	TierName                *string  `protobuf:"bytes,2,opt,name=tier_name,json=tierName,proto3,oneof" json:"tier_name,omitempty"`
+	UsdPerMinute            float64  `protobuf:"fixed64,3,opt,name=usd_per_minute,json=usdPerMinute,proto3" json:"usd_per_minute,omitempty"`
+	UsdPerHour              float64  `protobuf:"fixed64,4,opt,name=usd_per_hour,json=usdPerHour,proto3" json:"usd_per_hour,omitempty"`
+	UsdPerDay               float64  `protobuf:"fixed64,5,opt,name=usd_per_day,json=usdPerDay,proto3" json:"usd_per_day,omitempty"`
+	Rpm                     int32    `protobuf:"varint,6,opt,name=rpm,proto3" json:"rpm,omitempty"`
+	Rph                     int32    `protobuf:"varint,7,opt,name=rph,proto3" json:"rph,omitempty"`
+	Rpd                     int32    `protobuf:"varint,8,opt,name=rpd,proto3" json:"rpd,omitempty"`
+	InputTokensPerMinute    int32    `protobuf:"varint,9,opt,name=input_tokens_per_minute,json=inputTokensPerMinute,proto3" json:"input_tokens_per_minute,omitempty"`
+	InputTokensPerHour      int32    `protobuf:"varint,10,opt,name=input_tokens_per_hour,json=inputTokensPerHour,proto3" json:"input_tokens_per_hour,omitempty"`
+	InputTokensPerDay       int32    `protobuf:"varint,11,opt,name=input_tokens_per_day,json=inputTokensPerDay,proto3" json:"input_tokens_per_day,omitempty"`
+	OutputTokensPerMinute   int32    `protobuf:"varint,12,opt,name=output_tokens_per_minute,json=outputTokensPerMinute,proto3" json:"output_tokens_per_minute,omitempty"`
+	OutputTokensPerHour     int32    `protobuf:"varint,13,opt,name=output_tokens_per_hour,json=outputTokensPerHour,proto3" json:"output_tokens_per_hour,omitempty"`
+	OutputTokensPerDay      int32    `protobuf:"varint,14,opt,name=output_tokens_per_day,json=outputTokensPerDay,proto3" json:"output_tokens_per_day,omitempty"`
+	CacheReadTokensPerHour  int32    `protobuf:"varint,15,opt,name=cache_read_tokens_per_hour,json=cacheReadTokensPerHour,proto3" json:"cache_read_tokens_per_hour,omitempty"`
+	CacheReadTokensPerDay   int32    `protobuf:"varint,16,opt,name=cache_read_tokens_per_day,json=cacheReadTokensPerDay,proto3" json:"cache_read_tokens_per_day,omitempty"`
+	CacheWriteTokensPerHour int32    `protobuf:"varint,17,opt,name=cache_write_tokens_per_hour,json=cacheWriteTokensPerHour,proto3" json:"cache_write_tokens_per_hour,omitempty"`
+	CacheWriteTokensPerDay  int32    `protobuf:"varint,18,opt,name=cache_write_tokens_per_day,json=cacheWriteTokensPerDay,proto3" json:"cache_write_tokens_per_day,omitempty"`
+	OnExceed                OnExceed `protobuf:"varint,19,opt,name=on_exceed,json=onExceed,proto3,enum=orange.config.admin.v1.OnExceed" json:"on_exceed,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
+}
+
+func (x *RateLimitPolicyEntry) Reset() {
+	*x = RateLimitPolicyEntry{}
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[53]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RateLimitPolicyEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RateLimitPolicyEntry) ProtoMessage() {}
+
+func (x *RateLimitPolicyEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[53]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RateLimitPolicyEntry.ProtoReflect.Descriptor instead.
+func (*RateLimitPolicyEntry) Descriptor() ([]byte, []int) {
+	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{53}
+}
+
+func (x *RateLimitPolicyEntry) GetModels() []string {
+	if x != nil {
+		return x.Models
+	}
+	return nil
+}
+
+func (x *RateLimitPolicyEntry) GetTierName() string {
+	if x != nil && x.TierName != nil {
+		return *x.TierName
+	}
+	return ""
+}
+
+func (x *RateLimitPolicyEntry) GetUsdPerMinute() float64 {
+	if x != nil {
+		return x.UsdPerMinute
+	}
+	return 0
+}
+
+func (x *RateLimitPolicyEntry) GetUsdPerHour() float64 {
+	if x != nil {
+		return x.UsdPerHour
+	}
+	return 0
+}
+
+func (x *RateLimitPolicyEntry) GetUsdPerDay() float64 {
+	if x != nil {
+		return x.UsdPerDay
+	}
+	return 0
+}
+
+func (x *RateLimitPolicyEntry) GetRpm() int32 {
+	if x != nil {
+		return x.Rpm
+	}
+	return 0
+}
+
+func (x *RateLimitPolicyEntry) GetRph() int32 {
+	if x != nil {
+		return x.Rph
+	}
+	return 0
+}
+
+func (x *RateLimitPolicyEntry) GetRpd() int32 {
+	if x != nil {
+		return x.Rpd
+	}
+	return 0
+}
+
+func (x *RateLimitPolicyEntry) GetInputTokensPerMinute() int32 {
+	if x != nil {
+		return x.InputTokensPerMinute
+	}
+	return 0
+}
+
+func (x *RateLimitPolicyEntry) GetInputTokensPerHour() int32 {
+	if x != nil {
+		return x.InputTokensPerHour
+	}
+	return 0
+}
+
+func (x *RateLimitPolicyEntry) GetInputTokensPerDay() int32 {
+	if x != nil {
+		return x.InputTokensPerDay
+	}
+	return 0
+}
+
+func (x *RateLimitPolicyEntry) GetOutputTokensPerMinute() int32 {
+	if x != nil {
+		return x.OutputTokensPerMinute
+	}
+	return 0
+}
+
+func (x *RateLimitPolicyEntry) GetOutputTokensPerHour() int32 {
+	if x != nil {
+		return x.OutputTokensPerHour
+	}
+	return 0
+}
+
+func (x *RateLimitPolicyEntry) GetOutputTokensPerDay() int32 {
+	if x != nil {
+		return x.OutputTokensPerDay
+	}
+	return 0
+}
+
+func (x *RateLimitPolicyEntry) GetCacheReadTokensPerHour() int32 {
+	if x != nil {
+		return x.CacheReadTokensPerHour
+	}
+	return 0
+}
+
+func (x *RateLimitPolicyEntry) GetCacheReadTokensPerDay() int32 {
+	if x != nil {
+		return x.CacheReadTokensPerDay
+	}
+	return 0
+}
+
+func (x *RateLimitPolicyEntry) GetCacheWriteTokensPerHour() int32 {
+	if x != nil {
+		return x.CacheWriteTokensPerHour
+	}
+	return 0
+}
+
+func (x *RateLimitPolicyEntry) GetCacheWriteTokensPerDay() int32 {
+	if x != nil {
+		return x.CacheWriteTokensPerDay
+	}
+	return 0
+}
+
+func (x *RateLimitPolicyEntry) GetOnExceed() OnExceed {
+	if x != nil {
+		return x.OnExceed
+	}
+	return OnExceed_ON_EXCEED_UNSPECIFIED
+}
+
+// RateLimitRule is used for key-scope rules only (user-managed, no tier
+// reference). Zero values mean "unconstrained" for that dimension.
+// on_exceed defaults to REJECT.
 type RateLimitRule struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// models lists model IDs this rule applies to. Use ["*"] for all models.
@@ -2472,7 +3633,7 @@ type RateLimitRule struct {
 
 func (x *RateLimitRule) Reset() {
 	*x = RateLimitRule{}
-	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[42]
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2484,7 +3645,7 @@ func (x *RateLimitRule) String() string {
 func (*RateLimitRule) ProtoMessage() {}
 
 func (x *RateLimitRule) ProtoReflect() protoreflect.Message {
-	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[42]
+	mi := &file_orange_config_admin_v1_admin_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2497,7 +3658,7 @@ func (x *RateLimitRule) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RateLimitRule.ProtoReflect.Descriptor instead.
 func (*RateLimitRule) Descriptor() ([]byte, []int) {
-	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{42}
+	return file_orange_config_admin_v1_admin_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *RateLimitRule) GetModels() []string {
@@ -2778,11 +3939,79 @@ const file_orange_config_admin_v1_admin_proto_rawDesc = "" +
 	"\x06server\x18\x01 \x01(\tR\x06server\x12\x1b\n" +
 	"\tauth_type\x18\x02 \x01(\tR\bauthType\x12\x1d\n" +
 	"\n" +
-	"secret_ref\x18\x03 \x01(\tR\tsecretRef\"\xb1\x01\n" +
+	"secret_ref\x18\x03 \x01(\tR\tsecretRef\"\x81\a\n" +
+	"\x1aCreateRateLimitTierRequest\x12,\n" +
+	"\fworkspace_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\vworkspaceId\x12,\n" +
+	"\x04name\x18\x02 \x01(\tB\x18\xbaH\x15r\x13\x10\x01\x18@2\r^[a-z0-9_-]+$R\x04name\x12$\n" +
+	"\x0eusd_per_minute\x18\x03 \x01(\x01R\fusdPerMinute\x12 \n" +
+	"\fusd_per_hour\x18\x04 \x01(\x01R\n" +
+	"usdPerHour\x12\x1e\n" +
+	"\vusd_per_day\x18\x05 \x01(\x01R\tusdPerDay\x12\x10\n" +
+	"\x03rpm\x18\x06 \x01(\x05R\x03rpm\x12\x10\n" +
+	"\x03rph\x18\a \x01(\x05R\x03rph\x12\x10\n" +
+	"\x03rpd\x18\b \x01(\x05R\x03rpd\x125\n" +
+	"\x17input_tokens_per_minute\x18\t \x01(\x05R\x14inputTokensPerMinute\x121\n" +
+	"\x15input_tokens_per_hour\x18\n" +
+	" \x01(\x05R\x12inputTokensPerHour\x12/\n" +
+	"\x14input_tokens_per_day\x18\v \x01(\x05R\x11inputTokensPerDay\x127\n" +
+	"\x18output_tokens_per_minute\x18\f \x01(\x05R\x15outputTokensPerMinute\x123\n" +
+	"\x16output_tokens_per_hour\x18\r \x01(\x05R\x13outputTokensPerHour\x121\n" +
+	"\x15output_tokens_per_day\x18\x0e \x01(\x05R\x12outputTokensPerDay\x12:\n" +
+	"\x1acache_read_tokens_per_hour\x18\x0f \x01(\x05R\x16cacheReadTokensPerHour\x128\n" +
+	"\x19cache_read_tokens_per_day\x18\x10 \x01(\x05R\x15cacheReadTokensPerDay\x12<\n" +
+	"\x1bcache_write_tokens_per_hour\x18\x11 \x01(\x05R\x17cacheWriteTokensPerHour\x12:\n" +
+	"\x1acache_write_tokens_per_day\x18\x12 \x01(\x05R\x16cacheWriteTokensPerDay\x12=\n" +
+	"\ton_exceed\x18\x13 \x01(\x0e2 .orange.config.admin.v1.OnExceedR\bonExceed\"X\n" +
+	"\x1bCreateRateLimitTierResponse\x129\n" +
+	"\x04tier\x18\x01 \x01(\v2%.orange.config.admin.v1.RateLimitTierR\x04tier\"f\n" +
+	"\x17GetRateLimitTierRequest\x12,\n" +
+	"\fworkspace_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\vworkspaceId\x12\x1d\n" +
+	"\x04name\x18\x02 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\x04name\"U\n" +
+	"\x18GetRateLimitTierResponse\x129\n" +
+	"\x04tier\x18\x01 \x01(\v2%.orange.config.admin.v1.RateLimitTierR\x04tier\"\xf2\x06\n" +
+	"\x1aUpdateRateLimitTierRequest\x12,\n" +
+	"\fworkspace_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\vworkspaceId\x12\x1d\n" +
+	"\x04name\x18\x02 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\x04name\x12$\n" +
+	"\x0eusd_per_minute\x18\x03 \x01(\x01R\fusdPerMinute\x12 \n" +
+	"\fusd_per_hour\x18\x04 \x01(\x01R\n" +
+	"usdPerHour\x12\x1e\n" +
+	"\vusd_per_day\x18\x05 \x01(\x01R\tusdPerDay\x12\x10\n" +
+	"\x03rpm\x18\x06 \x01(\x05R\x03rpm\x12\x10\n" +
+	"\x03rph\x18\a \x01(\x05R\x03rph\x12\x10\n" +
+	"\x03rpd\x18\b \x01(\x05R\x03rpd\x125\n" +
+	"\x17input_tokens_per_minute\x18\t \x01(\x05R\x14inputTokensPerMinute\x121\n" +
+	"\x15input_tokens_per_hour\x18\n" +
+	" \x01(\x05R\x12inputTokensPerHour\x12/\n" +
+	"\x14input_tokens_per_day\x18\v \x01(\x05R\x11inputTokensPerDay\x127\n" +
+	"\x18output_tokens_per_minute\x18\f \x01(\x05R\x15outputTokensPerMinute\x123\n" +
+	"\x16output_tokens_per_hour\x18\r \x01(\x05R\x13outputTokensPerHour\x121\n" +
+	"\x15output_tokens_per_day\x18\x0e \x01(\x05R\x12outputTokensPerDay\x12:\n" +
+	"\x1acache_read_tokens_per_hour\x18\x0f \x01(\x05R\x16cacheReadTokensPerHour\x128\n" +
+	"\x19cache_read_tokens_per_day\x18\x10 \x01(\x05R\x15cacheReadTokensPerDay\x12<\n" +
+	"\x1bcache_write_tokens_per_hour\x18\x11 \x01(\x05R\x17cacheWriteTokensPerHour\x12:\n" +
+	"\x1acache_write_tokens_per_day\x18\x12 \x01(\x05R\x16cacheWriteTokensPerDay\x12=\n" +
+	"\ton_exceed\x18\x13 \x01(\x0e2 .orange.config.admin.v1.OnExceedR\bonExceed\"X\n" +
+	"\x1bUpdateRateLimitTierResponse\x129\n" +
+	"\x04tier\x18\x01 \x01(\v2%.orange.config.admin.v1.RateLimitTierR\x04tier\"i\n" +
+	"\x1aDeleteRateLimitTierRequest\x12,\n" +
+	"\fworkspace_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\vworkspaceId\x12\x1d\n" +
+	"\x04name\x18\x02 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18@R\x04name\"\x1d\n" +
+	"\x1bDeleteRateLimitTierResponse\"\xad\x01\n" +
+	"\x19ListRateLimitTiersRequest\x12,\n" +
+	"\fworkspace_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\vworkspaceId\x12%\n" +
+	"\x05limit\x18\x02 \x01(\x05B\n" +
+	"\xbaH\a\x1a\x05\x18\xe8\a(\x00H\x00R\x05limit\x88\x01\x01\x12\"\n" +
+	"\n" +
+	"page_token\x18\x03 \x01(\tH\x01R\tpageToken\x88\x01\x01B\b\n" +
+	"\x06_limitB\r\n" +
+	"\v_page_token\"\x81\x01\n" +
+	"\x1aListRateLimitTiersResponse\x12;\n" +
+	"\x05tiers\x18\x01 \x03(\v2%.orange.config.admin.v1.RateLimitTierR\x05tiers\x12&\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\xbc\x01\n" +
 	"\x18SetRateLimitScopeRequest\x12,\n" +
 	"\fworkspace_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\vworkspaceId\x12!\n" +
-	"\x04user\x18\x02 \x01(\tB\b\xbaH\x05r\x03\x18\xff\x01H\x00R\x04user\x88\x01\x01\x12;\n" +
-	"\x05rules\x18\x03 \x03(\v2%.orange.config.admin.v1.RateLimitRuleR\x05rulesB\a\n" +
+	"\x04user\x18\x02 \x01(\tB\b\xbaH\x05r\x03\x18\xff\x01H\x00R\x04user\x88\x01\x01\x12F\n" +
+	"\aentries\x18\x03 \x03(\v2,.orange.config.admin.v1.RateLimitPolicyEntryR\aentriesB\a\n" +
 	"\x05_user\"Y\n" +
 	"\x19SetRateLimitScopeResponse\x12<\n" +
 	"\x05scope\x18\x01 \x01(\v2&.orange.config.admin.v1.RateLimitScopeR\x05scope\"t\n" +
@@ -2807,12 +4036,61 @@ const file_orange_config_admin_v1_admin_proto_rawDesc = "" +
 	"\fworkspace_id\x18\x01 \x01(\tB\t\xbaH\x06r\x04\x10\x01\x18$R\vworkspaceId\x12!\n" +
 	"\x04user\x18\x02 \x01(\tB\b\xbaH\x05r\x03\x18\xff\x01H\x00R\x04user\x88\x01\x01B\a\n" +
 	"\x05_user\"\x1e\n" +
-	"\x1cDeleteRateLimitScopeResponse\"\x92\x01\n" +
+	"\x1cDeleteRateLimitScopeResponse\"\x9d\x01\n" +
 	"\x0eRateLimitScope\x12!\n" +
 	"\fworkspace_id\x18\x01 \x01(\tR\vworkspaceId\x12\x17\n" +
-	"\x04user\x18\x02 \x01(\tH\x00R\x04user\x88\x01\x01\x12;\n" +
-	"\x05rules\x18\x03 \x03(\v2%.orange.config.admin.v1.RateLimitRuleR\x05rulesB\a\n" +
-	"\x05_user\"\xb0\x06\n" +
+	"\x04user\x18\x02 \x01(\tH\x00R\x04user\x88\x01\x01\x12F\n" +
+	"\aentries\x18\x03 \x03(\v2,.orange.config.admin.v1.RateLimitPolicyEntryR\aentriesB\a\n" +
+	"\x05_user\"\xbc\a\n" +
+	"\rRateLimitTier\x12,\n" +
+	"\x04name\x18\x01 \x01(\tB\x18\xbaH\x15r\x13\x10\x01\x18@2\r^[a-z0-9_-]+$R\x04name\x12$\n" +
+	"\x0eusd_per_minute\x18\x02 \x01(\x01R\fusdPerMinute\x12 \n" +
+	"\fusd_per_hour\x18\x03 \x01(\x01R\n" +
+	"usdPerHour\x12\x1e\n" +
+	"\vusd_per_day\x18\x04 \x01(\x01R\tusdPerDay\x12\x10\n" +
+	"\x03rpm\x18\x05 \x01(\x05R\x03rpm\x12\x10\n" +
+	"\x03rph\x18\x06 \x01(\x05R\x03rph\x12\x10\n" +
+	"\x03rpd\x18\a \x01(\x05R\x03rpd\x125\n" +
+	"\x17input_tokens_per_minute\x18\b \x01(\x05R\x14inputTokensPerMinute\x121\n" +
+	"\x15input_tokens_per_hour\x18\t \x01(\x05R\x12inputTokensPerHour\x12/\n" +
+	"\x14input_tokens_per_day\x18\n" +
+	" \x01(\x05R\x11inputTokensPerDay\x127\n" +
+	"\x18output_tokens_per_minute\x18\v \x01(\x05R\x15outputTokensPerMinute\x123\n" +
+	"\x16output_tokens_per_hour\x18\f \x01(\x05R\x13outputTokensPerHour\x121\n" +
+	"\x15output_tokens_per_day\x18\r \x01(\x05R\x12outputTokensPerDay\x12:\n" +
+	"\x1acache_read_tokens_per_hour\x18\x0e \x01(\x05R\x16cacheReadTokensPerHour\x128\n" +
+	"\x19cache_read_tokens_per_day\x18\x0f \x01(\x05R\x15cacheReadTokensPerDay\x12<\n" +
+	"\x1bcache_write_tokens_per_hour\x18\x10 \x01(\x05R\x17cacheWriteTokensPerHour\x12:\n" +
+	"\x1acache_write_tokens_per_day\x18\x11 \x01(\x05R\x16cacheWriteTokensPerDay\x12=\n" +
+	"\ton_exceed\x18\x12 \x01(\x0e2 .orange.config.admin.v1.OnExceedR\bonExceed\x129\n" +
+	"\n" +
+	"created_at\x18\x13 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
+	"\n" +
+	"updated_at\x18\x14 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"\xfa\x06\n" +
+	"\x14RateLimitPolicyEntry\x12 \n" +
+	"\x06models\x18\x01 \x03(\tB\b\xbaH\x05\x92\x01\x02\b\x01R\x06models\x12)\n" +
+	"\ttier_name\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x18@H\x00R\btierName\x88\x01\x01\x12$\n" +
+	"\x0eusd_per_minute\x18\x03 \x01(\x01R\fusdPerMinute\x12 \n" +
+	"\fusd_per_hour\x18\x04 \x01(\x01R\n" +
+	"usdPerHour\x12\x1e\n" +
+	"\vusd_per_day\x18\x05 \x01(\x01R\tusdPerDay\x12\x10\n" +
+	"\x03rpm\x18\x06 \x01(\x05R\x03rpm\x12\x10\n" +
+	"\x03rph\x18\a \x01(\x05R\x03rph\x12\x10\n" +
+	"\x03rpd\x18\b \x01(\x05R\x03rpd\x125\n" +
+	"\x17input_tokens_per_minute\x18\t \x01(\x05R\x14inputTokensPerMinute\x121\n" +
+	"\x15input_tokens_per_hour\x18\n" +
+	" \x01(\x05R\x12inputTokensPerHour\x12/\n" +
+	"\x14input_tokens_per_day\x18\v \x01(\x05R\x11inputTokensPerDay\x127\n" +
+	"\x18output_tokens_per_minute\x18\f \x01(\x05R\x15outputTokensPerMinute\x123\n" +
+	"\x16output_tokens_per_hour\x18\r \x01(\x05R\x13outputTokensPerHour\x121\n" +
+	"\x15output_tokens_per_day\x18\x0e \x01(\x05R\x12outputTokensPerDay\x12:\n" +
+	"\x1acache_read_tokens_per_hour\x18\x0f \x01(\x05R\x16cacheReadTokensPerHour\x128\n" +
+	"\x19cache_read_tokens_per_day\x18\x10 \x01(\x05R\x15cacheReadTokensPerDay\x12<\n" +
+	"\x1bcache_write_tokens_per_hour\x18\x11 \x01(\x05R\x17cacheWriteTokensPerHour\x12:\n" +
+	"\x1acache_write_tokens_per_day\x18\x12 \x01(\x05R\x16cacheWriteTokensPerDay\x12=\n" +
+	"\ton_exceed\x18\x13 \x01(\x0e2 .orange.config.admin.v1.OnExceedR\bonExceedB\f\n" +
+	"\n" +
+	"_tier_name\"\xb0\x06\n" +
 	"\rRateLimitRule\x12\x16\n" +
 	"\x06models\x18\x01 \x03(\tR\x06models\x12$\n" +
 	"\x0eusd_per_minute\x18\x02 \x01(\x01R\fusdPerMinute\x12 \n" +
@@ -2838,7 +4116,7 @@ const file_orange_config_admin_v1_admin_proto_rawDesc = "" +
 	"\x15ON_EXCEED_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10ON_EXCEED_REJECT\x10\x01\x12\x16\n" +
 	"\x12ON_EXCEED_THROTTLE\x10\x02\x12\x16\n" +
-	"\x12ON_EXCEED_LOG_ONLY\x10\x032\x82\x12\n" +
+	"\x12ON_EXCEED_LOG_ONLY\x10\x032\xd1\x17\n" +
 	"\x12ConfigAdminService\x12\x82\x01\n" +
 	"\x0fPublishSnapshot\x12..orange.config.admin.v1.PublishSnapshotRequest\x1a/.orange.config.admin.v1.PublishSnapshotResponse\"\x0e\xc2\xf3\x18\n" +
 	"\n" +
@@ -2882,7 +4160,22 @@ const file_orange_config_admin_v1_admin_proto_rawDesc = "" +
 	"\x01\x01\x12\x05admin\x12|\n" +
 	"\rDeleteProfile\x12,.orange.config.admin.v1.DeleteProfileRequest\x1a-.orange.config.admin.v1.DeleteProfileResponse\"\x0e\xc2\xf3\x18\n" +
 	"\n" +
+	"\x01\x01\x12\x05admin\x12\x8e\x01\n" +
+	"\x13CreateRateLimitTier\x122.orange.config.admin.v1.CreateRateLimitTierRequest\x1a3.orange.config.admin.v1.CreateRateLimitTierResponse\"\x0e\xc2\xf3\x18\n" +
+	"\n" +
 	"\x01\x01\x12\x05admin\x12\x88\x01\n" +
+	"\x10GetRateLimitTier\x12/.orange.config.admin.v1.GetRateLimitTierRequest\x1a0.orange.config.admin.v1.GetRateLimitTierResponse\"\x11\xc2\xf3\x18\n" +
+	"\n" +
+	"\x01\x01\x12\x05admin\x90\x02\x01\x12\x8e\x01\n" +
+	"\x13UpdateRateLimitTier\x122.orange.config.admin.v1.UpdateRateLimitTierRequest\x1a3.orange.config.admin.v1.UpdateRateLimitTierResponse\"\x0e\xc2\xf3\x18\n" +
+	"\n" +
+	"\x01\x01\x12\x05admin\x12\x8e\x01\n" +
+	"\x13DeleteRateLimitTier\x122.orange.config.admin.v1.DeleteRateLimitTierRequest\x1a3.orange.config.admin.v1.DeleteRateLimitTierResponse\"\x0e\xc2\xf3\x18\n" +
+	"\n" +
+	"\x01\x01\x12\x05admin\x12\x8e\x01\n" +
+	"\x12ListRateLimitTiers\x121.orange.config.admin.v1.ListRateLimitTiersRequest\x1a2.orange.config.admin.v1.ListRateLimitTiersResponse\"\x11\xc2\xf3\x18\n" +
+	"\n" +
+	"\x01\x01\x12\x05admin\x90\x02\x01\x12\x88\x01\n" +
 	"\x11SetRateLimitScope\x120.orange.config.admin.v1.SetRateLimitScopeRequest\x1a1.orange.config.admin.v1.SetRateLimitScopeResponse\"\x0e\xc2\xf3\x18\n" +
 	"\n" +
 	"\x01\x01\x12\x05admin\x12\x8b\x01\n" +
@@ -2911,7 +4204,7 @@ func file_orange_config_admin_v1_admin_proto_rawDescGZIP() []byte {
 }
 
 var file_orange_config_admin_v1_admin_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_orange_config_admin_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 43)
+var file_orange_config_admin_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 55)
 var file_orange_config_admin_v1_admin_proto_goTypes = []any{
 	(OnExceed)(0),                        // 0: orange.config.admin.v1.OnExceed
 	(*PublishSnapshotRequest)(nil),       // 1: orange.config.admin.v1.PublishSnapshotRequest
@@ -2947,35 +4240,47 @@ var file_orange_config_admin_v1_admin_proto_goTypes = []any{
 	(*ProfileRecord)(nil),                // 31: orange.config.admin.v1.ProfileRecord
 	(*ToolFilter)(nil),                   // 32: orange.config.admin.v1.ToolFilter
 	(*AuthOverride)(nil),                 // 33: orange.config.admin.v1.AuthOverride
-	(*SetRateLimitScopeRequest)(nil),     // 34: orange.config.admin.v1.SetRateLimitScopeRequest
-	(*SetRateLimitScopeResponse)(nil),    // 35: orange.config.admin.v1.SetRateLimitScopeResponse
-	(*GetRateLimitScopeRequest)(nil),     // 36: orange.config.admin.v1.GetRateLimitScopeRequest
-	(*GetRateLimitScopeResponse)(nil),    // 37: orange.config.admin.v1.GetRateLimitScopeResponse
-	(*ListRateLimitScopesRequest)(nil),   // 38: orange.config.admin.v1.ListRateLimitScopesRequest
-	(*ListRateLimitScopesResponse)(nil),  // 39: orange.config.admin.v1.ListRateLimitScopesResponse
-	(*DeleteRateLimitScopeRequest)(nil),  // 40: orange.config.admin.v1.DeleteRateLimitScopeRequest
-	(*DeleteRateLimitScopeResponse)(nil), // 41: orange.config.admin.v1.DeleteRateLimitScopeResponse
-	(*RateLimitScope)(nil),               // 42: orange.config.admin.v1.RateLimitScope
-	(*RateLimitRule)(nil),                // 43: orange.config.admin.v1.RateLimitRule
-	(*timestamppb.Timestamp)(nil),        // 44: google.protobuf.Timestamp
-	(*v1.RoutingOverride)(nil),           // 45: orange.routing.v1.RoutingOverride
+	(*CreateRateLimitTierRequest)(nil),   // 34: orange.config.admin.v1.CreateRateLimitTierRequest
+	(*CreateRateLimitTierResponse)(nil),  // 35: orange.config.admin.v1.CreateRateLimitTierResponse
+	(*GetRateLimitTierRequest)(nil),      // 36: orange.config.admin.v1.GetRateLimitTierRequest
+	(*GetRateLimitTierResponse)(nil),     // 37: orange.config.admin.v1.GetRateLimitTierResponse
+	(*UpdateRateLimitTierRequest)(nil),   // 38: orange.config.admin.v1.UpdateRateLimitTierRequest
+	(*UpdateRateLimitTierResponse)(nil),  // 39: orange.config.admin.v1.UpdateRateLimitTierResponse
+	(*DeleteRateLimitTierRequest)(nil),   // 40: orange.config.admin.v1.DeleteRateLimitTierRequest
+	(*DeleteRateLimitTierResponse)(nil),  // 41: orange.config.admin.v1.DeleteRateLimitTierResponse
+	(*ListRateLimitTiersRequest)(nil),    // 42: orange.config.admin.v1.ListRateLimitTiersRequest
+	(*ListRateLimitTiersResponse)(nil),   // 43: orange.config.admin.v1.ListRateLimitTiersResponse
+	(*SetRateLimitScopeRequest)(nil),     // 44: orange.config.admin.v1.SetRateLimitScopeRequest
+	(*SetRateLimitScopeResponse)(nil),    // 45: orange.config.admin.v1.SetRateLimitScopeResponse
+	(*GetRateLimitScopeRequest)(nil),     // 46: orange.config.admin.v1.GetRateLimitScopeRequest
+	(*GetRateLimitScopeResponse)(nil),    // 47: orange.config.admin.v1.GetRateLimitScopeResponse
+	(*ListRateLimitScopesRequest)(nil),   // 48: orange.config.admin.v1.ListRateLimitScopesRequest
+	(*ListRateLimitScopesResponse)(nil),  // 49: orange.config.admin.v1.ListRateLimitScopesResponse
+	(*DeleteRateLimitScopeRequest)(nil),  // 50: orange.config.admin.v1.DeleteRateLimitScopeRequest
+	(*DeleteRateLimitScopeResponse)(nil), // 51: orange.config.admin.v1.DeleteRateLimitScopeResponse
+	(*RateLimitScope)(nil),               // 52: orange.config.admin.v1.RateLimitScope
+	(*RateLimitTier)(nil),                // 53: orange.config.admin.v1.RateLimitTier
+	(*RateLimitPolicyEntry)(nil),         // 54: orange.config.admin.v1.RateLimitPolicyEntry
+	(*RateLimitRule)(nil),                // 55: orange.config.admin.v1.RateLimitRule
+	(*timestamppb.Timestamp)(nil),        // 56: google.protobuf.Timestamp
+	(*v1.RoutingOverride)(nil),           // 57: orange.routing.v1.RoutingOverride
 }
 var file_orange_config_admin_v1_admin_proto_depIdxs = []int32{
 	9,  // 0: orange.config.admin.v1.PublishSnapshotResponse.snapshot:type_name -> orange.config.admin.v1.SnapshotMeta
 	9,  // 1: orange.config.admin.v1.ListSnapshotsResponse.snapshots:type_name -> orange.config.admin.v1.SnapshotMeta
 	9,  // 2: orange.config.admin.v1.GetSnapshotResponse.snapshot:type_name -> orange.config.admin.v1.SnapshotMeta
 	9,  // 3: orange.config.admin.v1.RollbackSnapshotResponse.snapshot:type_name -> orange.config.admin.v1.SnapshotMeta
-	44, // 4: orange.config.admin.v1.SnapshotMeta.created_at:type_name -> google.protobuf.Timestamp
-	45, // 5: orange.config.admin.v1.CreateKeyRequest.routing_overrides:type_name -> orange.routing.v1.RoutingOverride
-	43, // 6: orange.config.admin.v1.CreateKeyRequest.rate_limit_rules:type_name -> orange.config.admin.v1.RateLimitRule
+	56, // 4: orange.config.admin.v1.SnapshotMeta.created_at:type_name -> google.protobuf.Timestamp
+	57, // 5: orange.config.admin.v1.CreateKeyRequest.routing_overrides:type_name -> orange.routing.v1.RoutingOverride
+	55, // 6: orange.config.admin.v1.CreateKeyRequest.rate_limit_rules:type_name -> orange.config.admin.v1.RateLimitRule
 	20, // 7: orange.config.admin.v1.CreateKeyResponse.key:type_name -> orange.config.admin.v1.KeyRecord
 	20, // 8: orange.config.admin.v1.ListKeysResponse.keys:type_name -> orange.config.admin.v1.KeyRecord
 	20, // 9: orange.config.admin.v1.GetKeyResponse.key:type_name -> orange.config.admin.v1.KeyRecord
-	45, // 10: orange.config.admin.v1.UpdateKeyRequest.routing_overrides:type_name -> orange.routing.v1.RoutingOverride
-	43, // 11: orange.config.admin.v1.UpdateKeyRequest.rate_limit_rules:type_name -> orange.config.admin.v1.RateLimitRule
+	57, // 10: orange.config.admin.v1.UpdateKeyRequest.routing_overrides:type_name -> orange.routing.v1.RoutingOverride
+	55, // 11: orange.config.admin.v1.UpdateKeyRequest.rate_limit_rules:type_name -> orange.config.admin.v1.RateLimitRule
 	20, // 12: orange.config.admin.v1.UpdateKeyResponse.key:type_name -> orange.config.admin.v1.KeyRecord
-	45, // 13: orange.config.admin.v1.KeyRecord.routing_overrides:type_name -> orange.routing.v1.RoutingOverride
-	43, // 14: orange.config.admin.v1.KeyRecord.rate_limit_rules:type_name -> orange.config.admin.v1.RateLimitRule
+	57, // 13: orange.config.admin.v1.KeyRecord.routing_overrides:type_name -> orange.routing.v1.RoutingOverride
+	55, // 14: orange.config.admin.v1.KeyRecord.rate_limit_rules:type_name -> orange.config.admin.v1.RateLimitRule
 	32, // 15: orange.config.admin.v1.CreateProfileRequest.tools:type_name -> orange.config.admin.v1.ToolFilter
 	33, // 16: orange.config.admin.v1.CreateProfileRequest.auth_overrides:type_name -> orange.config.admin.v1.AuthOverride
 	31, // 17: orange.config.admin.v1.CreateProfileResponse.profile:type_name -> orange.config.admin.v1.ProfileRecord
@@ -2986,53 +4291,73 @@ var file_orange_config_admin_v1_admin_proto_depIdxs = []int32{
 	31, // 22: orange.config.admin.v1.UpdateProfileResponse.profile:type_name -> orange.config.admin.v1.ProfileRecord
 	32, // 23: orange.config.admin.v1.ProfileRecord.tools:type_name -> orange.config.admin.v1.ToolFilter
 	33, // 24: orange.config.admin.v1.ProfileRecord.auth_overrides:type_name -> orange.config.admin.v1.AuthOverride
-	43, // 25: orange.config.admin.v1.SetRateLimitScopeRequest.rules:type_name -> orange.config.admin.v1.RateLimitRule
-	42, // 26: orange.config.admin.v1.SetRateLimitScopeResponse.scope:type_name -> orange.config.admin.v1.RateLimitScope
-	42, // 27: orange.config.admin.v1.GetRateLimitScopeResponse.scope:type_name -> orange.config.admin.v1.RateLimitScope
-	42, // 28: orange.config.admin.v1.ListRateLimitScopesResponse.scopes:type_name -> orange.config.admin.v1.RateLimitScope
-	43, // 29: orange.config.admin.v1.RateLimitScope.rules:type_name -> orange.config.admin.v1.RateLimitRule
-	0,  // 30: orange.config.admin.v1.RateLimitRule.on_exceed:type_name -> orange.config.admin.v1.OnExceed
-	1,  // 31: orange.config.admin.v1.ConfigAdminService.PublishSnapshot:input_type -> orange.config.admin.v1.PublishSnapshotRequest
-	3,  // 32: orange.config.admin.v1.ConfigAdminService.ListSnapshots:input_type -> orange.config.admin.v1.ListSnapshotsRequest
-	5,  // 33: orange.config.admin.v1.ConfigAdminService.GetSnapshot:input_type -> orange.config.admin.v1.GetSnapshotRequest
-	7,  // 34: orange.config.admin.v1.ConfigAdminService.RollbackSnapshot:input_type -> orange.config.admin.v1.RollbackSnapshotRequest
-	10, // 35: orange.config.admin.v1.ConfigAdminService.CreateKey:input_type -> orange.config.admin.v1.CreateKeyRequest
-	12, // 36: orange.config.admin.v1.ConfigAdminService.ListKeys:input_type -> orange.config.admin.v1.ListKeysRequest
-	14, // 37: orange.config.admin.v1.ConfigAdminService.GetKey:input_type -> orange.config.admin.v1.GetKeyRequest
-	16, // 38: orange.config.admin.v1.ConfigAdminService.UpdateKey:input_type -> orange.config.admin.v1.UpdateKeyRequest
-	18, // 39: orange.config.admin.v1.ConfigAdminService.DeleteKey:input_type -> orange.config.admin.v1.DeleteKeyRequest
-	21, // 40: orange.config.admin.v1.ConfigAdminService.CreateProfile:input_type -> orange.config.admin.v1.CreateProfileRequest
-	23, // 41: orange.config.admin.v1.ConfigAdminService.ListProfiles:input_type -> orange.config.admin.v1.ListProfilesRequest
-	25, // 42: orange.config.admin.v1.ConfigAdminService.GetProfile:input_type -> orange.config.admin.v1.GetProfileRequest
-	27, // 43: orange.config.admin.v1.ConfigAdminService.UpdateProfile:input_type -> orange.config.admin.v1.UpdateProfileRequest
-	29, // 44: orange.config.admin.v1.ConfigAdminService.DeleteProfile:input_type -> orange.config.admin.v1.DeleteProfileRequest
-	34, // 45: orange.config.admin.v1.ConfigAdminService.SetRateLimitScope:input_type -> orange.config.admin.v1.SetRateLimitScopeRequest
-	36, // 46: orange.config.admin.v1.ConfigAdminService.GetRateLimitScope:input_type -> orange.config.admin.v1.GetRateLimitScopeRequest
-	38, // 47: orange.config.admin.v1.ConfigAdminService.ListRateLimitScopes:input_type -> orange.config.admin.v1.ListRateLimitScopesRequest
-	40, // 48: orange.config.admin.v1.ConfigAdminService.DeleteRateLimitScope:input_type -> orange.config.admin.v1.DeleteRateLimitScopeRequest
-	2,  // 49: orange.config.admin.v1.ConfigAdminService.PublishSnapshot:output_type -> orange.config.admin.v1.PublishSnapshotResponse
-	4,  // 50: orange.config.admin.v1.ConfigAdminService.ListSnapshots:output_type -> orange.config.admin.v1.ListSnapshotsResponse
-	6,  // 51: orange.config.admin.v1.ConfigAdminService.GetSnapshot:output_type -> orange.config.admin.v1.GetSnapshotResponse
-	8,  // 52: orange.config.admin.v1.ConfigAdminService.RollbackSnapshot:output_type -> orange.config.admin.v1.RollbackSnapshotResponse
-	11, // 53: orange.config.admin.v1.ConfigAdminService.CreateKey:output_type -> orange.config.admin.v1.CreateKeyResponse
-	13, // 54: orange.config.admin.v1.ConfigAdminService.ListKeys:output_type -> orange.config.admin.v1.ListKeysResponse
-	15, // 55: orange.config.admin.v1.ConfigAdminService.GetKey:output_type -> orange.config.admin.v1.GetKeyResponse
-	17, // 56: orange.config.admin.v1.ConfigAdminService.UpdateKey:output_type -> orange.config.admin.v1.UpdateKeyResponse
-	19, // 57: orange.config.admin.v1.ConfigAdminService.DeleteKey:output_type -> orange.config.admin.v1.DeleteKeyResponse
-	22, // 58: orange.config.admin.v1.ConfigAdminService.CreateProfile:output_type -> orange.config.admin.v1.CreateProfileResponse
-	24, // 59: orange.config.admin.v1.ConfigAdminService.ListProfiles:output_type -> orange.config.admin.v1.ListProfilesResponse
-	26, // 60: orange.config.admin.v1.ConfigAdminService.GetProfile:output_type -> orange.config.admin.v1.GetProfileResponse
-	28, // 61: orange.config.admin.v1.ConfigAdminService.UpdateProfile:output_type -> orange.config.admin.v1.UpdateProfileResponse
-	30, // 62: orange.config.admin.v1.ConfigAdminService.DeleteProfile:output_type -> orange.config.admin.v1.DeleteProfileResponse
-	35, // 63: orange.config.admin.v1.ConfigAdminService.SetRateLimitScope:output_type -> orange.config.admin.v1.SetRateLimitScopeResponse
-	37, // 64: orange.config.admin.v1.ConfigAdminService.GetRateLimitScope:output_type -> orange.config.admin.v1.GetRateLimitScopeResponse
-	39, // 65: orange.config.admin.v1.ConfigAdminService.ListRateLimitScopes:output_type -> orange.config.admin.v1.ListRateLimitScopesResponse
-	41, // 66: orange.config.admin.v1.ConfigAdminService.DeleteRateLimitScope:output_type -> orange.config.admin.v1.DeleteRateLimitScopeResponse
-	49, // [49:67] is the sub-list for method output_type
-	31, // [31:49] is the sub-list for method input_type
-	31, // [31:31] is the sub-list for extension type_name
-	31, // [31:31] is the sub-list for extension extendee
-	0,  // [0:31] is the sub-list for field type_name
+	0,  // 25: orange.config.admin.v1.CreateRateLimitTierRequest.on_exceed:type_name -> orange.config.admin.v1.OnExceed
+	53, // 26: orange.config.admin.v1.CreateRateLimitTierResponse.tier:type_name -> orange.config.admin.v1.RateLimitTier
+	53, // 27: orange.config.admin.v1.GetRateLimitTierResponse.tier:type_name -> orange.config.admin.v1.RateLimitTier
+	0,  // 28: orange.config.admin.v1.UpdateRateLimitTierRequest.on_exceed:type_name -> orange.config.admin.v1.OnExceed
+	53, // 29: orange.config.admin.v1.UpdateRateLimitTierResponse.tier:type_name -> orange.config.admin.v1.RateLimitTier
+	53, // 30: orange.config.admin.v1.ListRateLimitTiersResponse.tiers:type_name -> orange.config.admin.v1.RateLimitTier
+	54, // 31: orange.config.admin.v1.SetRateLimitScopeRequest.entries:type_name -> orange.config.admin.v1.RateLimitPolicyEntry
+	52, // 32: orange.config.admin.v1.SetRateLimitScopeResponse.scope:type_name -> orange.config.admin.v1.RateLimitScope
+	52, // 33: orange.config.admin.v1.GetRateLimitScopeResponse.scope:type_name -> orange.config.admin.v1.RateLimitScope
+	52, // 34: orange.config.admin.v1.ListRateLimitScopesResponse.scopes:type_name -> orange.config.admin.v1.RateLimitScope
+	54, // 35: orange.config.admin.v1.RateLimitScope.entries:type_name -> orange.config.admin.v1.RateLimitPolicyEntry
+	0,  // 36: orange.config.admin.v1.RateLimitTier.on_exceed:type_name -> orange.config.admin.v1.OnExceed
+	56, // 37: orange.config.admin.v1.RateLimitTier.created_at:type_name -> google.protobuf.Timestamp
+	56, // 38: orange.config.admin.v1.RateLimitTier.updated_at:type_name -> google.protobuf.Timestamp
+	0,  // 39: orange.config.admin.v1.RateLimitPolicyEntry.on_exceed:type_name -> orange.config.admin.v1.OnExceed
+	0,  // 40: orange.config.admin.v1.RateLimitRule.on_exceed:type_name -> orange.config.admin.v1.OnExceed
+	1,  // 41: orange.config.admin.v1.ConfigAdminService.PublishSnapshot:input_type -> orange.config.admin.v1.PublishSnapshotRequest
+	3,  // 42: orange.config.admin.v1.ConfigAdminService.ListSnapshots:input_type -> orange.config.admin.v1.ListSnapshotsRequest
+	5,  // 43: orange.config.admin.v1.ConfigAdminService.GetSnapshot:input_type -> orange.config.admin.v1.GetSnapshotRequest
+	7,  // 44: orange.config.admin.v1.ConfigAdminService.RollbackSnapshot:input_type -> orange.config.admin.v1.RollbackSnapshotRequest
+	10, // 45: orange.config.admin.v1.ConfigAdminService.CreateKey:input_type -> orange.config.admin.v1.CreateKeyRequest
+	12, // 46: orange.config.admin.v1.ConfigAdminService.ListKeys:input_type -> orange.config.admin.v1.ListKeysRequest
+	14, // 47: orange.config.admin.v1.ConfigAdminService.GetKey:input_type -> orange.config.admin.v1.GetKeyRequest
+	16, // 48: orange.config.admin.v1.ConfigAdminService.UpdateKey:input_type -> orange.config.admin.v1.UpdateKeyRequest
+	18, // 49: orange.config.admin.v1.ConfigAdminService.DeleteKey:input_type -> orange.config.admin.v1.DeleteKeyRequest
+	21, // 50: orange.config.admin.v1.ConfigAdminService.CreateProfile:input_type -> orange.config.admin.v1.CreateProfileRequest
+	23, // 51: orange.config.admin.v1.ConfigAdminService.ListProfiles:input_type -> orange.config.admin.v1.ListProfilesRequest
+	25, // 52: orange.config.admin.v1.ConfigAdminService.GetProfile:input_type -> orange.config.admin.v1.GetProfileRequest
+	27, // 53: orange.config.admin.v1.ConfigAdminService.UpdateProfile:input_type -> orange.config.admin.v1.UpdateProfileRequest
+	29, // 54: orange.config.admin.v1.ConfigAdminService.DeleteProfile:input_type -> orange.config.admin.v1.DeleteProfileRequest
+	34, // 55: orange.config.admin.v1.ConfigAdminService.CreateRateLimitTier:input_type -> orange.config.admin.v1.CreateRateLimitTierRequest
+	36, // 56: orange.config.admin.v1.ConfigAdminService.GetRateLimitTier:input_type -> orange.config.admin.v1.GetRateLimitTierRequest
+	38, // 57: orange.config.admin.v1.ConfigAdminService.UpdateRateLimitTier:input_type -> orange.config.admin.v1.UpdateRateLimitTierRequest
+	40, // 58: orange.config.admin.v1.ConfigAdminService.DeleteRateLimitTier:input_type -> orange.config.admin.v1.DeleteRateLimitTierRequest
+	42, // 59: orange.config.admin.v1.ConfigAdminService.ListRateLimitTiers:input_type -> orange.config.admin.v1.ListRateLimitTiersRequest
+	44, // 60: orange.config.admin.v1.ConfigAdminService.SetRateLimitScope:input_type -> orange.config.admin.v1.SetRateLimitScopeRequest
+	46, // 61: orange.config.admin.v1.ConfigAdminService.GetRateLimitScope:input_type -> orange.config.admin.v1.GetRateLimitScopeRequest
+	48, // 62: orange.config.admin.v1.ConfigAdminService.ListRateLimitScopes:input_type -> orange.config.admin.v1.ListRateLimitScopesRequest
+	50, // 63: orange.config.admin.v1.ConfigAdminService.DeleteRateLimitScope:input_type -> orange.config.admin.v1.DeleteRateLimitScopeRequest
+	2,  // 64: orange.config.admin.v1.ConfigAdminService.PublishSnapshot:output_type -> orange.config.admin.v1.PublishSnapshotResponse
+	4,  // 65: orange.config.admin.v1.ConfigAdminService.ListSnapshots:output_type -> orange.config.admin.v1.ListSnapshotsResponse
+	6,  // 66: orange.config.admin.v1.ConfigAdminService.GetSnapshot:output_type -> orange.config.admin.v1.GetSnapshotResponse
+	8,  // 67: orange.config.admin.v1.ConfigAdminService.RollbackSnapshot:output_type -> orange.config.admin.v1.RollbackSnapshotResponse
+	11, // 68: orange.config.admin.v1.ConfigAdminService.CreateKey:output_type -> orange.config.admin.v1.CreateKeyResponse
+	13, // 69: orange.config.admin.v1.ConfigAdminService.ListKeys:output_type -> orange.config.admin.v1.ListKeysResponse
+	15, // 70: orange.config.admin.v1.ConfigAdminService.GetKey:output_type -> orange.config.admin.v1.GetKeyResponse
+	17, // 71: orange.config.admin.v1.ConfigAdminService.UpdateKey:output_type -> orange.config.admin.v1.UpdateKeyResponse
+	19, // 72: orange.config.admin.v1.ConfigAdminService.DeleteKey:output_type -> orange.config.admin.v1.DeleteKeyResponse
+	22, // 73: orange.config.admin.v1.ConfigAdminService.CreateProfile:output_type -> orange.config.admin.v1.CreateProfileResponse
+	24, // 74: orange.config.admin.v1.ConfigAdminService.ListProfiles:output_type -> orange.config.admin.v1.ListProfilesResponse
+	26, // 75: orange.config.admin.v1.ConfigAdminService.GetProfile:output_type -> orange.config.admin.v1.GetProfileResponse
+	28, // 76: orange.config.admin.v1.ConfigAdminService.UpdateProfile:output_type -> orange.config.admin.v1.UpdateProfileResponse
+	30, // 77: orange.config.admin.v1.ConfigAdminService.DeleteProfile:output_type -> orange.config.admin.v1.DeleteProfileResponse
+	35, // 78: orange.config.admin.v1.ConfigAdminService.CreateRateLimitTier:output_type -> orange.config.admin.v1.CreateRateLimitTierResponse
+	37, // 79: orange.config.admin.v1.ConfigAdminService.GetRateLimitTier:output_type -> orange.config.admin.v1.GetRateLimitTierResponse
+	39, // 80: orange.config.admin.v1.ConfigAdminService.UpdateRateLimitTier:output_type -> orange.config.admin.v1.UpdateRateLimitTierResponse
+	41, // 81: orange.config.admin.v1.ConfigAdminService.DeleteRateLimitTier:output_type -> orange.config.admin.v1.DeleteRateLimitTierResponse
+	43, // 82: orange.config.admin.v1.ConfigAdminService.ListRateLimitTiers:output_type -> orange.config.admin.v1.ListRateLimitTiersResponse
+	45, // 83: orange.config.admin.v1.ConfigAdminService.SetRateLimitScope:output_type -> orange.config.admin.v1.SetRateLimitScopeResponse
+	47, // 84: orange.config.admin.v1.ConfigAdminService.GetRateLimitScope:output_type -> orange.config.admin.v1.GetRateLimitScopeResponse
+	49, // 85: orange.config.admin.v1.ConfigAdminService.ListRateLimitScopes:output_type -> orange.config.admin.v1.ListRateLimitScopesResponse
+	51, // 86: orange.config.admin.v1.ConfigAdminService.DeleteRateLimitScope:output_type -> orange.config.admin.v1.DeleteRateLimitScopeResponse
+	64, // [64:87] is the sub-list for method output_type
+	41, // [41:64] is the sub-list for method input_type
+	41, // [41:41] is the sub-list for extension type_name
+	41, // [41:41] is the sub-list for extension extendee
+	0,  // [0:41] is the sub-list for field type_name
 }
 
 func init() { file_orange_config_admin_v1_admin_proto_init() }
@@ -3045,18 +4370,20 @@ func file_orange_config_admin_v1_admin_proto_init() {
 	file_orange_config_admin_v1_admin_proto_msgTypes[8].OneofWrappers = []any{}
 	file_orange_config_admin_v1_admin_proto_msgTypes[11].OneofWrappers = []any{}
 	file_orange_config_admin_v1_admin_proto_msgTypes[22].OneofWrappers = []any{}
-	file_orange_config_admin_v1_admin_proto_msgTypes[33].OneofWrappers = []any{}
-	file_orange_config_admin_v1_admin_proto_msgTypes[35].OneofWrappers = []any{}
-	file_orange_config_admin_v1_admin_proto_msgTypes[37].OneofWrappers = []any{}
-	file_orange_config_admin_v1_admin_proto_msgTypes[39].OneofWrappers = []any{}
 	file_orange_config_admin_v1_admin_proto_msgTypes[41].OneofWrappers = []any{}
+	file_orange_config_admin_v1_admin_proto_msgTypes[43].OneofWrappers = []any{}
+	file_orange_config_admin_v1_admin_proto_msgTypes[45].OneofWrappers = []any{}
+	file_orange_config_admin_v1_admin_proto_msgTypes[47].OneofWrappers = []any{}
+	file_orange_config_admin_v1_admin_proto_msgTypes[49].OneofWrappers = []any{}
+	file_orange_config_admin_v1_admin_proto_msgTypes[51].OneofWrappers = []any{}
+	file_orange_config_admin_v1_admin_proto_msgTypes[53].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orange_config_admin_v1_admin_proto_rawDesc), len(file_orange_config_admin_v1_admin_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   43,
+			NumMessages:   55,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

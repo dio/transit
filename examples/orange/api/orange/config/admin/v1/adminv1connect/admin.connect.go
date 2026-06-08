@@ -90,6 +90,21 @@ const (
 	// ConfigAdminServiceDeleteProfileProcedure is the fully-qualified name of the ConfigAdminService's
 	// DeleteProfile RPC.
 	ConfigAdminServiceDeleteProfileProcedure = "/orange.config.admin.v1.ConfigAdminService/DeleteProfile"
+	// ConfigAdminServiceCreateRateLimitTierProcedure is the fully-qualified name of the
+	// ConfigAdminService's CreateRateLimitTier RPC.
+	ConfigAdminServiceCreateRateLimitTierProcedure = "/orange.config.admin.v1.ConfigAdminService/CreateRateLimitTier"
+	// ConfigAdminServiceGetRateLimitTierProcedure is the fully-qualified name of the
+	// ConfigAdminService's GetRateLimitTier RPC.
+	ConfigAdminServiceGetRateLimitTierProcedure = "/orange.config.admin.v1.ConfigAdminService/GetRateLimitTier"
+	// ConfigAdminServiceUpdateRateLimitTierProcedure is the fully-qualified name of the
+	// ConfigAdminService's UpdateRateLimitTier RPC.
+	ConfigAdminServiceUpdateRateLimitTierProcedure = "/orange.config.admin.v1.ConfigAdminService/UpdateRateLimitTier"
+	// ConfigAdminServiceDeleteRateLimitTierProcedure is the fully-qualified name of the
+	// ConfigAdminService's DeleteRateLimitTier RPC.
+	ConfigAdminServiceDeleteRateLimitTierProcedure = "/orange.config.admin.v1.ConfigAdminService/DeleteRateLimitTier"
+	// ConfigAdminServiceListRateLimitTiersProcedure is the fully-qualified name of the
+	// ConfigAdminService's ListRateLimitTiers RPC.
+	ConfigAdminServiceListRateLimitTiersProcedure = "/orange.config.admin.v1.ConfigAdminService/ListRateLimitTiers"
 	// ConfigAdminServiceSetRateLimitScopeProcedure is the fully-qualified name of the
 	// ConfigAdminService's SetRateLimitScope RPC.
 	ConfigAdminServiceSetRateLimitScopeProcedure = "/orange.config.admin.v1.ConfigAdminService/SetRateLimitScope"
@@ -137,14 +152,25 @@ type ConfigAdminServiceClient interface {
 	UpdateProfile(context.Context, *connect.Request[v1.UpdateProfileRequest]) (*connect.Response[v1.UpdateProfileResponse], error)
 	// DeleteProfile removes a profile record. Takes effect on next publish.
 	DeleteProfile(context.Context, *connect.Request[v1.DeleteProfileRequest]) (*connect.Response[v1.DeleteProfileResponse], error)
-	// SetRateLimitScope creates or replaces the rate-limit rules for a workspace
+	// CreateRateLimitTier creates a new named tier within a workspace.
+	CreateRateLimitTier(context.Context, *connect.Request[v1.CreateRateLimitTierRequest]) (*connect.Response[v1.CreateRateLimitTierResponse], error)
+	// GetRateLimitTier returns a named tier by workspace and name.
+	GetRateLimitTier(context.Context, *connect.Request[v1.GetRateLimitTierRequest]) (*connect.Response[v1.GetRateLimitTierResponse], error)
+	// UpdateRateLimitTier replaces all limit fields on an existing tier.
+	UpdateRateLimitTier(context.Context, *connect.Request[v1.UpdateRateLimitTierRequest]) (*connect.Response[v1.UpdateRateLimitTierResponse], error)
+	// DeleteRateLimitTier removes a named tier. Returns NOT_FOUND if the tier is
+	// still referenced by an active policy entry.
+	DeleteRateLimitTier(context.Context, *connect.Request[v1.DeleteRateLimitTierRequest]) (*connect.Response[v1.DeleteRateLimitTierResponse], error)
+	// ListRateLimitTiers returns all active tiers for a workspace.
+	ListRateLimitTiers(context.Context, *connect.Request[v1.ListRateLimitTiersRequest]) (*connect.Response[v1.ListRateLimitTiersResponse], error)
+	// SetRateLimitScope creates or replaces the policy entries for a workspace
 	// or user scope within a workspace. Takes effect on next publish.
 	SetRateLimitScope(context.Context, *connect.Request[v1.SetRateLimitScopeRequest]) (*connect.Response[v1.SetRateLimitScopeResponse], error)
-	// GetRateLimitScope returns the current rate-limit rules for a scope.
+	// GetRateLimitScope returns the current policy entries for a scope.
 	GetRateLimitScope(context.Context, *connect.Request[v1.GetRateLimitScopeRequest]) (*connect.Response[v1.GetRateLimitScopeResponse], error)
 	// ListRateLimitScopes returns all rate-limit scopes for a workspace.
 	ListRateLimitScopes(context.Context, *connect.Request[v1.ListRateLimitScopesRequest]) (*connect.Response[v1.ListRateLimitScopesResponse], error)
-	// DeleteRateLimitScope removes all rate-limit rules for a scope.
+	// DeleteRateLimitScope removes all policy entries for a scope.
 	DeleteRateLimitScope(context.Context, *connect.Request[v1.DeleteRateLimitScopeRequest]) (*connect.Response[v1.DeleteRateLimitScopeResponse], error)
 }
 
@@ -249,6 +275,38 @@ func NewConfigAdminServiceClient(httpClient connect.HTTPClient, baseURL string, 
 			connect.WithSchema(configAdminServiceMethods.ByName("DeleteProfile")),
 			connect.WithClientOptions(opts...),
 		),
+		createRateLimitTier: connect.NewClient[v1.CreateRateLimitTierRequest, v1.CreateRateLimitTierResponse](
+			httpClient,
+			baseURL+ConfigAdminServiceCreateRateLimitTierProcedure,
+			connect.WithSchema(configAdminServiceMethods.ByName("CreateRateLimitTier")),
+			connect.WithClientOptions(opts...),
+		),
+		getRateLimitTier: connect.NewClient[v1.GetRateLimitTierRequest, v1.GetRateLimitTierResponse](
+			httpClient,
+			baseURL+ConfigAdminServiceGetRateLimitTierProcedure,
+			connect.WithSchema(configAdminServiceMethods.ByName("GetRateLimitTier")),
+			connect.WithIdempotency(connect.IdempotencyNoSideEffects),
+			connect.WithClientOptions(opts...),
+		),
+		updateRateLimitTier: connect.NewClient[v1.UpdateRateLimitTierRequest, v1.UpdateRateLimitTierResponse](
+			httpClient,
+			baseURL+ConfigAdminServiceUpdateRateLimitTierProcedure,
+			connect.WithSchema(configAdminServiceMethods.ByName("UpdateRateLimitTier")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteRateLimitTier: connect.NewClient[v1.DeleteRateLimitTierRequest, v1.DeleteRateLimitTierResponse](
+			httpClient,
+			baseURL+ConfigAdminServiceDeleteRateLimitTierProcedure,
+			connect.WithSchema(configAdminServiceMethods.ByName("DeleteRateLimitTier")),
+			connect.WithClientOptions(opts...),
+		),
+		listRateLimitTiers: connect.NewClient[v1.ListRateLimitTiersRequest, v1.ListRateLimitTiersResponse](
+			httpClient,
+			baseURL+ConfigAdminServiceListRateLimitTiersProcedure,
+			connect.WithSchema(configAdminServiceMethods.ByName("ListRateLimitTiers")),
+			connect.WithIdempotency(connect.IdempotencyNoSideEffects),
+			connect.WithClientOptions(opts...),
+		),
 		setRateLimitScope: connect.NewClient[v1.SetRateLimitScopeRequest, v1.SetRateLimitScopeResponse](
 			httpClient,
 			baseURL+ConfigAdminServiceSetRateLimitScopeProcedure,
@@ -294,6 +352,11 @@ type configAdminServiceClient struct {
 	getProfile           *connect.Client[v1.GetProfileRequest, v1.GetProfileResponse]
 	updateProfile        *connect.Client[v1.UpdateProfileRequest, v1.UpdateProfileResponse]
 	deleteProfile        *connect.Client[v1.DeleteProfileRequest, v1.DeleteProfileResponse]
+	createRateLimitTier  *connect.Client[v1.CreateRateLimitTierRequest, v1.CreateRateLimitTierResponse]
+	getRateLimitTier     *connect.Client[v1.GetRateLimitTierRequest, v1.GetRateLimitTierResponse]
+	updateRateLimitTier  *connect.Client[v1.UpdateRateLimitTierRequest, v1.UpdateRateLimitTierResponse]
+	deleteRateLimitTier  *connect.Client[v1.DeleteRateLimitTierRequest, v1.DeleteRateLimitTierResponse]
+	listRateLimitTiers   *connect.Client[v1.ListRateLimitTiersRequest, v1.ListRateLimitTiersResponse]
 	setRateLimitScope    *connect.Client[v1.SetRateLimitScopeRequest, v1.SetRateLimitScopeResponse]
 	getRateLimitScope    *connect.Client[v1.GetRateLimitScopeRequest, v1.GetRateLimitScopeResponse]
 	listRateLimitScopes  *connect.Client[v1.ListRateLimitScopesRequest, v1.ListRateLimitScopesResponse]
@@ -370,6 +433,31 @@ func (c *configAdminServiceClient) DeleteProfile(ctx context.Context, req *conne
 	return c.deleteProfile.CallUnary(ctx, req)
 }
 
+// CreateRateLimitTier calls orange.config.admin.v1.ConfigAdminService.CreateRateLimitTier.
+func (c *configAdminServiceClient) CreateRateLimitTier(ctx context.Context, req *connect.Request[v1.CreateRateLimitTierRequest]) (*connect.Response[v1.CreateRateLimitTierResponse], error) {
+	return c.createRateLimitTier.CallUnary(ctx, req)
+}
+
+// GetRateLimitTier calls orange.config.admin.v1.ConfigAdminService.GetRateLimitTier.
+func (c *configAdminServiceClient) GetRateLimitTier(ctx context.Context, req *connect.Request[v1.GetRateLimitTierRequest]) (*connect.Response[v1.GetRateLimitTierResponse], error) {
+	return c.getRateLimitTier.CallUnary(ctx, req)
+}
+
+// UpdateRateLimitTier calls orange.config.admin.v1.ConfigAdminService.UpdateRateLimitTier.
+func (c *configAdminServiceClient) UpdateRateLimitTier(ctx context.Context, req *connect.Request[v1.UpdateRateLimitTierRequest]) (*connect.Response[v1.UpdateRateLimitTierResponse], error) {
+	return c.updateRateLimitTier.CallUnary(ctx, req)
+}
+
+// DeleteRateLimitTier calls orange.config.admin.v1.ConfigAdminService.DeleteRateLimitTier.
+func (c *configAdminServiceClient) DeleteRateLimitTier(ctx context.Context, req *connect.Request[v1.DeleteRateLimitTierRequest]) (*connect.Response[v1.DeleteRateLimitTierResponse], error) {
+	return c.deleteRateLimitTier.CallUnary(ctx, req)
+}
+
+// ListRateLimitTiers calls orange.config.admin.v1.ConfigAdminService.ListRateLimitTiers.
+func (c *configAdminServiceClient) ListRateLimitTiers(ctx context.Context, req *connect.Request[v1.ListRateLimitTiersRequest]) (*connect.Response[v1.ListRateLimitTiersResponse], error) {
+	return c.listRateLimitTiers.CallUnary(ctx, req)
+}
+
 // SetRateLimitScope calls orange.config.admin.v1.ConfigAdminService.SetRateLimitScope.
 func (c *configAdminServiceClient) SetRateLimitScope(ctx context.Context, req *connect.Request[v1.SetRateLimitScopeRequest]) (*connect.Response[v1.SetRateLimitScopeResponse], error) {
 	return c.setRateLimitScope.CallUnary(ctx, req)
@@ -424,14 +512,25 @@ type ConfigAdminServiceHandler interface {
 	UpdateProfile(context.Context, *connect.Request[v1.UpdateProfileRequest]) (*connect.Response[v1.UpdateProfileResponse], error)
 	// DeleteProfile removes a profile record. Takes effect on next publish.
 	DeleteProfile(context.Context, *connect.Request[v1.DeleteProfileRequest]) (*connect.Response[v1.DeleteProfileResponse], error)
-	// SetRateLimitScope creates or replaces the rate-limit rules for a workspace
+	// CreateRateLimitTier creates a new named tier within a workspace.
+	CreateRateLimitTier(context.Context, *connect.Request[v1.CreateRateLimitTierRequest]) (*connect.Response[v1.CreateRateLimitTierResponse], error)
+	// GetRateLimitTier returns a named tier by workspace and name.
+	GetRateLimitTier(context.Context, *connect.Request[v1.GetRateLimitTierRequest]) (*connect.Response[v1.GetRateLimitTierResponse], error)
+	// UpdateRateLimitTier replaces all limit fields on an existing tier.
+	UpdateRateLimitTier(context.Context, *connect.Request[v1.UpdateRateLimitTierRequest]) (*connect.Response[v1.UpdateRateLimitTierResponse], error)
+	// DeleteRateLimitTier removes a named tier. Returns NOT_FOUND if the tier is
+	// still referenced by an active policy entry.
+	DeleteRateLimitTier(context.Context, *connect.Request[v1.DeleteRateLimitTierRequest]) (*connect.Response[v1.DeleteRateLimitTierResponse], error)
+	// ListRateLimitTiers returns all active tiers for a workspace.
+	ListRateLimitTiers(context.Context, *connect.Request[v1.ListRateLimitTiersRequest]) (*connect.Response[v1.ListRateLimitTiersResponse], error)
+	// SetRateLimitScope creates or replaces the policy entries for a workspace
 	// or user scope within a workspace. Takes effect on next publish.
 	SetRateLimitScope(context.Context, *connect.Request[v1.SetRateLimitScopeRequest]) (*connect.Response[v1.SetRateLimitScopeResponse], error)
-	// GetRateLimitScope returns the current rate-limit rules for a scope.
+	// GetRateLimitScope returns the current policy entries for a scope.
 	GetRateLimitScope(context.Context, *connect.Request[v1.GetRateLimitScopeRequest]) (*connect.Response[v1.GetRateLimitScopeResponse], error)
 	// ListRateLimitScopes returns all rate-limit scopes for a workspace.
 	ListRateLimitScopes(context.Context, *connect.Request[v1.ListRateLimitScopesRequest]) (*connect.Response[v1.ListRateLimitScopesResponse], error)
-	// DeleteRateLimitScope removes all rate-limit rules for a scope.
+	// DeleteRateLimitScope removes all policy entries for a scope.
 	DeleteRateLimitScope(context.Context, *connect.Request[v1.DeleteRateLimitScopeRequest]) (*connect.Response[v1.DeleteRateLimitScopeResponse], error)
 }
 
@@ -532,6 +631,38 @@ func NewConfigAdminServiceHandler(svc ConfigAdminServiceHandler, opts ...connect
 		connect.WithSchema(configAdminServiceMethods.ByName("DeleteProfile")),
 		connect.WithHandlerOptions(opts...),
 	)
+	configAdminServiceCreateRateLimitTierHandler := connect.NewUnaryHandler(
+		ConfigAdminServiceCreateRateLimitTierProcedure,
+		svc.CreateRateLimitTier,
+		connect.WithSchema(configAdminServiceMethods.ByName("CreateRateLimitTier")),
+		connect.WithHandlerOptions(opts...),
+	)
+	configAdminServiceGetRateLimitTierHandler := connect.NewUnaryHandler(
+		ConfigAdminServiceGetRateLimitTierProcedure,
+		svc.GetRateLimitTier,
+		connect.WithSchema(configAdminServiceMethods.ByName("GetRateLimitTier")),
+		connect.WithIdempotency(connect.IdempotencyNoSideEffects),
+		connect.WithHandlerOptions(opts...),
+	)
+	configAdminServiceUpdateRateLimitTierHandler := connect.NewUnaryHandler(
+		ConfigAdminServiceUpdateRateLimitTierProcedure,
+		svc.UpdateRateLimitTier,
+		connect.WithSchema(configAdminServiceMethods.ByName("UpdateRateLimitTier")),
+		connect.WithHandlerOptions(opts...),
+	)
+	configAdminServiceDeleteRateLimitTierHandler := connect.NewUnaryHandler(
+		ConfigAdminServiceDeleteRateLimitTierProcedure,
+		svc.DeleteRateLimitTier,
+		connect.WithSchema(configAdminServiceMethods.ByName("DeleteRateLimitTier")),
+		connect.WithHandlerOptions(opts...),
+	)
+	configAdminServiceListRateLimitTiersHandler := connect.NewUnaryHandler(
+		ConfigAdminServiceListRateLimitTiersProcedure,
+		svc.ListRateLimitTiers,
+		connect.WithSchema(configAdminServiceMethods.ByName("ListRateLimitTiers")),
+		connect.WithIdempotency(connect.IdempotencyNoSideEffects),
+		connect.WithHandlerOptions(opts...),
+	)
 	configAdminServiceSetRateLimitScopeHandler := connect.NewUnaryHandler(
 		ConfigAdminServiceSetRateLimitScopeProcedure,
 		svc.SetRateLimitScope,
@@ -588,6 +719,16 @@ func NewConfigAdminServiceHandler(svc ConfigAdminServiceHandler, opts ...connect
 			configAdminServiceUpdateProfileHandler.ServeHTTP(w, r)
 		case ConfigAdminServiceDeleteProfileProcedure:
 			configAdminServiceDeleteProfileHandler.ServeHTTP(w, r)
+		case ConfigAdminServiceCreateRateLimitTierProcedure:
+			configAdminServiceCreateRateLimitTierHandler.ServeHTTP(w, r)
+		case ConfigAdminServiceGetRateLimitTierProcedure:
+			configAdminServiceGetRateLimitTierHandler.ServeHTTP(w, r)
+		case ConfigAdminServiceUpdateRateLimitTierProcedure:
+			configAdminServiceUpdateRateLimitTierHandler.ServeHTTP(w, r)
+		case ConfigAdminServiceDeleteRateLimitTierProcedure:
+			configAdminServiceDeleteRateLimitTierHandler.ServeHTTP(w, r)
+		case ConfigAdminServiceListRateLimitTiersProcedure:
+			configAdminServiceListRateLimitTiersHandler.ServeHTTP(w, r)
 		case ConfigAdminServiceSetRateLimitScopeProcedure:
 			configAdminServiceSetRateLimitScopeHandler.ServeHTTP(w, r)
 		case ConfigAdminServiceGetRateLimitScopeProcedure:
@@ -659,6 +800,26 @@ func (UnimplementedConfigAdminServiceHandler) UpdateProfile(context.Context, *co
 
 func (UnimplementedConfigAdminServiceHandler) DeleteProfile(context.Context, *connect.Request[v1.DeleteProfileRequest]) (*connect.Response[v1.DeleteProfileResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orange.config.admin.v1.ConfigAdminService.DeleteProfile is not implemented"))
+}
+
+func (UnimplementedConfigAdminServiceHandler) CreateRateLimitTier(context.Context, *connect.Request[v1.CreateRateLimitTierRequest]) (*connect.Response[v1.CreateRateLimitTierResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orange.config.admin.v1.ConfigAdminService.CreateRateLimitTier is not implemented"))
+}
+
+func (UnimplementedConfigAdminServiceHandler) GetRateLimitTier(context.Context, *connect.Request[v1.GetRateLimitTierRequest]) (*connect.Response[v1.GetRateLimitTierResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orange.config.admin.v1.ConfigAdminService.GetRateLimitTier is not implemented"))
+}
+
+func (UnimplementedConfigAdminServiceHandler) UpdateRateLimitTier(context.Context, *connect.Request[v1.UpdateRateLimitTierRequest]) (*connect.Response[v1.UpdateRateLimitTierResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orange.config.admin.v1.ConfigAdminService.UpdateRateLimitTier is not implemented"))
+}
+
+func (UnimplementedConfigAdminServiceHandler) DeleteRateLimitTier(context.Context, *connect.Request[v1.DeleteRateLimitTierRequest]) (*connect.Response[v1.DeleteRateLimitTierResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orange.config.admin.v1.ConfigAdminService.DeleteRateLimitTier is not implemented"))
+}
+
+func (UnimplementedConfigAdminServiceHandler) ListRateLimitTiers(context.Context, *connect.Request[v1.ListRateLimitTiersRequest]) (*connect.Response[v1.ListRateLimitTiersResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orange.config.admin.v1.ConfigAdminService.ListRateLimitTiers is not implemented"))
 }
 
 func (UnimplementedConfigAdminServiceHandler) SetRateLimitScope(context.Context, *connect.Request[v1.SetRateLimitScopeRequest]) (*connect.Response[v1.SetRateLimitScopeResponse], error) {
