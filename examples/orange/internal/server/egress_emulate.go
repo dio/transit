@@ -10,23 +10,16 @@ import (
 	"context"
 	"crypto/ed25519"
 	"fmt"
-	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
-	configv1 "github.com/dio/transit/examples/orange/api/orange/config/v1"
-	configv1connect "github.com/dio/transit/examples/orange/api/orange/config/v1/configv1connect"
-	egressv1 "github.com/dio/transit/examples/orange/api/orange/egress/v1"
-	egressv1connect "github.com/dio/transit/examples/orange/api/orange/egress/v1/egressv1connect"
 	"github.com/dio/transit/examples/orange/internal/config"
 	"github.com/dio/transit/examples/orange/internal/egress"
-	"github.com/dio/transit/examples/orange/internal/server/vtprotocodec"
 )
 
 // newEgressProxyCmd is the root for proxy-facing egress subcommands. It lives
@@ -121,10 +114,9 @@ Use --once to do a single pass and exit. Interrupt with CTRL-C.`,
 //     using the built-in env://, file://, and literal:// resolvers. Resolved
 //     values are masked before printing so the terminal does not leak secrets.
 //
-// lastVersion + lastChecksum are carried across ticks so that Fetch can return
-// Unchanged when nothing has changed — the same SoTW incremental contract a
-// production egress uses. This lets the emulator run cheaply at short intervals
-// without re-decoding an identical snapshot on every poll.
+// The egress.Client carries the SoTW cursor (lastVersion/lastChecksum) across
+// ticks so that Fetch returns Unchanged when nothing has changed, letting the
+// emulator run cheaply at short intervals.
 func runEgressEmulate(parent context.Context, bundle *egress.BundleData, interval time.Duration, once bool) error {
 	ctx, cancel := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -155,75 +147,33 @@ func runEgressEmulate(parent context.Context, bundle *egress.BundleData, interva
 	}
 	fmt.Println()
 
-	transport := &egress.AssertionTransport{
-		Base:        http.DefaultTransport,
-		PrivKey:     privKey,
-		EgressID:    bundle.EgressID,
-		WorkspaceID: bundle.WorkspaceID,
+	client, err := egress.NewClient(bundle)
+	if err != nil {
+		return err
 	}
-	httpClient := &http.Client{Timeout: 15 * time.Second, Transport: transport}
-	opts := []connect.ClientOption{connect.WithCodec(vtprotocodec.Codec{})}
-
-	heartbeatClient := egressv1connect.NewEgressServiceClient(httpClient, bundle.ServerURL, opts...)
-	snapshotClient := configv1connect.NewSnapshotServiceClient(httpClient, bundle.ServerURL, opts...)
-
-	// Use the default resolver (env://, file://, literal://) with a 5-minute
-	// TTL. This matches what a production egress uses for non-service secrets.
-	// A service-backed resolver (orange:// scheme) is out of scope for the
-	// emulator — the goal here is to verify secret refs resolve, not to
-	// exercise the full secret-service path.
-	resolver := config.NewDefaultResolver(5 * time.Minute)
-
-	// lastVersion and lastChecksum implement the SoTW incremental fetch
-	// contract: after the first successful fetch, subsequent calls pass both
-	// values so the server can return Unchanged instead of re-sending the full
-	// payload. Reset to zero only if the emulator is restarted.
-	var lastVersion uint64
-	var lastChecksum []byte
 
 	tick := func() {
 		ts := time.Now().Format(time.RFC3339)
 
-		hbResp, err := heartbeatClient.Heartbeat(ctx, connect.NewRequest(&egressv1.HeartbeatRequest{}))
+		serverTime, err := client.Heartbeat(ctx)
 		if err != nil {
 			fmt.Printf("[%s] heartbeat  ERROR %v\n", ts, err)
 		} else {
-			fmt.Printf("[%s] heartbeat  OK server_time=%s\n", ts, hbResp.Msg.GetServerTime().AsTime().Format(time.RFC3339))
+			fmt.Printf("[%s] heartbeat  OK server_time=%s\n", ts, serverTime.Format(time.RFC3339))
 		}
 
-		fetchResp, err := snapshotClient.Fetch(ctx, connect.NewRequest(&configv1.FetchRequest{
-			LastVersion:  lastVersion,
-			LastChecksum: lastChecksum,
-		}))
+		snap, raw, changed, err := client.Fetch(ctx)
 		if err != nil {
 			fmt.Printf("[%s] config/fetch ERROR %v\n", ts, err)
 			return
 		}
-
-		if fetchResp.Msg.GetUnchanged() != nil {
-			fmt.Printf("[%s] config/fetch unchanged (version=%d)\n", ts, lastVersion)
-			return
-		}
-
-		snap := fetchResp.Msg.GetSnapshot()
-		if snap == nil {
-			fmt.Printf("[%s] config/fetch empty response\n", ts)
+		if !changed {
+			fmt.Printf("[%s] config/fetch unchanged\n", ts)
 			return
 		}
 
 		fmt.Printf("[%s] config/fetch snapshot version=%d format=%s compression=%s payload=%d bytes checksum=%x\n",
 			ts, snap.GetVersion(), snap.GetFormat(), snap.GetCompression(), len(snap.GetPayload()), snap.GetChecksum())
-
-		// Advance the cursor so the next tick sends the new version/checksum
-		// and gets Unchanged if nothing has changed since.
-		lastVersion = snap.GetVersion()
-		lastChecksum = snap.GetChecksum()
-
-		raw, err := config.DecodeRawFromProtoEnvelope(snap)
-		if err != nil {
-			fmt.Printf("[%s] config/decode ERROR %v\n", ts, err)
-			return
-		}
 
 		refs := collectSecretRefs(raw)
 		if len(refs) == 0 {
@@ -231,7 +181,7 @@ func runEgressEmulate(parent context.Context, bundle *egress.BundleData, interva
 		} else {
 			fmt.Printf("[%s] config/secrets resolving %d ref(s):\n", ts, len(refs))
 			for _, ref := range refs {
-				val, err := resolver.Resolve(ctx, ref.secretRef)
+				val, err := client.Resolver.Resolve(ctx, ref.secretRef)
 				if err != nil {
 					fmt.Printf("                 [%s] %s => ERROR: %v\n", ref.location, ref.secretRef, err)
 				} else {

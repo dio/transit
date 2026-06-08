@@ -10,7 +10,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
-	"github.com/dio/transit/examples/orange/internal/server/vtprotocodec"
+	"github.com/dio/transit/examples/orange/internal/vtprotocodec"
 )
 
 // globalFlags holds values bound to the persistent root flags.
@@ -22,6 +22,7 @@ type globalFlags struct {
 	output  string
 	quiet   bool
 	noColor bool
+	repl    bool
 }
 
 var gf globalFlags
@@ -46,12 +47,21 @@ func NewCommand() *cobra.Command {
   orange auth  <verb>              authentication
   orange server                    run the server
   orange localdata                 access embedded Postgres (dev)
+  orange --repl [ws=<id>]          interactive user REPL
 
 Run 'orange <command> --help' for command-specific help.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			// No subcommand: print help (REPL will replace this in a future step).
+		Args:          cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if gf.repl {
+				rc, err := resolveRunCtx()
+				if err != nil {
+					return err
+				}
+				return runUserREPL(rc, args)
+			}
+			// No subcommand and --repl not set: print help.
 			return cmd.Help()
 		},
 	}
@@ -65,6 +75,9 @@ Run 'orange <command> --help' for command-specific help.`,
 	pf.StringVarP(&gf.output, "output", "o", "table", "output format: table | json | yaml")
 	pf.BoolVarP(&gf.quiet, "quiet", "q", false, "suppress headers and decorations")
 	pf.BoolVar(&gf.noColor, "no-color", false, "disable ANSI color output")
+
+	// Local flag: start the user-facing interactive REPL.
+	root.Flags().BoolVar(&gf.repl, "repl", false, "start the interactive user REPL")
 
 	// Register subcommands.
 	root.AddCommand(newServerCmd())

@@ -13,50 +13,37 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/chzyer/readline"
 
-	configv1connect "github.com/dio/transit/examples/orange/api/orange/config/v1/configv1connect"
-	egressv1connect "github.com/dio/transit/examples/orange/api/orange/egress/v1/egressv1connect"
-	"github.com/dio/transit/examples/orange/internal/config"
 	"github.com/dio/transit/examples/orange/internal/egress"
-	"github.com/dio/transit/examples/orange/internal/server/vtprotocodec"
 )
 
 type egressReplState struct {
 	bundle  *egress.BundleData
-	watcher *egressWatcher
+	watcher *egress.Watcher
 	rl      *readline.Instance
 }
 
-// runEgressEmulateREPL is the entry point for --repl mode. It mirrors the
-// setup in runEgressEmulate (bundle load, assertion transport, clients,
-// resolver) and then starts the poll goroutine before entering the readline
-// loop.
+// runEgressEmulateREPL is the entry point for --repl mode. It sets up a
+// shared egress.Client (bundle credentials + connect transport), wraps it in
+// a Watcher for poll-state tracking, and enters the readline loop.
 func runEgressEmulateREPL(parent context.Context, bundle *egress.BundleData, interval time.Duration) error {
+	// Parse the private key here only for the startup fingerprint display.
+	// egress.NewClient parses it again internally.
 	privKey, err := egress.ParseEd25519PrivateKey(bundle.EgressKey)
 	if err != nil {
 		return fmt.Errorf("parse egress.key: %w", err)
 	}
 
-	transport := &egress.AssertionTransport{
-		Base:        http.DefaultTransport,
-		PrivKey:     privKey,
-		EgressID:    bundle.EgressID,
-		WorkspaceID: bundle.WorkspaceID,
+	client, err := egress.NewClient(bundle)
+	if err != nil {
+		return err
 	}
-	httpClient := &http.Client{Timeout: 15 * time.Second, Transport: transport}
-	opts := []connect.ClientOption{connect.WithCodec(vtprotocodec.Codec{})}
-
-	heartbeatClient := egressv1connect.NewEgressServiceClient(httpClient, bundle.ServerURL, opts...)
-	snapshotClient := configv1connect.NewSnapshotServiceClient(httpClient, bundle.ServerURL, opts...)
-	resolver := config.NewDefaultResolver(5 * time.Minute)
-	watcher := newEgressWatcher(heartbeatClient, snapshotClient, resolver)
+	watcher := egress.NewWatcher(client)
 
 	// Startup summary identical to the non-REPL mode so the operator can
 	// confirm the bundle was loaded correctly before any network calls.
@@ -88,12 +75,12 @@ func runEgressEmulateREPL(parent context.Context, bundle *egress.BundleData, int
 	// notifyFn is called by the poll goroutine after each state swap.
 	// Write to stderr so readline's stdout-owned prompt is not corrupted.
 	notifyFn := func(version uint64) {
-		st := watcher.readSnapshot()
+		st := watcher.ReadSnapshot()
 		providers, servers, profiles := 0, 0, 0
-		if st.raw != nil {
-			providers = len(st.raw.LLM.Providers)
-			servers = len(st.raw.MCP.Servers)
-			profiles = len(st.raw.Profiles)
+		if st.Raw != nil {
+			providers = len(st.Raw.LLM.Providers)
+			servers = len(st.Raw.MCP.Servers)
+			profiles = len(st.Raw.Profiles)
 		}
 		fmt.Fprintf(os.Stderr,
 			"\n[poll] config updated: version=%d providers=%d servers=%d profiles=%d\n",
@@ -103,7 +90,7 @@ func runEgressEmulateREPL(parent context.Context, bundle *egress.BundleData, int
 
 	// Start the poll goroutine before entering the readline loop so the first
 	// fetch fires immediately and the prompt reflects live state.
-	watcher.startPoll(parent, interval, notifyFn)
+	watcher.StartPoll(parent, interval, notifyFn)
 
 	fmt.Println("egress emulator REPL  •  type 'help' for commands, 'exit' or Ctrl+D to quit")
 
@@ -134,7 +121,7 @@ func runEgressEmulateREPL(parent context.Context, bundle *egress.BundleData, int
 }
 
 func (s *egressReplState) prompt() string {
-	version, status, hasSnap := s.watcher.promptFields()
+	version, status, hasSnap := s.watcher.PromptFields()
 	if !hasSnap {
 		return fmt.Sprintf("egress [no snapshot poll=%s]> ", status)
 	}
@@ -192,35 +179,35 @@ func (s *egressReplState) dispatch(ctx context.Context, line string) error {
 // ── snapshot ──────────────────────────────────────────────────────────────────
 
 func (s *egressReplState) cmdSnapshot(full bool) error {
-	st := s.watcher.readSnapshot()
-	if st.snap == nil {
+	st := s.watcher.ReadSnapshot()
+	if st.Snap == nil {
 		fmt.Println("no snapshot received yet — poll is running")
 		return nil
 	}
-	fmt.Printf("version:      %d\n", st.lastVersion)
-	fmt.Printf("checksum:     %x\n", st.lastChecksum)
-	fmt.Printf("format:       %s\n", st.snap.GetFormat())
-	fmt.Printf("compression:  %s\n", st.snap.GetCompression())
-	fmt.Printf("payload:      %d bytes\n", len(st.snap.GetPayload()))
-	if st.raw != nil {
-		fmt.Printf("providers:    %d\n", len(st.raw.LLM.Providers))
-		fmt.Printf("models:       %d\n", len(st.raw.LLM.Models))
-		fmt.Printf("servers:      %d\n", len(st.raw.MCP.Servers))
-		fmt.Printf("profiles:     %d\n", len(st.raw.Profiles))
-		fmt.Printf("keys:         %d\n", len(st.raw.Keys))
+	fmt.Printf("version:      %d\n", st.LastVersion)
+	fmt.Printf("checksum:     %x\n", st.LastChecksum)
+	fmt.Printf("format:       %s\n", st.Snap.GetFormat())
+	fmt.Printf("compression:  %s\n", st.Snap.GetCompression())
+	fmt.Printf("payload:      %d bytes\n", len(st.Snap.GetPayload()))
+	if st.Raw != nil {
+		fmt.Printf("providers:    %d\n", len(st.Raw.LLM.Providers))
+		fmt.Printf("models:       %d\n", len(st.Raw.LLM.Models))
+		fmt.Printf("servers:      %d\n", len(st.Raw.MCP.Servers))
+		fmt.Printf("profiles:     %d\n", len(st.Raw.Profiles))
+		fmt.Printf("keys:         %d\n", len(st.Raw.Keys))
 	}
-	if full && st.raw != nil {
+	if full && st.Raw != nil {
 		fmt.Println()
-		for name := range st.raw.LLM.Providers {
+		for name := range st.Raw.LLM.Providers {
 			fmt.Printf("  provider  %s\n", name)
 		}
-		for name := range st.raw.LLM.Models {
+		for name := range st.Raw.LLM.Models {
 			fmt.Printf("  model     %s\n", name)
 		}
-		for name := range st.raw.MCP.Servers {
+		for name := range st.Raw.MCP.Servers {
 			fmt.Printf("  server    %s\n", name)
 		}
-		for id := range st.raw.Profiles {
+		for id := range st.Raw.Profiles {
 			fmt.Printf("  profile   %s\n", id)
 		}
 	}
@@ -230,19 +217,19 @@ func (s *egressReplState) cmdSnapshot(full bool) error {
 // ── secrets ───────────────────────────────────────────────────────────────────
 
 func (s *egressReplState) cmdSecrets(ctx context.Context) error {
-	st := s.watcher.readSnapshot()
-	if st.raw == nil {
+	st := s.watcher.ReadSnapshot()
+	if st.Raw == nil {
 		fmt.Println("no snapshot yet")
 		return nil
 	}
-	refs := collectSecretRefs(st.raw)
+	refs := collectSecretRefs(st.Raw)
 	if len(refs) == 0 {
 		fmt.Println("no secret refs in snapshot")
 		return nil
 	}
 	fmt.Printf("%d secret ref(s):\n", len(refs))
 	for _, ref := range refs {
-		val, err := s.watcher.resolver.Resolve(ctx, ref.secretRef)
+		val, err := s.watcher.Client().Resolver.Resolve(ctx, ref.secretRef)
 		if err != nil {
 			fmt.Printf("  [%s] %s => ERROR: %v\n", ref.location, ref.secretRef, err)
 		} else {
@@ -255,7 +242,7 @@ func (s *egressReplState) cmdSecrets(ctx context.Context) error {
 // ── resolve ───────────────────────────────────────────────────────────────────
 
 func (s *egressReplState) cmdResolve(ctx context.Context, ref string) error {
-	val, err := s.watcher.resolver.Resolve(ctx, ref)
+	val, err := s.watcher.Client().Resolver.Resolve(ctx, ref)
 	if err != nil {
 		return err
 	}
@@ -270,11 +257,11 @@ func (s *egressReplState) cmdFetch(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	st := s.watcher.readSnapshot()
+	st := s.watcher.ReadSnapshot()
 	if changed {
-		fmt.Printf("fetch: new snapshot version=%d\n", st.lastVersion)
+		fmt.Printf("fetch: new snapshot version=%d\n", st.LastVersion)
 	} else {
-		fmt.Printf("fetch: unchanged (version=%d)\n", st.lastVersion)
+		fmt.Printf("fetch: unchanged (version=%d)\n", st.LastVersion)
 	}
 	return nil
 }
@@ -294,38 +281,38 @@ func (s *egressReplState) cmdHeartbeat(ctx context.Context) error {
 func (s *egressReplState) cmdPoll(sub string) error {
 	switch sub {
 	case "status", "":
-		st := s.watcher.readSnapshot()
-		fmt.Printf("status:    %s\n", st.pollStatus)
-		if st.pollErr != nil {
-			fmt.Printf("last err:  %v\n", st.pollErr)
+		st := s.watcher.ReadSnapshot()
+		fmt.Printf("status:    %s\n", st.PollStatus)
+		if st.PollErr != nil {
+			fmt.Printf("last err:  %v\n", st.PollErr)
 		}
-		if !st.lastHeartbeat.IsZero() {
-			fmt.Printf("heartbeat: %s ago\n", time.Since(st.lastHeartbeat).Round(time.Second))
+		if !st.LastHeartbeat.IsZero() {
+			fmt.Printf("heartbeat: %s ago\n", time.Since(st.LastHeartbeat).Round(time.Second))
 		} else {
 			fmt.Println("heartbeat: never")
 		}
-		if !st.lastFetch.IsZero() {
-			fmt.Printf("fetch:     %s ago (version=%d)\n", time.Since(st.lastFetch).Round(time.Second), st.lastVersion)
+		if !st.LastFetch.IsZero() {
+			fmt.Printf("fetch:     %s ago (version=%d)\n", time.Since(st.LastFetch).Round(time.Second), st.LastVersion)
 		} else {
 			fmt.Println("fetch:     never")
 		}
 
 	case "history":
-		entries := s.watcher.historyEntries()
+		entries := s.watcher.HistoryEntries()
 		if len(entries) == 0 {
 			fmt.Println("no snapshots received yet")
 			return nil
 		}
 		fmt.Printf("%-32s  %-8s  %-18s  %s\n", "RECEIVED", "VERSION", "CHECKSUM", "PROV/SRV/PROF")
 		for _, e := range entries {
-			chk := fmt.Sprintf("%x", e.checksum)
+			chk := fmt.Sprintf("%x", e.Checksum)
 			if len(chk) > 16 {
 				chk = chk[:16] + "…"
 			}
 			fmt.Printf("%-32s  %-8d  %-18s  %d/%d/%d\n",
-				e.receivedAt.Format(time.RFC3339),
-				e.version, chk,
-				e.providers, e.servers, e.profiles,
+				e.ReceivedAt.Format(time.RFC3339),
+				e.Version, chk,
+				e.Providers, e.Servers, e.Profiles,
 			)
 		}
 
@@ -375,8 +362,8 @@ Other:
   exit / quit / Ctrl+D   exit
 
 Config mutations (not via the egress path):
-  orange admin --repl                         admin-scoped tasks/records
-  ORANGE_API_KEY=<key> orange --repl          user-scoped records (planned)
+  orange admin repl                           admin-scoped tasks/records
+  ORANGE_API_KEY=<key> orange --repl          user-scoped records
 
 `)
 }

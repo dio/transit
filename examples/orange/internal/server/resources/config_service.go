@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	adminv1 "github.com/dio/transit/examples/orange/api/orange/config/admin/v1"
@@ -26,8 +27,21 @@ import (
 // All unimplemented admin RPCs delegate to the embedded stub.
 type ConfigService struct {
 	adminv1connect.UnimplementedConfigAdminServiceHandler
-	store  config.SnapshotStore
-	logger *slog.Logger
+	store    config.SnapshotStore
+	resolver config.HierarchyResolver // optional; enables three-level hierarchy merge
+	rl       *rateLimitDB             // nil until InitRateLimit is called
+	logger   *slog.Logger
+}
+
+// InitRateLimit creates the rate-limit DB tables if they do not exist and
+// enables the tier and scope management RPCs. Call once during server setup.
+func (s *ConfigService) InitRateLimit(ctx context.Context, pool *pgxpool.Pool) error {
+	rl, err := newRateLimitDB(ctx, pool, s.logger)
+	if err != nil {
+		return fmt.Errorf("init rate limit db: %w", err)
+	}
+	s.rl = rl
+	return nil
 }
 
 // Compile-time interface assertions.
@@ -39,6 +53,12 @@ var (
 // NewConfigService returns a ConfigService backed by store.
 func NewConfigService(store config.SnapshotStore, logger *slog.Logger) *ConfigService {
 	return &ConfigService{store: store, logger: logger}
+}
+
+// SetHierarchyResolver enables three-level (org → project → workspace) config
+// merging at Fetch time. Call once during server setup, before serving traffic.
+func (s *ConfigService) SetHierarchyResolver(r config.HierarchyResolver) {
+	s.resolver = r
 }
 
 // ── ConfigAdminService ────────────────────────────────────────────────────────
@@ -60,7 +80,8 @@ func (s *ConfigService) PublishSnapshot(ctx context.Context, req *connect.Reques
 	}
 
 	// Validate config; store compile error for audit even on failure.
-	_, compileErr := config.Load(yamlBytes)
+	tmpState := config.NewAppState()
+	compileErr := tmpState.ValidateConfig(yamlBytes)
 
 	sum := sha256.Sum256(yamlBytes)
 	checksum := sum[:]
@@ -255,52 +276,116 @@ func (s *ConfigService) Watch(_ context.Context, _ *connect.Request[configv1.Wat
 	return connect.NewError(connect.CodeUnimplemented, errors.New("Watch is not yet implemented; use Fetch"))
 }
 
-// Fetch returns the current snapshot for a workspace. When the client's
-// last_version and last_checksum already match the server's latest, it returns
-// Unchanged to avoid re-sending the full payload.
+// Fetch returns the current snapshot for a workspace. The returned payload is
+// the fully-materialised, workspace-scoped config — the result of merging org,
+// project, and workspace YAML configs (when a HierarchyResolver is set) and
+// then projecting the merged result down to only the records that belong to
+// this workspace. Staleness is detected via the projected SHA-256 checksum so
+// that changes at any level in the hierarchy are surfaced to the egress.
 func (s *ConfigService) Fetch(ctx context.Context, req *connect.Request[configv1.FetchRequest]) (*connect.Response[configv1.FetchResponse], error) {
 	identity, ok := egressauth.EgressIdentityFromContext(ctx)
 	if !ok || identity.WorkspaceID == "" {
 		return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("missing egress identity in context"))
 	}
 	wsID := identity.WorkspaceID
-	lastVersion := req.Msg.GetLastVersion()
 	lastChecksum := req.Msg.GetLastChecksum()
 
-	env, err := s.store.FetchLatest(ctx, wsID, lastVersion)
+	// Always fetch the latest workspace snapshot (version 0 = no lower-bound
+	// filter; we rely on the projected checksum for staleness detection instead).
+	wsEnv, err := s.store.FetchLatest(ctx, wsID, 0)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	if env == nil {
-		// No newer version than what the client already has.
+
+	merged, err := s.buildMergedRaw(ctx, wsID, wsEnv)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	if merged == nil {
+		// Nothing published at any scope yet.
 		return connect.NewResponse(&configv1.FetchResponse{
-			Result: &configv1.FetchResponse_Unchanged{
-				Unchanged: &configv1.Unchanged{},
-			},
+			Result: &configv1.FetchResponse_Unchanged{Unchanged: &configv1.Unchanged{}},
 		}), nil
 	}
 
-	// Even if there is a newer version, skip re-sending if the checksum matches.
-	if len(lastChecksum) > 0 && bytes.Equal(lastChecksum, env.Checksum) {
+	projected := config.ProjectForWorkspace(merged, wsID)
+	payload, err := config.MarshalRawYAML(projected)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("encode projected snapshot: %w", err))
+	}
+	projectedSum := sha256.Sum256(payload)
+	projectedChecksum := projectedSum[:]
+
+	if len(lastChecksum) > 0 && bytes.Equal(lastChecksum, projectedChecksum) {
 		return connect.NewResponse(&configv1.FetchResponse{
-			Result: &configv1.FetchResponse_Unchanged{
-				Unchanged: &configv1.Unchanged{},
-			},
+			Result: &configv1.FetchResponse_Unchanged{Unchanged: &configv1.Unchanged{}},
 		}), nil
+	}
+
+	var version uint64
+	if wsEnv != nil {
+		version = wsEnv.Version
 	}
 
 	pbEnv := &configv1.SnapshotEnvelope{
-		Version:     env.Version,
-		Format:      toProtoFormat(env.Format),
-		Compression: toProtoCompression(env.Compression),
-		Payload:     env.Payload,
-		Checksum:    env.Checksum,
+		Version:     version,
+		Format:      configv1.PayloadFormat_PAYLOAD_FORMAT_YAML,
+		Compression: configv1.Compression_COMPRESSION_NONE,
+		Payload:     payload,
+		Checksum:    projectedChecksum,
 	}
 	return connect.NewResponse(&configv1.FetchResponse{
-		Result: &configv1.FetchResponse_Snapshot{
-			Snapshot: pbEnv,
-		},
+		Result: &configv1.FetchResponse_Snapshot{Snapshot: pbEnv},
 	}), nil
+}
+
+// buildMergedRaw produces the merged RawConfig for wsID by layering org →
+// project → workspace configs. Returns nil when no config has been published
+// at any scope. A missing intermediate scope (org or project) is treated as an
+// empty config and does not prevent serving from narrower scopes.
+func (s *ConfigService) buildMergedRaw(ctx context.Context, wsID string, wsEnv *config.SnapshotEnvelope) (*config.RawConfig, error) {
+	var orgRaw, projRaw, wsRaw *config.RawConfig
+
+	if s.resolver != nil {
+		hier, err := s.resolver.ResolveWorkspaceHierarchy(ctx, wsID)
+		if err != nil {
+			s.logger.Warn("hierarchy resolution failed; serving workspace-only config",
+				"workspace_id", wsID, "err", err)
+			// Don't abort — serve whatever the workspace has.
+		} else {
+			if hier.OrgID != "" {
+				if env, err := s.store.FetchLatest(ctx, config.OrgScopeID(hier.OrgID), 0); err != nil {
+					return nil, fmt.Errorf("fetch org config: %w", err)
+				} else if env != nil {
+					if orgRaw, err = config.DecodeRaw(*env); err != nil {
+						return nil, fmt.Errorf("decode org config: %w", err)
+					}
+				}
+			}
+			if hier.ProjectID != "" {
+				if env, err := s.store.FetchLatest(ctx, config.ProjectScopeID(hier.ProjectID), 0); err != nil {
+					return nil, fmt.Errorf("fetch project config: %w", err)
+				} else if env != nil {
+					if projRaw, err = config.DecodeRaw(*env); err != nil {
+						return nil, fmt.Errorf("decode project config: %w", err)
+					}
+				}
+			}
+		}
+	}
+
+	if wsEnv != nil {
+		var err error
+		if wsRaw, err = config.DecodeRaw(*wsEnv); err != nil {
+			return nil, fmt.Errorf("decode workspace config: %w", err)
+		}
+	}
+
+	if orgRaw == nil && projRaw == nil && wsRaw == nil {
+		return nil, nil
+	}
+
+	return config.MergeRawConfigs(config.MergeRawConfigs(orgRaw, projRaw), wsRaw), nil
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

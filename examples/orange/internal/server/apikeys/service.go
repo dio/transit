@@ -88,7 +88,16 @@ func (s *Service) UpdateKeyScopes(ctx context.Context, req *connect.Request[apik
 			return nil, connect.NewError(connect.CodeInvalidArgument,
 				fmt.Errorf("workspace_id is required for template=ws-member"))
 		}
-		add = append(add, scopes.WorkspaceMemberScopes(wsID)...)
+		// Fetch the key to resolve the user_id so the rl-policy:write scope
+		// is scoped to the correct user (ws-id/user-id).
+		key, err := s.store.Get(ctx, req.Msg.GetKeyId())
+		if err != nil {
+			if err == ErrKeyNotFound {
+				return nil, connect.NewError(connect.CodeNotFound, err)
+			}
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+		add = append(add, scopes.WorkspaceMemberScopes(wsID, key.UserID)...)
 	case "":
 		// no template
 	default:

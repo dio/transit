@@ -63,9 +63,9 @@ const (
 
 // Secret is the at-rest record for one encrypted version of a secret.
 type Secret struct {
-	Realm string // canonical: "org/<uuid>/<purpose>", "proj/<uuid>/<purpose>", or "ws/<uuid>/<purpose>"
-	Name  string
-	VersionID   string // UUID7
+	Realm     string // canonical: "org/<uuid>/<purpose>", "proj/<uuid>/<purpose>", or "ws/<uuid>/<purpose>"
+	Name      string
+	VersionID string // UUID7
 
 	DEKID      string
 	DEKVersion int

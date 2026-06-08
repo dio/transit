@@ -162,6 +162,94 @@ func newConfigListCmd() *cobra.Command {
 	return cmd
 }
 
+// cmdConfig routes config REPL subcommands.
+//
+//	config ls [<ws-id>]
+//	config publish <file-path> [ws=<id>] [by=<who>]
+func (s *replState) cmdConfig(args []string) error {
+	sub := ""
+	if len(args) > 0 {
+		sub = args[0]
+	}
+	ctx := context.Background()
+	client := adminv1connect.NewConfigAdminServiceClient(s.rc.HTTPClient, s.rc.ServerURL, s.rc.ConnectOpts...)
+
+	switch sub {
+	case "ls", "list":
+		wsID := s.wsID
+		if len(args) > 1 && !containsEq(args[1]) {
+			wsID = args[1]
+		}
+		if wsID == "" {
+			return fmt.Errorf("no workspace in context — provide ws-id or run 'use ws <id>'")
+		}
+		resp, err := client.ListSnapshots(ctx, connect.NewRequest(&adminv1.ListSnapshotsRequest{WorkspaceId: wsID}))
+		if err != nil {
+			return err
+		}
+		snaps := resp.Msg.GetSnapshots()
+		rows := make([]string, len(snaps))
+		for i, snap := range snaps {
+			ok := "ok"
+			if !snap.GetCompiledOk() {
+				ok = "FAIL"
+			}
+			rows[i] = fmt.Sprintf("%d\t%s\t%s/%s\t%d B\t%s\t%s",
+				snap.GetVersion(), ok,
+				snap.GetFormat(), snap.GetCompression(),
+				snap.GetByteSize(), snap.GetCreatedBy(),
+				age(snap.GetCreatedAt()),
+			)
+		}
+		s.rc.Printer.Table("VERSION\tSTATUS\tFORMAT\tSIZE\tBY\tAGE", rows)
+
+	case "publish":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: config publish <file-path> [ws=<id>] [by=<who>]")
+		}
+		filePath := args[1]
+		wsID := kvGet(args[2:], "ws")
+		if wsID == "" {
+			wsID = s.wsID
+		}
+		if wsID == "" {
+			return fmt.Errorf("no workspace in context — provide ws=<id> or run 'use ws <id>'")
+		}
+		by := kvGet(args[2:], "by")
+		if by == "" {
+			by = "orange-repl"
+		}
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", filePath, err)
+		}
+		resp, err := client.PublishSnapshot(ctx, connect.NewRequest(&adminv1.PublishSnapshotRequest{
+			WorkspaceId: wsID,
+			YamlConfig:  string(data),
+			PublishedBy: by,
+		}))
+		if err != nil {
+			return err
+		}
+		return printSnapshotMeta(s.rc.Printer, resp.Msg.GetSnapshot())
+
+	default:
+		return fmt.Errorf("unknown config subcommand %q — try: ls [ws-id], publish <file-path> [ws=<id>] [by=<who>]", sub)
+	}
+	return nil
+}
+
+// containsEq reports whether s contains '=', used to distinguish positional
+// args from key=value pairs in REPL input.
+func containsEq(s string) bool {
+	for _, c := range s {
+		if c == '=' {
+			return true
+		}
+	}
+	return false
+}
+
 func printSnapshotMeta(p *Printer, s *adminv1.SnapshotMeta) error {
 	switch p.Format {
 	case FormatJSON, FormatYAML:

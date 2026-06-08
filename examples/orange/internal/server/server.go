@@ -44,7 +44,7 @@ import (
 	"github.com/dio/transit/examples/orange/internal/server/secret/crypto"
 	"github.com/dio/transit/examples/orange/internal/server/secret/kms"
 	secretstore "github.com/dio/transit/examples/orange/internal/server/secret/store"
-	"github.com/dio/transit/examples/orange/internal/server/vtprotocodec"
+	"github.com/dio/transit/examples/orange/internal/vtprotocodec"
 )
 
 func newServerCmd() *cobra.Command {
@@ -209,6 +209,7 @@ func runServer(parent context.Context, cfg serverCfg) error {
 		return fmt.Errorf("init snapshot store: %w", err)
 	}
 	configSvc := resources.NewConfigService(snapshotStore, cfg.logger.With("component", "config"))
+	configSvc.SetHierarchyResolver(workspaceSvc)
 
 	// ── HTTP mux ──────────────────────────────────────────────────────────────
 

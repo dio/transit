@@ -721,16 +721,16 @@ func (s *Service) unwrapDEK(ctx context.Context, dekID string, dekVersion int) (
 
 func toProto(sv *store.Secret, material []byte) *adminv1.SecretVersion {
 	p := &adminv1.SecretVersion{
-		VersionId: sv.VersionID,
-		Realm:     sv.Realm,
-		SecretId:  sv.Name,
-		Checksum:    sv.Checksum,
-		State:       stateToProto(sv.State),
-		CreatedAt:   timestamppb.New(sv.CreatedAt),
-		CreatedBy:   sv.CreatedBy,
-		EnabledBy:   sv.EnabledBy,
-		DisabledBy:  sv.DisabledBy,
-		RetiredBy:   sv.RetiredBy,
+		VersionId:  sv.VersionID,
+		Realm:      sv.Realm,
+		SecretId:   sv.Name,
+		Checksum:   sv.Checksum,
+		State:      stateToProto(sv.State),
+		CreatedAt:  timestamppb.New(sv.CreatedAt),
+		CreatedBy:  sv.CreatedBy,
+		EnabledBy:  sv.EnabledBy,
+		DisabledBy: sv.DisabledBy,
+		RetiredBy:  sv.RetiredBy,
 	}
 	if material != nil {
 		p.Material = material

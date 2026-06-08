@@ -224,7 +224,7 @@ WHERE key_id = $1 AND active = TRUE
 FOR UPDATE`
 	var (
 		kID, kHash, kPrefix, orgID, userID, wsID, description string
-		currentScopes                                          []string
+		currentScopes                                         []string
 	)
 	err = tx.QueryRow(ctx, selectQ, keyID).
 		Scan(&kID, &kHash, &kPrefix, &orgID, &userID, &wsID, &currentScopes, &description)
@@ -303,7 +303,7 @@ func (s *Store) Revoke(ctx context.Context, keyID string) error {
 // rolls back — no partial updates are left behind.
 func (s *Store) BindWorkspace(ctx context.Context, orgID, userID, wsID string) error {
 	return s.updateKeyScopes(ctx, orgID, userID, func(current []string) []string {
-		return scopes.AppendWorkspaceScopes(current, wsID)
+		return scopes.AppendWorkspaceScopesForUser(current, wsID, userID)
 	})
 }
 

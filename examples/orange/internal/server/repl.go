@@ -31,8 +31,8 @@ import (
 
 func newReplCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:          "repl [key=value ...]",
-		Short:        "Start an interactive admin REPL",
+		Use:   "repl [key=value ...]",
+		Short: "Start an interactive admin REPL",
 		Long: `Interactive admin shell with persistent context. Type 'help' for commands.
 
 Seed the context before entering the REPL by passing key=value positional args:
@@ -172,9 +172,37 @@ func runREPL(rc *RunCtx, seedArgs []string) error {
 	return nil
 }
 
+// tokenize splits a REPL input line on whitespace but keeps single-quoted
+// strings together as one token (stripping the surrounding quotes).
+// This lets users write: rl-scope set entry='{"models":["*"],"rpm":100}'
+func tokenize(line string) []string {
+	var tokens []string
+	var cur strings.Builder
+	inSingle := false
+	for _, ch := range line {
+		switch {
+		case ch == '\'' && !inSingle:
+			inSingle = true
+		case ch == '\'' && inSingle:
+			inSingle = false
+		case (ch == ' ' || ch == '\t') && !inSingle:
+			if cur.Len() > 0 {
+				tokens = append(tokens, cur.String())
+				cur.Reset()
+			}
+		default:
+			cur.WriteRune(ch)
+		}
+	}
+	if cur.Len() > 0 {
+		tokens = append(tokens, cur.String())
+	}
+	return tokens
+}
+
 // dispatch splits the line and routes to the appropriate handler.
 func (s *replState) dispatch(line string) error {
-	toks := strings.Fields(line)
+	toks := tokenize(line)
 	if len(toks) == 0 {
 		return nil
 	}
@@ -224,6 +252,30 @@ func (s *replState) dispatch(line string) error {
 
 	case "secret", "sec":
 		return s.cmdSecret(toks[1:])
+
+	case "config", "cfg":
+		return s.cmdConfig(toks[1:])
+
+	case "rl-tier", "rlt":
+		return s.cmdRLTier(toks[1:])
+
+	case "rl-scope", "rls":
+		return s.cmdRLScope(toks[1:])
+
+	case "rl-policy", "rlp":
+		return s.cmdPolicy(toks[1:])
+
+	case "keyentry", "ke":
+		return s.cmdKeyEntry(toks[1:])
+
+	case "keyentry-token", "ket":
+		return s.cmdKeyEntryToken(toks[1:])
+
+	case "keyentry-secret", "kes":
+		return s.cmdKeyEntrySecret(toks[1:])
+
+	case "keyentry-routing", "ker":
+		return s.cmdKeyEntryRouting(toks[1:])
 
 	default:
 		return fmt.Errorf("unknown command %q — type 'help' for a list", toks[0])
@@ -374,6 +426,24 @@ func (s *replState) cmdOrg(args []string) error {
 		}
 		return printOrgs(s.rc.Printer, resp.Msg.GetOrg())
 
+	case "update":
+		id := s.orgID
+		if len(args) > 1 && !strings.Contains(args[1], "=") {
+			id = args[1]
+		}
+		if id == "" {
+			return fmt.Errorf("no org in context — provide an id or run 'use org <id>'")
+		}
+		req := &orgv1.UpdateOrgRequest{OrgId: id}
+		if desc := kvGet(args[1:], "description"); desc != "" {
+			req.Description = &desc
+		}
+		resp, err := client.UpdateOrg(ctx, connect.NewRequest(req))
+		if err != nil {
+			return err
+		}
+		return printOrgs(s.rc.Printer, resp.Msg.GetOrg())
+
 	case "delete":
 		id := s.orgID
 		if len(args) > 1 {
@@ -394,7 +464,7 @@ func (s *replState) cmdOrg(args []string) error {
 		s.rc.Printer.OK("deleted")
 
 	default:
-		return fmt.Errorf("unknown org subcommand %q — try: ls, get, create, delete", sub)
+		return fmt.Errorf("unknown org subcommand %q — try: ls, get, create, update, delete", sub)
 	}
 	return nil
 }
@@ -447,6 +517,24 @@ func (s *replState) cmdProj(args []string) error {
 		}
 		return printProjects(s.rc.Printer, resp.Msg.GetProject())
 
+	case "update":
+		id := s.projID
+		if len(args) > 1 && !strings.Contains(args[1], "=") {
+			id = args[1]
+		}
+		if id == "" {
+			return fmt.Errorf("no project in context — provide an id or run 'use proj <id>'")
+		}
+		req := &projectv1.UpdateProjectRequest{ProjectId: id}
+		if desc := kvGet(args[1:], "description"); desc != "" {
+			req.Description = &desc
+		}
+		resp, err := client.UpdateProject(ctx, connect.NewRequest(req))
+		if err != nil {
+			return err
+		}
+		return printProjects(s.rc.Printer, resp.Msg.GetProject())
+
 	case "delete":
 		id := s.projID
 		if len(args) > 1 {
@@ -466,7 +554,7 @@ func (s *replState) cmdProj(args []string) error {
 		s.rc.Printer.OK("deleted")
 
 	default:
-		return fmt.Errorf("unknown proj subcommand %q — try: ls, get, create, delete", sub)
+		return fmt.Errorf("unknown proj subcommand %q — try: ls, get, create, update, delete", sub)
 	}
 	return nil
 }
@@ -531,6 +619,24 @@ func (s *replState) cmdWS(args []string) error {
 		}
 		return printWorkspaces(s.rc.Printer, resp.Msg.GetWorkspace())
 
+	case "update":
+		id := s.wsID
+		if len(args) > 1 && !strings.Contains(args[1], "=") {
+			id = args[1]
+		}
+		if id == "" {
+			return fmt.Errorf("no workspace in context — provide an id or run 'use ws <id>'")
+		}
+		req := &workspacev1.UpdateWorkspaceRequest{WorkspaceId: id}
+		if desc := kvGet(args[1:], "description"); desc != "" {
+			req.Description = &desc
+		}
+		resp, err := client.UpdateWorkspace(ctx, connect.NewRequest(req))
+		if err != nil {
+			return err
+		}
+		return printWorkspaces(s.rc.Printer, resp.Msg.GetWorkspace())
+
 	case "delete":
 		id := s.wsID
 		if len(args) > 1 {
@@ -549,7 +655,7 @@ func (s *replState) cmdWS(args []string) error {
 		s.rc.Printer.OK("deleted")
 
 	default:
-		return fmt.Errorf("unknown ws subcommand %q — try: ls, get, create, delete", sub)
+		return fmt.Errorf("unknown ws subcommand %q — try: ls, get, create, update, delete", sub)
 	}
 	return nil
 }
@@ -687,9 +793,35 @@ func (s *replState) cmdUser(args []string) error {
 		}
 		return printUsers(s.rc.Printer, resp.Msg.GetUser())
 
+	case "update":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: user update <user-id> [description=<text>]")
+		}
+		userID := args[1]
+		req := &userv1.UpdateUserRequest{UserId: userID}
+		if desc := kvGet(args[2:], "description"); desc != "" {
+			req.Description = &desc
+		}
+		resp, err := client.UpdateUser(ctx, connect.NewRequest(req))
+		if err != nil {
+			return err
+		}
+		return printUsers(s.rc.Printer, resp.Msg.GetUser())
+
+	case "delete":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: user delete <user-id>")
+		}
+		_, err := client.DeleteUser(ctx, connect.NewRequest(&userv1.DeleteUserRequest{UserId: args[1]}))
+		if err != nil {
+			return err
+		}
+		s.rc.Printer.OK("deleted")
+
 	default:
-		return fmt.Errorf("unknown user subcommand %q — try: ls, get, create", sub)
+		return fmt.Errorf("unknown user subcommand %q — try: ls, get, create, update, delete", sub)
 	}
+	return nil
 }
 
 // ── egress ────────────────────────────────────────────────────────────────────
@@ -882,9 +1014,50 @@ func (s *replState) cmdSecret(args []string) error {
 		}
 		return printSecretVersions(s.rc.Printer, resp.Msg.GetVersion())
 
+	case "kek":
+		sub2 := ""
+		if len(args) > 1 {
+			sub2 = args[1]
+		}
+		realm := kvGet(args[2:], "realm")
+		switch sub2 {
+		case "create":
+			resp, err := client.CreateServiceKEK(ctx, connect.NewRequest(&secretv1.CreateServiceKEKRequest{Realm: realm}))
+			if err != nil {
+				return err
+			}
+			switch s.rc.Printer.Format {
+			case FormatJSON, FormatYAML:
+				return s.rc.Printer.Proto(resp.Msg)
+			default:
+				s.rc.Printer.Table("KEK-ID\tVERSION", []string{
+					fmt.Sprintf("%s\t%d", resp.Msg.GetKekId(), resp.Msg.GetKekVersion()),
+				})
+			}
+		case "rotate":
+			resp, err := client.RotateServiceKEK(ctx, connect.NewRequest(&secretv1.RotateServiceKEKRequest{Realm: realm}))
+			if err != nil {
+				return err
+			}
+			switch s.rc.Printer.Format {
+			case FormatJSON, FormatYAML:
+				return s.rc.Printer.Proto(resp.Msg)
+			default:
+				rows := make([]string, len(resp.Msg.GetRotated()))
+				for i, r := range resp.Msg.GetRotated() {
+					rows[i] = fmt.Sprintf("%s\t%d\t%d\t%d",
+						r.GetKekId(), r.GetOldVersion(), r.GetNewVersion(), r.GetMasterKekVersion())
+				}
+				s.rc.Printer.Table("KEK-ID\tOLD-VER\tNEW-VER\tMASTER-VER", rows)
+			}
+		default:
+			return fmt.Errorf("unknown secret kek subcommand %q — try: create [realm=<realm>], rotate [realm=<realm>]", sub2)
+		}
+
 	default:
-		return fmt.Errorf("unknown secret subcommand %q — try: ls, set, get, versions, enable, disable, retire", sub)
+		return fmt.Errorf("unknown secret subcommand %q — try: ls, set, get, versions, enable, disable, retire, kek", sub)
 	}
+	return nil
 }
 
 // readHiddenInput prompts the user and reads a line with terminal echo disabled
@@ -948,9 +1121,46 @@ func (s *replState) cmdAPIKey(args []string) error {
 		}
 		return s.interactiveScopeEditor(ctx, client, args[1])
 
+	case "issue":
+		if s.orgID == "" {
+			return fmt.Errorf("no org in context — run 'use org <id>' first")
+		}
+		userID := kvGet(args[1:], "user")
+		wsID := kvGet(args[1:], "ws")
+		if wsID == "" {
+			wsID = s.wsID
+		}
+		scopeFlag := kvGet(args[1:], "scope")
+		tmpl := kvGet(args[1:], "template")
+		desc := kvGet(args[1:], "desc")
+		scopeList := parseScopes(scopeFlag)
+		if tmpl != "" {
+			extra, err := templateScopes(tmpl, wsID, userID)
+			if err != nil {
+				return err
+			}
+			scopeList = mergeScopes(scopeList, extra)
+		}
+		rec, plaintext, err := issueAPIKey(s.rc, s.orgID, userID, wsID, scopeList, desc)
+		if err != nil {
+			return err
+		}
+		return printAPIKeys(s.rc.Printer, plaintext, rec)
+
+	case "revoke":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: apikey revoke <key-id>")
+		}
+		_, err := client.RevokeKey(ctx, connect.NewRequest(&apikeyv1.RevokeKeyRequest{KeyId: args[1]}))
+		if err != nil {
+			return err
+		}
+		s.rc.Printer.OK("revoked")
+
 	default:
-		return fmt.Errorf("unknown apikey subcommand %q — try: ls [user-id], get <key-id>, scope <key-id>", sub)
+		return fmt.Errorf("unknown apikey subcommand %q — try: ls [user-id], get <key-id>, scope <key-id>, issue, revoke <key-id>", sub)
 	}
+	return nil
 }
 
 // interactiveScopeEditor presents a checkbox-style scope selection loop for a key.
@@ -1131,23 +1341,26 @@ Navigation:
   context / ctx         show current context
 
 Org:
-  org ls                list orgs
-  org get [id]          get org (defaults to current)
-  org create <name>     create org
-  org delete [id]       delete org (defaults to current)
+  org ls                           list orgs
+  org get [id]                     get org (defaults to current)
+  org create <name>                create org
+  org update [id] [description=…]  update description (defaults to current)
+  org delete [id]                  delete org (defaults to current)
 
 Project  (requires org context):
-  proj ls               list projects in current org
-  proj get [id]         get project
-  proj create <name>    create project
-  proj delete [id]      delete project
+  proj ls                           list projects in current org
+  proj get [id]                     get project
+  proj create <name>                create project
+  proj update [id] [description=…]  update description (defaults to current)
+  proj delete [id]                  delete project
 
 Workspace  (requires proj context):
-  ws ls                 list workspaces in current project
-  ws ls *               list ALL workspaces across every org and project
-  ws get [id]           get workspace
-  ws create <name>      create workspace
-  ws delete [id]        delete workspace
+  ws ls                             list workspaces in current project
+  ws ls *                           list ALL workspaces across every org and project
+  ws get [id]                       get workspace
+  ws create <name>                  create workspace
+  ws update [id] [description=…]    update description (defaults to current)
+  ws delete [id]                    delete workspace
 
 Member  (requires ws context):
   member ls             list workspace members (shows email)
@@ -1155,19 +1368,24 @@ Member  (requires ws context):
   member rm <user-id>   remove member
 
 User  (requires org context for ls/create):
-  user ls               list users in current org
-  user get <id>         get user and their active key scopes
-  user create <email>   create user in current org
+  user ls                              list users in current org
+  user get <id>                        get user and their active key scopes
+  user create <email>                  create user in current org
+  user update <id> [description=…]     update description
+  user delete <id>                     delete user
 
 Egress  (requires ws context):
   egress get            get egress for current workspace
   egress bundle [dir]   download egress bundle (default: .)
   egress status         show online/offline status
 
-API Key  (requires org context for ls):
-  apikey ls [user-id]   list active keys (optionally filter by user)
-  apikey get <key-id>   show full key details (scopes, workspace, description)
-  apikey scope <key-id> interactive scope editor (checkbox-style)
+API Key  (requires org context for ls/issue; alias: key):
+  apikey ls [user-id]                           list active keys (optionally filter by user)
+  apikey get <key-id>                           show full key details (scopes, workspace, description)
+  apikey scope <key-id>                         interactive scope editor (checkbox-style)
+  apikey issue [user=<id>] [ws=<id>] [scope=<csv>] [template=ws-member] [desc=<text>]
+                                                issue a new API key (plaintext shown once)
+  apikey revoke <key-id>                        revoke an API key
 
 Secret  (realm: org/<uuid>/<purpose> | proj/<uuid>/<purpose> | ws/<uuid>/<purpose>):
   secret ls [realm-prefix]             list secrets (prefix filter, e.g. org/<uuid>/)
@@ -1177,6 +1395,77 @@ Secret  (realm: org/<uuid>/<purpose> | proj/<uuid>/<purpose> | ws/<uuid>/<purpos
   secret enable  <realm> <name> <vid>  enable a specific version
   secret disable <realm> <name> <vid>  disable a specific version
   secret retire  <realm> <name> <vid>  retire a specific version (permanent)
+  secret kek create [realm=<realm>]    provision a service KEK (pool member if realm omitted)
+  secret kek rotate [realm=<realm>]    rotate service KEK(s) under the current master KEK
+
+Config snapshots  (alias: cfg):
+  config ls [<ws-id>]                  list published snapshots (defaults to ws context)
+  config publish <file-path> [ws=<id>] [by=<who>]
+                                       compile + publish a YAML config snapshot
+
+Rate-limit tiers  (requires ws context; alias: rlt):
+  rl-tier ls [<ws-id>]                 list tiers in workspace
+  rl-tier get <name> [<ws-id>]         get tier detail (proto JSON)
+  rl-tier create <name> [rpm=N rph=N rpd=N usd_per_day=N on_exceed=reject|throttle|log_only ...]
+  rl-tier update <name> [rpm=N ...]    full replacement of all limit fields
+  rl-tier delete <name> [<ws-id>]      delete tier (fails if referenced by a scope)
+
+Rate-limit scopes  (requires ws context; alias: rls):
+  rl-scope ls [<ws-id>]                list scopes in workspace
+  rl-scope get [user=<id>]             get workspace or user scope
+  rl-scope set [user=<id>] entry='<json>' [entry='<json>' ...]
+                                       replace scope entries (single-quoted JSON, no spaces)
+  rl-scope delete [user=<id>]          delete scope
+
+  Entry JSON fields: models (array), rpm, rph, rpd, usd_per_day, tier_name, on_exceed
+  Example: entry='{"models":["*"],"rpm":60,"on_exceed":"throttle"}'
+
+Rate-limit policy  (floor/flexible; alias: rlp):
+  rl-policy ls [scope-type=ws|proj|key] [scope-id=<id>] [type=floor|flexible]
+  rl-policy get <policy-id>
+  rl-policy create scope-type=ws scope-id=<id> type=floor [rule='<json>'] [desc='...']
+  rl-policy update <policy-id> [rule='<json>'] [desc='...']
+  rl-policy delete <policy-id>
+
+  Rule JSON fields: models (array), rpm, rph, rpd, usd_per_day, on_exceed
+  Example: rule='{"models":["claude-3-opus"],"rpm":10,"on_exceed":"reject"}'
+
+Key entries / token slots  (alias: ke):
+  keyentry ls [<ws-id>]                    list token slots in workspace
+  keyentry get <key-entry-id>              get a token slot (proto JSON)
+  keyentry create <name> user=<id> [ws=<id>] [desc=<text>]
+                                           create a token slot for a user
+  keyentry update <key-entry-id> [desc=<text>]
+                                           update description
+  keyentry delete <key-entry-id>           delete the slot
+
+PASETO tokens  (alias: ket):
+  keyentry-token ls <key-entry-id>               list tokens issued from a slot
+  keyentry-token get <token-id>                  get token record
+  keyentry-token issue <key-entry-id> [ttl=<s>]  issue an anonymous PASETO token (shown once)
+  keyentry-token revoke <token-id>               revoke a token
+
+Key secrets  (alias: kes):
+  keyentry-secret ls <key-entry-id>                      list key secrets for a slot
+  keyentry-secret get <key-secret-id>                    get a key secret record
+  keyentry-secret create <key-entry-id> target=<upstream> [desc=<text>]
+                                                  create (prompts for value, hidden)
+  keyentry-secret rotate <key-secret-id>                 rotate (prompts for new value, hidden)
+  keyentry-secret delete <key-secret-id>                 delete
+
+Routing overrides  (alias: ker):
+  keyentry-routing targets [<ws-id>]               list LLM providers available as routing targets
+  keyentry-routing models <provider> [<ws-id>]     list backend model names for a provider
+  keyentry-routing validate file=<path> [ws=<id>]  parse & preview rules locally (no server write)
+  keyentry-routing get <key-entry-id>              show routing overrides
+  keyentry-routing set <key-entry-id> file=<path>  replace from YAML (or .json)
+  keyentry-routing set <key-entry-id> json='{"rules":[{"model":"...","target":"..."}]}'
+  keyentry-routing delete <key-entry-id>           clear all overrides (reverts to workspace default)
+
+  Rule fields: model (client-facing model ID), target (llm.providers key — run 'targets' to list valid values)
+               backend_model (optional): overrides the model name sent to the upstream
+  Advanced:    chain: [{target:A}, {target:B}]  ordered fallback (by provider or by backend_model)
+               split: [{weight:80,target:A}, {weight:20,target:A,backend_model:B}]  A/B by provider or model
 
 Other:
   help / ?              show this help

@@ -53,7 +53,7 @@ func newAPIKeyIssueCmd() *cobra.Command {
 
 			scopeList := parseScopes(scopeFlag)
 			if tmpl != "" {
-				extra, err := templateScopes(tmpl, workspaceID)
+				extra, err := templateScopes(tmpl, workspaceID, userID)
 				if err != nil {
 					return err
 				}
@@ -235,13 +235,13 @@ func issueAPIKey(rc *RunCtx, orgID, userID, workspaceID string, scopeList []stri
 }
 
 // templateScopes returns the scope list for a named template.
-func templateScopes(tmpl, workspaceID string) ([]string, error) {
+func templateScopes(tmpl, workspaceID, userID string) ([]string, error) {
 	switch tmpl {
 	case "ws-member":
 		if workspaceID == "" {
 			return nil, fmt.Errorf("--workspace-id is required for --template=ws-member")
 		}
-		return scopes.WorkspaceMemberScopes(workspaceID), nil
+		return scopes.WorkspaceMemberScopes(workspaceID, userID), nil
 	default:
 		return nil, fmt.Errorf("unknown template %q — supported: ws-member", tmpl)
 	}

@@ -19,10 +19,10 @@ import (
 
 // wsEntry is a denormalized workspace row carrying org and project names.
 type wsEntry struct {
-	name, wsID         string
-	projName, projID   string
-	orgName, orgID     string
-	createdAt          *timestamppb.Timestamp
+	name, wsID       string
+	projName, projID string
+	orgName, orgID   string
+	createdAt        *timestamppb.Timestamp
 }
 
 // listAllWorkspaces fans out ListOrgs → ListProjects → ListWorkspaces and

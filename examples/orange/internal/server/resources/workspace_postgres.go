@@ -18,7 +18,11 @@ import (
 
 	workspacev1 "github.com/dio/transit/examples/orange/api/orange/workspace/admin/v1"
 	adminv1connect "github.com/dio/transit/examples/orange/api/orange/workspace/admin/v1/adminv1connect"
+	"github.com/dio/transit/examples/orange/internal/config"
 )
+
+// compile-time check that WorkspaceService satisfies HierarchyResolver.
+var _ config.HierarchyResolver = (*WorkspaceService)(nil)
 
 const maxSlugRetries = 5
 
@@ -384,4 +388,23 @@ func wsSlug(raw string) string {
 		return ""
 	}
 	return "ws-" + raw
+}
+
+// ResolveWorkspaceHierarchy returns the project and org IDs for workspaceID.
+// It satisfies config.HierarchyResolver.
+func (s *WorkspaceService) ResolveWorkspaceHierarchy(ctx context.Context, workspaceID string) (config.WorkspaceHierarchy, error) {
+	const query = `
+SELECT w.project_id, p.org_id
+FROM workspaces w
+JOIN projects p ON p.project_id = w.project_id
+WHERE w.workspace_id = $1`
+	var h config.WorkspaceHierarchy
+	err := s.pool.QueryRow(ctx, query, workspaceID).Scan(&h.ProjectID, &h.OrgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return config.WorkspaceHierarchy{}, fmt.Errorf("workspace %q not found", workspaceID)
+		}
+		return config.WorkspaceHierarchy{}, err
+	}
+	return h, nil
 }
