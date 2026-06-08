@@ -1,7 +1,9 @@
 package adapt
 
 import (
+	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -18,9 +20,22 @@ func loadTestConfig(t *testing.T) {
 	t.Helper()
 	t.Setenv("OPENAI_API_KEY", "sk-test-openai")
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test-anthropic")
-	t.Setenv(config.EnvVar, "testdata/config.yaml")
-	config.MustReload()
+
+	yamlBytes, err := os.ReadFile("testdata/config.yaml")
+	if err != nil {
+		t.Fatalf("read testdata/config.yaml: %v", err)
+	}
+	appState := config.NewAppState()
+	if err := appState.LoadConfig(yamlBytes); err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	resolver := config.NewDefaultResolver(time.Minute)
+	SetAppState(appState, resolver)
 	clearAuthHandlerCache()
+	t.Cleanup(func() {
+		SetAppState(nil, nil)
+		clearAuthHandlerCache()
+	})
 }
 
 // newStream produces a FakeFilterHandle pre-populated with the dynamic metadata
@@ -141,24 +156,24 @@ func TestAnthropicAuth_emptyFields_noWrite(t *testing.T) {
 // --- Config / translator unit tests ---
 
 func TestEffectiveBackendSchema_returnsBackendSchemaWhenSet(t *testing.T) {
-	p := config.Provider{Kind: "openai", BackendSchema: "azureopenai"}
+	p := &config.ProviderRecord{Kind: "openai", BackendSchema: "azureopenai"}
 	require.Equal(t, "azureopenai", p.EffectiveBackendSchema())
 }
 
 func TestEffectiveBackendSchema_fallsBackToKind(t *testing.T) {
-	p := config.Provider{Kind: "openai"}
+	p := &config.ProviderRecord{Kind: "openai"}
 	require.Equal(t, "openai", p.EffectiveBackendSchema())
 }
 
-func TestTranslatorCfg_buildsFromProvider(t *testing.T) {
+func TestTranslatorCfgRec_buildsFromProviderRecord(t *testing.T) {
 	pp := "/openai/deployments"
-	p := config.Provider{
+	p := &config.ProviderRecord{
 		Kind:          "openai",
 		BackendSchema: "azureopenai",
 		PathPrefix:    &pp,
 		Extra:         map[string]string{"azure_api_version": "2025-01-01-preview"},
 	}
-	cfg := translatorCfg(p, "gpt-4o-mini")
+	cfg := translatorCfgRec(p, "gpt-4o-mini", nil)
 
 	require.Equal(t, "azureopenai", cfg.BackendSchema)
 	require.Equal(t, "/openai/deployments", cfg.PathPrefix)

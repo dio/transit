@@ -1,0 +1,19 @@
+llm:
+  providers:
+    openai_direct:
+      kind: openai
+      endpoint: https://api.openai.com
+      auth:
+        type: bearer
+        secret_ref: env://OPENAI_API_KEY
+
+  models:
+    gpt-4o-mini:
+      provider: openai_direct
+
+keys:
+  acme/alice/sk-test-001:
+    routing_overrides:
+      gpt-4o-mini:
+        target:
+          provider: openai_direct

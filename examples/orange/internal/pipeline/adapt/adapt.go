@@ -34,6 +34,7 @@
 package adapt
 
 import (
+	"context"
 	"encoding/json"
 	"strconv"
 	"strings"
@@ -57,6 +58,21 @@ const (
 	// stripped before the request leaves orange — the upstream never sees it.
 	orangeAPIKeyHeader = "x-orange-api-key"
 )
+
+// adaptAppState is the new-system config source. When non-nil, handler uses
+// adaptAppState.Snapshot() instead of the legacy config.Get().
+// Set via SetAppState before Envoy initialises the filter.
+var (
+	adaptAppState    *config.AppState
+	adaptSecResolver config.SecretResolver
+)
+
+// SetAppState configures the new-system AppState and SecretResolver for the
+// adapt filter. Call before Envoy initialises the filter.
+func SetAppState(s *config.AppState, r config.SecretResolver) {
+	adaptAppState = s
+	adaptSecResolver = r
+}
 
 func init() {
 	up.Register(FilterName, handler,
@@ -131,86 +147,73 @@ func handler(w *up.Writer, r *up.Request) {
 		binding, _ = w.GetFilterState(match.StateBinding)
 	}
 
-	cfg := config.Get()
-	prov, ok := cfg.Providers[upstream]
-	if !ok {
-		return
-	}
-
-	// Rewrite :authority to the current attempt's provider host. Use the
-	// binding-aware host so providers with named bindings (no top-level
-	// endpoint) get the correct Host header. Falls back to prov.Host() when
-	// binding is empty or "default".
-	host := prov.BindingHost(binding)
-	w.SetRequestHeader(up.HeaderAuthority, host)
-
-	w.Slog().Info("Adapting request", "provider", upstream, "attempt", attempt, "authority", host, "kind", prov.Kind, "accept-encoding", r.Header("accept-encoding"))
-
-	// Use the resolved provider's own endpoint — MetadataKeyEndpoint is set once
-	// by match for the primary and is stale on fallback retries. Use the
-	// binding's endpoint when a named binding is active.
-	endpoint := prov.BindingEndpoint(binding)
-
-	schema := prov.EffectiveBackendSchema()
-	t, err := translator.NewForRoute(schema, endpoint, translatorCfg(prov, backendModel))
-	if err != nil {
-		w.Slog().Info("No translator for schema/endpoint, skipping", "schema", schema, "endpoint", endpoint)
-		return
-	}
-
-	secret := cfg.ProviderSecret(upstream)
-	authHandler, err := getOrCreateAuthHandler(upstream, prov, secret)
-	if err != nil {
-		w.Slog().Info("Auth handler error", "provider", upstream, "err", err)
-		authHandler = noAuth{}
-	}
-
-	// Passthrough mode: x-orange-api-key present means the client's own Anthropic
-	// credentials (authorization / x-api-key / anthropic-version) must reach the
-	// upstream untouched. Orange only strips the internal routing header and skips
-	// injecting its own credentials.
-	// Normal mode: strip client auth headers and inject orange's own credentials.
-	passthroughMode := r.Header(orangeAPIKeyHeader) != ""
-
-	_, rawQuery, _ := strings.Cut(r.Path, "?")
-	sc := &streamContext{
-		translator:      t,
-		auth:            authHandler,
-		upstreamHost:    host,
-		rawQuery:        rawQuery,
-		passthroughMode: passthroughMode,
-	}
-	if r.Context != nil {
-		*r.Context = sc
-	}
-
-	if passthroughMode {
-		w.RemoveRequestHeader(orangeAPIKeyHeader)
-		w.SetMetadata(match.MetadataNamespace, "passthrough", "true")
-	} else {
-		w.RemoveRequestHeader("authorization")
-		w.RemoveRequestHeader("x-api-key")
-		w.RemoveRequestHeader("anthropic-version")
-	}
-
-	// Force identity if the client's Accept-Encoding includes an encoding we
-	// cannot decode, so the upstream response is always decodable. Streaming
-	// requests also force identity (handled in bodyHandler after the stream
-	// flag is parsed from the request body).
-	if !compress.AcceptEncodingAllSupported(r.Header("accept-encoding")) {
-		w.SetRequestHeader("accept-encoding", "identity")
-	}
-
-	hdrs, err := t.RequestHeaders(allRequestHeaders(r))
-	if err != nil {
-		w.Slog().Info("RequestHeaders error", "err", err)
-	}
-	applyRequestHeaders(w, hdrs)
-	// Static handlers (Bearer, APIKey, Anthropic) inject here.
-	// AWSAuth.InjectAuth is a no-op; it signs in bodyHandler.
-	// Skipped in passthrough mode — client credentials flow through as-is.
-	if !passthroughMode {
-		authHandler.InjectAuth(w)
+	// Use new AppState when available; fall back to legacy singleton.
+	var (
+		host     string
+		endpoint string
+		schema   string
+		secret   string
+	)
+	if adaptAppState != nil {
+		cfgSnap := adaptAppState.Snapshot()
+		if cfgSnap == nil || cfgSnap.Global == nil {
+			return
+		}
+		provRec, ok := cfgSnap.Global.Providers[upstream]
+		if !ok {
+			return
+		}
+		host = provRec.BindingHost(binding)
+		w.SetRequestHeader(up.HeaderAuthority, host)
+		w.Slog().Info("Adapting request", "provider", upstream, "attempt", attempt, "authority", host, "kind", provRec.Kind, "accept-encoding", r.Header("accept-encoding"))
+		if ev, ok := w.GetMetadataString(up.MetadataSourceDynamic, match.MetadataNamespace, match.MetadataKeyEndpoint); ok {
+			endpoint = ev.String()
+		}
+		schema = provRec.EffectiveBackendSchema()
+		t, err := translator.NewForRoute(schema, endpoint, translatorCfgRec(provRec, backendModel, adaptSecResolver))
+		if err != nil {
+			w.Slog().Info("No translator for schema/endpoint, skipping", "schema", schema, "endpoint", endpoint)
+			return
+		}
+		if adaptSecResolver != nil {
+			secret, _ = adaptSecResolver.Resolve(context.Background(), provRec.Auth.SecretRef)
+		}
+		authHandler, err := getOrCreateAuthHandlerRec(upstream, provRec, secret)
+		if err != nil {
+			w.Slog().Info("Auth handler error", "provider", upstream, "err", err)
+			authHandler = noAuth{}
+		}
+		passthroughMode := r.Header(orangeAPIKeyHeader) != ""
+		_, rawQuery, _ := strings.Cut(r.Path, "?")
+		sc := &streamContext{
+			translator:      t,
+			auth:            authHandler,
+			upstreamHost:    host,
+			rawQuery:        rawQuery,
+			passthroughMode: passthroughMode,
+		}
+		if r.Context != nil {
+			*r.Context = sc
+		}
+		if passthroughMode {
+			w.RemoveRequestHeader(orangeAPIKeyHeader)
+			w.SetMetadata(match.MetadataNamespace, "passthrough", "true")
+		} else {
+			w.RemoveRequestHeader("authorization")
+			w.RemoveRequestHeader("x-api-key")
+			w.RemoveRequestHeader("anthropic-version")
+		}
+		if !compress.AcceptEncodingAllSupported(r.Header("accept-encoding")) {
+			w.SetRequestHeader("accept-encoding", "identity")
+		}
+		hdrs, err := t.RequestHeaders(allRequestHeaders(r))
+		if err != nil {
+			w.Slog().Info("RequestHeaders error", "err", err)
+		}
+		applyRequestHeaders(w, hdrs)
+		if !passthroughMode {
+			authHandler.InjectAuth(w)
+		}
 	}
 }
 
@@ -368,15 +371,33 @@ func pathFromHeaders(hdrs []translator.Header) string {
 	return ""
 }
 
-// translatorCfg builds a [translator.ProviderConfig] from the provider definition
-// and the backend model name resolved by match (from models[].name). backendModel
-// is empty when the model entry has no name override, in which case translators
-// forward the client-supplied model name unchanged.
-func translatorCfg(p config.Provider, backendModel string) translator.ProviderConfig {
+// translatorCfgRec builds a [translator.ProviderConfig] from a ProviderRecord.
+// backendModel is empty when the model entry has no name override, in which
+// case translators forward the client-supplied model name unchanged.
+// resolver is used to expand env://, file://, literal:// refs in Extra values.
+func translatorCfgRec(p *config.ProviderRecord, backendModel string, resolver config.SecretResolver) translator.ProviderConfig {
 	return translator.ProviderConfig{
 		BackendSchema: p.EffectiveBackendSchema(),
 		PathPrefix:    p.ResolvedPathPrefix(),
 		BackendModel:  backendModel,
-		Extra:         p.Extra,
+		Extra:         resolveExtra(resolver, p.Extra),
 	}
+}
+
+// resolveExtra returns a copy of extra with every value resolved through resolver.
+// Unresolvable values are left as-is so a missing env var surfaces as a bad path
+// rather than a panic.
+func resolveExtra(resolver config.SecretResolver, extra map[string]string) map[string]string {
+	if resolver == nil || len(extra) == 0 {
+		return extra
+	}
+	out := make(map[string]string, len(extra))
+	for k, v := range extra {
+		if resolved, err := resolver.Resolve(context.Background(), v); err == nil {
+			out[k] = resolved
+		} else {
+			out[k] = v
+		}
+	}
+	return out
 }

@@ -34,9 +34,10 @@ func TestHandlerInitializeRequiresAllProfileBackends(t *testing.T) {
 	}))
 	t.Cleanup(backend.Close)
 
+	snap := testMCPSnapshot("aws-knowledge", "github")
 	h := newHandler(handlerOptions{
 		egressURL: backend.URL,
-		config:    func() *config.Config { return testMCPConfig("aws-knowledge", "github") },
+		config:    func() *config.ConfigSnapshot { return snap },
 		crypto:    crypto,
 		records:   func(r record) { records = append(records, r) },
 	})
@@ -85,9 +86,10 @@ func TestHandlerInitializeRejectsPartialProfile(t *testing.T) {
 	}))
 	t.Cleanup(backend.Close)
 
+	snap := testMCPSnapshot("aws-knowledge", "github")
 	h := newHandler(handlerOptions{
 		egressURL: backend.URL,
-		config:    func() *config.Config { return testMCPConfig("aws-knowledge", "github") },
+		config:    func() *config.ConfigSnapshot { return snap },
 		crypto:    newSessionCrypto("test"),
 	})
 
@@ -105,9 +107,10 @@ func TestHandlerInitializeAllFailed(t *testing.T) {
 	}))
 	t.Cleanup(backend.Close)
 
+	snap := testMCPSnapshot("aws-knowledge", "github")
 	h := newHandler(handlerOptions{
 		egressURL: backend.URL,
-		config:    func() *config.Config { return testMCPConfig("aws-knowledge", "github") },
+		config:    func() *config.ConfigSnapshot { return snap },
 		crypto:    newSessionCrypto("test"),
 	})
 
@@ -121,37 +124,30 @@ func TestHandlerInitializeAllFailed(t *testing.T) {
 func TestHandlerInitializeRouteFromPath(t *testing.T) {
 	crypto := newSessionCrypto("test")
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "profile-1", r.Header.Get(headerRoute))
+		require.Equal(t, "s/aws-knowledge", r.Header.Get(headerRoute))
 		require.Equal(t, "aws-knowledge", r.Header.Get(headerBackend))
 		w.Header().Set(sessionIDHeader, "aws-session")
 		writeBackendRPC(t, w, `1`, `{"capabilities":{"tools":{"listChanged":true}}}`)
 	}))
 	t.Cleanup(backend.Close)
 
+	snap := testMCPSnapshot("aws-knowledge")
 	h := newHandler(handlerOptions{
 		egressURL: backend.URL,
-		config: func() *config.Config {
-			return &config.Config{MCP: &config.MCPConfig{
-				Profiles: map[string]config.MCPProfile{
-					"profile-1": {Tools: map[string]config.MCPProfileTools{"aws-knowledge": {}}},
-				},
-				Servers: map[string]config.MCPServer{
-					"aws-knowledge": {Endpoint: "https://knowledge-mcp.global.api.aws"},
-				},
-			}}
-		},
-		crypto: crypto,
+		config:    func() *config.ConfigSnapshot { return snap },
+		crypto:    crypto,
 	})
 
+	// Use the s/<server> path prefix which routes directly to one server.
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/mcp/profile-1", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)))
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/mcp/s/aws-knowledge", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)))
 
 	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
 	publicSession := rr.Header().Get(sessionIDHeader)
 	require.NotEmpty(t, publicSession)
 	session, err := decodeSecureSessionID(crypto, publicSession, "")
 	require.NoError(t, err)
-	assert.Equal(t, "profile-1", session.Route)
+	assert.Equal(t, "s/aws-knowledge", session.Route)
 }
 
 func TestHandlerToolsListMerge(t *testing.T) {
@@ -297,20 +293,21 @@ func TestHandlerDELETEBestEffort(t *testing.T) {
 	assert.ElementsMatch(t, []string{"aws-knowledge", "github"}, deletes)
 }
 
-func testMCPConfig(servers ...string) *config.Config {
-	serverMap := map[string]config.MCPServer{}
-	toolsMap := map[string]config.MCPProfileTools{}
+// testMCPSnapshot builds a minimal ConfigSnapshot with all named servers in
+// snap.Global.Servers. The route "default" maps to all servers (no Profiles
+// map, so lookupMCPRoute falls back to the default-route shortcut).
+func testMCPSnapshot(servers ...string) *config.ConfigSnapshot {
+	serverMap := make(map[string]*config.ServerRecord, len(servers))
 	for _, s := range servers {
-		serverMap[s] = config.MCPServer{Endpoint: "https://" + s + ".example.test"}
-		toolsMap[s] = config.MCPProfileTools{}
+		serverMap[s] = &config.ServerRecord{Endpoint: "https://" + s + ".example.test"}
 	}
-	return &config.Config{MCP: &config.MCPConfig{
-		Profiles: map[string]config.MCPProfile{
-			"default": {Tools: toolsMap},
+	return &config.ConfigSnapshot{
+		Global: &config.GlobalConfig{
+			Servers: serverMap,
 		},
-		Servers: serverMap,
-	}}
+	}
 }
+
 
 func writeBackendRPC(t *testing.T, w http.ResponseWriter, id, result string) {
 	t.Helper()

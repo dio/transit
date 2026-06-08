@@ -26,7 +26,9 @@ llm:
     gpt-4o-mini:
       provider: openai_direct
       metadata:
-        tier: fast
+        description: Fast GPT-4o Mini model
+        tags:
+          - fast
     claude-3-5-sonnet-20241022:
       provider: anthropic_direct
     claude-sonnet:

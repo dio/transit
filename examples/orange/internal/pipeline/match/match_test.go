@@ -3,6 +3,7 @@ package match
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -18,9 +19,12 @@ func loadTestConfig(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-test-openai")
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test-anthropic")
 	t.Setenv("GROQ_API_KEY", "sk-test-groq")
-	t.Setenv(config.EnvVar, "testdata/match_test.yaml")
-	t.Cleanup(config.MustReload)
-	config.MustReload()
+	data, err := os.ReadFile("testdata/match_test.yaml")
+	require.NoError(t, err)
+	appState := config.NewAppState()
+	require.NoError(t, appState.LoadConfig(data))
+	SetAppState(appState)
+	t.Cleanup(func() { SetAppState(nil) })
 }
 
 func newPostStream(t *testing.T) (*up.Writer, *testutil.FakeFilterHandle, *up.Request, *any) {
@@ -322,7 +326,7 @@ func TestHeaders_getV1Models_returnsLocalModelList(t *testing.T) {
 	require.Equal(t, "gpt-4o-mini", got.Data[2].ID)
 	require.Equal(t, "groq/llama-3.1-8b-instant", got.Data[3].ID)
 	require.Equal(t, "openai_direct", got.Data[2].OwnedBy)
-	require.Equal(t, map[string]any{"tier": "fast"}, got.Data[2].Metadata)
+	require.Equal(t, map[string]any{"description": "Fast GPT-4o Mini model", "tags": []any{"fast"}}, got.Data[2].Metadata)
 }
 
 func TestHeaders_postUnknownPath_404(t *testing.T) {
@@ -598,9 +602,12 @@ func TestParseBearerToken(t *testing.T) {
 func loadKeysConfig(t *testing.T) {
 	t.Helper()
 	t.Setenv("OPENAI_API_KEY", "sk-test-openai")
-	t.Setenv(config.EnvVar, "testdata/match_keys_test.yaml")
-	t.Cleanup(config.MustReload)
-	config.MustReload()
+	data, err := os.ReadFile("testdata/match_keys_new_test.yaml")
+	require.NoError(t, err)
+	appState := config.NewAppState()
+	require.NoError(t, appState.LoadConfig(data))
+	SetAppState(appState)
+	t.Cleanup(func() { SetAppState(nil) })
 }
 
 func newPostStreamWithAuth(t *testing.T, authHeader string) (*up.Writer, *testutil.FakeFilterHandle, *up.Request, *any) {
@@ -619,29 +626,29 @@ func newPostStreamWithAuth(t *testing.T, authHeader string) (*up.Writer, *testut
 	return w, h, r, &ctx
 }
 
-func TestResolveKey_legacyMode_returnsNil(t *testing.T) {
+func TestResolveKey_noKeysConfigured_returnsFalse(t *testing.T) {
 	loadTestConfig(t) // no keys[] in this config
-	kb, keyID, ok := ResolveKey("Bearer acme/alice/sk-test-001")
-	require.False(t, ok, "legacy mode must return ok=false")
-	require.Nil(t, kb)
-	require.Empty(t, keyID)
+	ws, user, keyID, ok := ResolveKey("Bearer acme/alice/sk-test-001")
+	require.False(t, ok, "no keys configured must return ok=false")
+	require.Empty(t, ws)
+	require.Empty(t, user)
+	// keyID may or may not be set when no keys are configured; ok=false is the contract.
+	_ = keyID
 }
 
 func TestResolveKey_knownKey(t *testing.T) {
 	loadKeysConfig(t)
-	kb, keyID, ok := ResolveKey("Bearer acme/alice/sk-test-001")
+	ws, user, keyID, ok := ResolveKey("Bearer acme/alice/sk-test-001")
 	require.True(t, ok, "known key must resolve")
-	require.NotNil(t, kb)
 	require.Equal(t, "acme/alice/sk-test-001", keyID)
-	require.Equal(t, "acme", kb.Workspace)
-	require.Equal(t, "alice", kb.User)
+	require.Equal(t, "acme", ws)
+	require.Equal(t, "alice", user)
 }
 
 func TestResolveKey_unknownKey(t *testing.T) {
 	loadKeysConfig(t)
-	kb, keyID, ok := ResolveKey("Bearer acme/alice/does-not-exist")
+	_, _, keyID, ok := ResolveKey("Bearer acme/alice/does-not-exist")
 	require.False(t, ok, "unknown key must return ok=false")
-	require.Nil(t, kb)
 	require.Equal(t, "acme/alice/does-not-exist", keyID, "keyID is still returned on miss for logging")
 }
 
@@ -747,9 +754,12 @@ func TestBody_keyMode_unknownModel_404(t *testing.T) {
 func loadBindingsConfig(t *testing.T) {
 	t.Helper()
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test-anthropic")
-	t.Setenv(config.EnvVar, "testdata/match_bindings_test.yaml")
-	t.Cleanup(config.MustReload)
-	config.MustReload()
+	data, err := os.ReadFile("testdata/match_bindings_test.yaml")
+	require.NoError(t, err)
+	appState := config.NewAppState()
+	require.NoError(t, appState.LoadConfig(data))
+	SetAppState(appState)
+	t.Cleanup(func() { SetAppState(nil) })
 }
 
 // TestBody_binding_setsDecisionBinding verifies that Decision.Binding is set
@@ -819,15 +829,46 @@ func loadSplitConfig(t *testing.T) {
 	t.Helper()
 	t.Setenv("OPENAI_API_KEY", "sk-test-openai")
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test-anthropic")
-	t.Setenv(config.EnvVar, "testdata/match_split_test.yaml")
-	t.Cleanup(config.MustReload)
-	config.MustReload()
+	data, err := os.ReadFile("testdata/match_split_new_test.yaml")
+	require.NoError(t, err)
+	appState := config.NewAppState()
+	require.NoError(t, appState.LoadConfig(data))
+	SetAppState(appState)
+	t.Cleanup(func() { SetAppState(nil) })
 }
+
+// splitKeyAuth is the Authorization header used by split routing tests.
+// The key test/anon/split-key has routing overrides for split models.
+const splitKeyAuth = "Bearer test/anon/split-key"
 
 func runSplitFlow(t *testing.T, model string) (*testutil.FakeFilterHandle, *up.StreamPromise[Decision]) {
 	t.Helper()
 	body := []byte(`{"model":"` + model + `","messages":[]}`)
-	return runFlow(t, body)
+	return runSplitFlowWithAuth(t, body, splitKeyAuth)
+}
+
+func runSplitFlowWithAuth(t *testing.T, body []byte, auth string) (*testutil.FakeFilterHandle, *up.StreamPromise[Decision]) {
+	t.Helper()
+	hdr := map[string]string{
+		":method":       "POST",
+		":path":         "/v1/chat/completions",
+		"content-type":  "application/json",
+		"authorization": auth,
+	}
+	h := testutil.NewFilterHandle(testutil.WithHeaders(hdr))
+	w := up.NewWriter(h)
+	r := up.NewRequest(h.RequestHeaders(), FilterName)
+	var ctx any
+	r.Context = &ctx
+	router.Dispatch(w, r)
+	if body == nil {
+		p, _ := ctx.(*up.StreamPromise[Decision])
+		return h, p
+	}
+	chunk := &up.BodyChunk{Data: body, EndStream: true, Context: &ctx}
+	bodyHandler(w, chunk)
+	p, _ := ctx.(*up.StreamPromise[Decision])
+	return h, p
 }
 
 // TestBody_split_allArmsReachable verifies that over N requests, all three

@@ -112,9 +112,9 @@ var DecisionKey = up.NewStreamKey[*up.StreamPromise[Decision]]("orange.decision"
 // without the original request path being available.
 var EndpointKey = up.NewStreamKey[string]("orange.endpoint")
 
-// KeyBlobKey stores the resolved *config.KeyBlob for key-mode requests.
-// Absent in legacy mode (no keys[] configured).
-var KeyBlobKey = up.NewStreamKey[*config.KeyBlob]("orange.key_blob")
+// ResolvedKeyKey stores the resolved config.ResolvedKey for key-mode requests
+// when the new AppState system is active.
+var ResolvedKeyKey = up.NewStreamKey[config.ResolvedKey]("orange.resolved_key")
 
 // KeyIDKey stores the resolved key id (bearer token) for key-mode requests.
 var KeyIDKey = up.NewStreamKey[string]("orange.key_id")
@@ -202,6 +202,16 @@ const (
 	MetadataKeyAttributionKeyID     = "attribution.key_id"
 )
 
+// matchAppState is the new-system config source. When non-nil, match uses
+// matchAppState.Snapshot() instead of the legacy config.Get().
+var matchAppState *config.AppState
+
+// SetAppState configures the new-system AppState for the match filter.
+// Call before Envoy initialises the filter.
+func SetAppState(s *config.AppState) {
+	matchAppState = s
+}
+
 var router = up.NewRouter(func(w *up.Writer, r *up.Request) {
 	send.Errorf(w, http.StatusNotFound, send.NotFoundError, ErrNotFound, "no handler for %s %s", r.Method, r.Path)
 }).
@@ -238,54 +248,116 @@ func tagRequestForEndpoint(endpoint string) func(*up.Writer, *up.Request) {
 		DecisionKey.Set(w, p)
 		EndpointKey.Set(w, endpoint)
 
-		cfg := config.Get()
-		// Inject per-request Envoy retry headers derived from the chain config.
-		// This must happen in the headers phase so that RetryStateImpl (created
-		// in the router's decodeHeaders, which runs after this filter returns
-		// Continue) picks up the values. The body phase is too late.
-		//
-		// x-envoy-max-retries: set to the deepest chain depth minus one so
-		// Envoy allows exactly as many attempts as the chain has providers.
-		// x-envoy-retry-on: union of all chains' conditions (additive OR onto
-		// the route's retry_on; the route must have retry_on for retries to fire).
-		// x-envoy-upstream-rq-per-try-timeout-ms: maximum per_try_timeout_ms
-		// declared across all chains (conservative ceiling).
-		if maxRetries := cfg.MaxChainRetries(); maxRetries > 0 {
-			w.SetRequestHeader("x-envoy-max-retries", strconv.Itoa(maxRetries))
-		}
-		if retryOn, perTryMs := cfg.ChainRetryPolicy(); retryOn != "" || perTryMs > 0 {
-			if retryOn != "" {
-				w.SetRequestHeader("x-envoy-retry-on", retryOn)
+		// Key-mode: resolve the bearer key when keys[] are configured.
+		if matchAppState != nil {
+			cfgSnap := matchAppState.Snapshot()
+			if cfgSnap != nil && cfgSnap.Keys != nil && len(cfgSnap.Keys) > 0 {
+				keyID := parseBearerToken(r.Header("authorization"))
+				if keyID == "" {
+					// Also check x-api-key header (used by some Anthropic clients)
+					keyID = r.Header("x-api-key")
+				}
+				if keyID == "" {
+					w.Slog().Warn("Rejected unknown key", "endpoint", endpoint, "headers", r.AllHeaders())
+					w.SetMetadata(MetadataNamespace, MetadataKeyRejectReason, ErrUnknownKey)
+					p.Resolve(Decision{Endpoint: endpoint, Err: ErrUnknownKey})
+					send.Error(w, http.StatusUnauthorized, send.AuthenticationError, ErrUnknownKey, "unknown or missing API key")
+					return
+				}
+				keyRec, ok := cfgSnap.Keys[keyID]
+				if !ok {
+					w.Slog().Warn("Rejected unknown key", "endpoint", endpoint, "keyID", keyID)
+					w.SetMetadata(MetadataNamespace, MetadataKeyRejectReason, ErrUnknownKey)
+					p.Resolve(Decision{Endpoint: endpoint, Err: ErrUnknownKey})
+					send.Error(w, http.StatusUnauthorized, send.AuthenticationError, ErrUnknownKey, "unknown or missing API key")
+					return
+				}
+				resolvedKey, err := config.ResolveKey(keyRec, cfgSnap)
+				if err != nil {
+					w.Slog().Warn("Rejected unknown key", "endpoint", endpoint, "keyID", keyID, "err", err)
+					w.SetMetadata(MetadataNamespace, MetadataKeyRejectReason, ErrUnknownKey)
+					p.Resolve(Decision{Endpoint: endpoint, Err: ErrUnknownKey})
+					send.Error(w, http.StatusUnauthorized, send.AuthenticationError, ErrUnknownKey, "unknown or missing API key")
+					return
+				}
+				ResolvedKeyKey.Set(w, resolvedKey)
+				KeyIDKey.Set(w, keyID)
+				w.SetMetadata(MetadataNamespace, MetadataKeyAttributionWorkspace, resolvedKey.Workspace)
+				w.SetMetadata(MetadataNamespace, MetadataKeyAttributionUser, resolvedKey.User)
+				w.SetMetadata(MetadataNamespace, MetadataKeyAttributionKeyID, keyID)
 			}
-			if perTryMs > 0 {
-				w.SetRequestHeader("x-envoy-upstream-rq-per-try-timeout-ms", strconv.Itoa(perTryMs))
-			}
 		}
-		if cfg.HasKeys() {
-			kb, keyID, ok := resolveKey(r.Header("authorization"), cfg)
-			if !ok {
-				w.Slog().Warn("Rejected unknown key", "endpoint", endpoint)
-				w.SetMetadata(MetadataNamespace, MetadataKeyRejectReason, ErrUnknownKey)
-				p.Resolve(Decision{Endpoint: endpoint, Err: ErrUnknownKey})
-				send.Error(w, http.StatusUnauthorized, send.AuthenticationError, ErrUnknownKey, "unknown or missing API key")
-				return
-			}
-			KeyBlobKey.Set(w, kb)
-			KeyIDKey.Set(w, keyID)
-			w.SetMetadata(MetadataNamespace, MetadataKeyAttributionWorkspace, kb.Workspace)
-			w.SetMetadata(MetadataNamespace, MetadataKeyAttributionUser, kb.User)
-			w.SetMetadata(MetadataNamespace, MetadataKeyAttributionKeyID, keyID)
-		}
-
 		w.Slog().Info("Received headers", "authority_in", r.Host, "endpoint", endpoint)
 	}
 }
 
 func listModels(w *up.Writer, _ *up.Request) {
-	if err := send.JSON(w, http.StatusOK, config.Get().OpenAIV1Models()); err != nil {
+	if matchAppState == nil {
+		send.Error(w, http.StatusInternalServerError, send.InternalServerError, "orange.internal_error", "config not loaded")
+		return
+	}
+	cfgSnap := matchAppState.Snapshot()
+	if cfgSnap == nil || cfgSnap.Global == nil {
+		send.Error(w, http.StatusInternalServerError, send.InternalServerError, "orange.internal_error", "config not loaded")
+		return
+	}
+	list := config.V1ModelList{
+		Object: "list",
+		Data:   v1ModelsWithMeta(cfgSnap.Global),
+	}
+	if err := send.JSON(w, http.StatusOK, list); err != nil {
 		w.Slog().Error("Failed to marshal model list", "err", err)
 		send.Error(w, http.StatusInternalServerError, send.InternalServerError, "orange.internal_error", "failed to encode model list")
 	}
+}
+
+// v1ModelsWithMeta builds a sorted V1Model slice from GlobalConfig, including
+// Metadata and using the provider NAME (map key) as OwnedBy to match the
+// OpenAI-compatible response format.
+func v1ModelsWithMeta(global *config.GlobalConfig) []config.V1Model {
+	out := make([]config.V1Model, 0, len(global.Models))
+	// Build a reverse map: ProviderRecord pointer → provider name.
+	provNameByPtr := make(map[*config.ProviderRecord]string, len(global.Providers))
+	for name, p := range global.Providers {
+		provNameByPtr[p] = name
+	}
+	for id, m := range global.Models {
+		ownedBy := ""
+		if m.Provider != nil {
+			ownedBy = provNameByPtr[m.Provider]
+		}
+		entry := config.V1Model{
+			ID:      id,
+			Object:  "model",
+			OwnedBy: ownedBy,
+		}
+		if m.Metadata != nil {
+			meta := map[string]any{}
+			if m.Metadata.Description != "" {
+				meta["description"] = m.Metadata.Description
+			}
+			if m.Metadata.ContextLength != 0 {
+				meta["context_length"] = m.Metadata.ContextLength
+			}
+			if m.Metadata.MaxTokens != 0 {
+				meta["max_tokens"] = m.Metadata.MaxTokens
+			}
+			if len(m.Metadata.Tags) > 0 {
+				meta["tags"] = m.Metadata.Tags
+			}
+			if len(meta) > 0 {
+				entry.Metadata = meta
+			}
+		}
+		out = append(out, entry)
+	}
+	// Sort for stable output.
+	for i := 1; i < len(out); i++ {
+		for j := i; j > 0 && out[j].ID < out[j-1].ID; j-- {
+			out[j], out[j-1] = out[j-1], out[j]
+		}
+	}
+	return out
 }
 
 func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
@@ -313,81 +385,132 @@ func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 		return
 	}
 
-	cfg := config.Get()
-
-	// Resolve the model entry: prefer per-key blob, fall back to global models.
-	var entry *config.ModelEntry
-	if kb, ok := KeyBlobKey.Get(w); ok {
-		if e, found := kb.LLM.Models[model]; found {
-			entry = &e
+	// Use new AppState when available.
+	if matchAppState != nil {
+		cfgSnap := matchAppState.Snapshot()
+		if cfgSnap == nil || cfgSnap.Global == nil {
+			p.Resolve(Decision{Endpoint: endpoint, Err: ErrUnknownModel})
+			send.Error(w, http.StatusInternalServerError, send.InternalServerError, "orange.internal_error", "config not loaded")
+			return
 		}
-	}
-	if entry == nil {
-		if e, ok := cfg.Models[model]; ok {
-			entry = &e
-		}
-	}
-	if entry == nil {
-		w.Slog().Warn("Received body unknown model", "model", model)
-		p.Resolve(Decision{Endpoint: endpoint, Err: ErrUnknownModel})
-		send.Errorf(w, http.StatusNotFound, send.InvalidRequestError, ErrUnknownModel, "no upstream configured for model %s", model)
-		return
-	}
 
-	var upstream, backendModel, binding string
-	var fallbacks []Target
-
-	if entry.Routing != nil {
-		var rerr error
-		upstream, backendModel, binding, fallbacks, rerr = resolveRouting(cfg, *entry.Routing, model)
-		if rerr != nil {
-			w.Slog().Warn("Routing resolution failed", "model", model, "err", rerr)
+		// Resolve model record from global catalog.
+		modelRec, ok := cfgSnap.Global.LookupModel(model)
+		if !ok {
+			w.Slog().Warn("Received body unknown model", "model", model)
 			p.Resolve(Decision{Endpoint: endpoint, Err: ErrUnknownModel})
 			send.Errorf(w, http.StatusNotFound, send.InvalidRequestError, ErrUnknownModel, "no upstream configured for model %s", model)
 			return
 		}
-	} else {
-		// Sugar path: direct provider reference.
-		upstream = entry.Provider
-		backendModel = entry.Name
-		if backendModel == "" {
-			backendModel = model
-		}
-		binding = entry.Binding
-		// Apply endpoint discriminator override.
-		if endpoint != "" {
-			if override, has := entry.Endpoints[endpoint]; has {
-				upstream = override
+
+		// Check per-key routing overrides first.
+		var routingCfg *config.RoutingConfig
+		if rk, hasKey := ResolvedKeyKey.Get(w); hasKey && rk.RoutingOverrides != nil {
+			if rc, hasOverride := rk.RoutingOverrides[model]; hasOverride {
+				routingCfg = rc
+			} else if rc, hasWildcard := rk.RoutingOverrides["*"]; hasWildcard {
+				routingCfg = rc
 			}
 		}
-	}
 
-	if upstream == "" {
-		w.Slog().Warn("Received body unknown model", "model", model)
-		p.Resolve(Decision{Endpoint: endpoint, Err: ErrUnknownModel})
-		send.Errorf(w, http.StatusNotFound, send.InvalidRequestError, ErrUnknownModel, "no upstream configured for model %s", model)
+		var upstream, backendModel, binding string
+		var fallbacks []Target
+		if routingCfg != nil {
+			var rerr error
+			upstream, backendModel, binding, fallbacks, rerr = resolveRoutingNew(cfgSnap.Global, routingCfg, model)
+			if rerr != nil {
+				w.Slog().Warn("Routing resolution failed", "model", model, "err", rerr)
+				p.Resolve(Decision{Endpoint: endpoint, Err: ErrUnknownModel})
+				send.Errorf(w, http.StatusNotFound, send.InvalidRequestError, ErrUnknownModel, "no upstream configured for model %s", model)
+				return
+			}
+		} else {
+			// Sugar path: use model record's provider directly.
+			if modelRec.Provider == nil {
+				w.Slog().Warn("Received body unknown model", "model", model)
+				p.Resolve(Decision{Endpoint: endpoint, Err: ErrUnknownModel})
+				send.Errorf(w, http.StatusNotFound, send.InvalidRequestError, ErrUnknownModel, "no upstream configured for model %s", model)
+				return
+			}
+			// Find the provider name from global providers map.
+			upstream = providerName(cfgSnap.Global, modelRec.Provider)
+			backendModel = modelRec.APIName
+			if backendModel == "" {
+				backendModel = model
+			}
+			binding = modelRec.Binding
+			// Apply endpoint discriminator override.
+			if endpoint != "" {
+				if ovProv, has := modelRec.EndpointOverrides[endpoint]; has && ovProv != nil {
+					upstream = providerName(cfgSnap.Global, ovProv)
+				}
+			}
+		}
+
+		if upstream == "" {
+			w.Slog().Warn("Received body unknown model", "model", model)
+			p.Resolve(Decision{Endpoint: endpoint, Err: ErrUnknownModel})
+			send.Errorf(w, http.StatusNotFound, send.InvalidRequestError, ErrUnknownModel, "no upstream configured for model %s", model)
+			return
+		}
+		provRec := cfgSnap.Global.Providers[upstream]
+		if provRec == nil {
+			w.Slog().Warn("Provider not found", "upstream", upstream)
+			p.Resolve(Decision{Endpoint: endpoint, Err: ErrUnknownModel})
+			send.Errorf(w, http.StatusNotFound, send.InvalidRequestError, ErrUnknownModel, "no upstream configured for model %s", model)
+			return
+		}
+		w.SetRequestHeader(up.HeaderAuthority, provRec.BindingHost(binding))
+
+		if routingCfg != nil && routingCfg.Kind == config.RoutingKindChain {
+			if ch := routingCfg.Chain; ch != nil && len(ch.Children) > 1 {
+				w.SetRequestHeader("x-envoy-max-retries", strconv.Itoa(len(ch.Children)-1))
+				if ch.Retry != nil {
+					r := ch.Retry
+					if r.RetryOn != "" {
+						w.SetRequestHeader("x-envoy-retry-on", r.RetryOn)
+					}
+					if r.RetryGrpcOn != "" {
+						w.SetRequestHeader("x-envoy-retry-grpc-on", r.RetryGrpcOn)
+					}
+					if r.PerTryTimeoutMs > 0 {
+						w.SetRequestHeader("x-envoy-upstream-rq-per-try-timeout-ms", strconv.Itoa(r.PerTryTimeoutMs))
+					}
+					if len(r.RetriableStatusCodes) > 0 {
+						parts := make([]string, len(r.RetriableStatusCodes))
+						for i, c := range r.RetriableStatusCodes {
+							parts[i] = strconv.Itoa(c)
+						}
+						w.SetRequestHeader("x-envoy-retriable-status-codes", strings.Join(parts, ","))
+					}
+					if len(r.RetriableHeaderNames) > 0 {
+						w.SetRequestHeader("x-envoy-retriable-header-names", strings.Join(r.RetriableHeaderNames, ","))
+					}
+				}
+			}
+		}
+
+		d := Decision{ProviderBackend: upstream, ProviderKind: string(provRec.Kind), Model: model, BackendModel: backendModel, Endpoint: endpoint, Binding: binding, Fallbacks: fallbacks}
+		d.Apply(w)
+
+		if endpoint == EndpointImages {
+			if size := gjson.GetBytes(chunk.Data, "size").String(); size != "" {
+				w.SetMetadata(MetadataNamespace, MetadataKeyImageSize, size)
+			}
+			if quality := gjson.GetBytes(chunk.Data, "quality").String(); quality != "" {
+				w.SetMetadata(MetadataNamespace, MetadataKeyImageQuality, quality)
+			}
+		}
+
+		w.Slog().Info("Received body resolved", "model", model, "backend_model", backendModel, "provider", upstream, "host", provRec.BindingHost(binding), "kind", string(provRec.Kind), "endpoint", endpoint, "binding", binding)
+		p.Resolve(d)
 		return
 	}
-	provider := cfg.Providers[upstream]
-	// Rewrite :authority to the binding's endpoint host so the upstream sees
-	// the right Host header. SNI is driven by the selected host's configured
-	// hostname. BindingHost falls back to Provider.Host() when binding is empty.
-	w.SetRequestHeader(up.HeaderAuthority, provider.BindingHost(binding))
 
-	d := Decision{ProviderBackend: upstream, ProviderKind: provider.Kind, Model: model, BackendModel: backendModel, Endpoint: endpoint, Binding: binding, Fallbacks: fallbacks}
-	d.Apply(w)
-
-	if endpoint == EndpointImages {
-		if size := gjson.GetBytes(chunk.Data, "size").String(); size != "" {
-			w.SetMetadata(MetadataNamespace, MetadataKeyImageSize, size)
-		}
-		if quality := gjson.GetBytes(chunk.Data, "quality").String(); quality != "" {
-			w.SetMetadata(MetadataNamespace, MetadataKeyImageQuality, quality)
-		}
-	}
-
-	w.Slog().Info("Received body resolved", "model", model, "backend_model", backendModel, "provider", upstream, "host", provider.BindingHost(binding), "kind", provider.Kind, "endpoint", endpoint, "binding", binding)
-	p.Resolve(d)
+	// AppState not configured — reject with model not found.
+	w.Slog().Warn("Received body: AppState not configured", "model", model)
+	p.Resolve(Decision{Endpoint: endpoint, Err: ErrUnknownModel})
+	send.Errorf(w, http.StatusNotFound, send.InvalidRequestError, ErrUnknownModel, "no upstream configured for model %s", model)
 }
 
 // onStreamComplete is the single owner of per-stream cleanup. It runs once
@@ -410,42 +533,67 @@ func onStreamComplete(ctx *any) {
 	// by the SDK (Primitive A / dropBag in filter.OnStreamComplete).
 }
 
-// resolveRouting walks node top-down and returns the primary target,
-// the ordered fallback slice, and the effective backend model name.
-// Sampling (for split nodes) happens inside this call.
-func resolveRouting(cfg *config.Config, node config.RoutingNode, entryModel string) (
+// ProviderNameFromGlobal looks up the name (key) of prov in global.Providers by
+// pointer equality. Returns "" when not found.
+// It is exported for use by sibling packages (e.g. responsesws) that perform the
+// same model→upstream name resolution.
+func ProviderNameFromGlobal(global *config.GlobalConfig, prov *config.ProviderRecord) string {
+	return providerName(global, prov)
+}
+
+// providerName looks up the name (key) of prov in global.Providers by pointer
+// equality. Returns "" when not found.
+func providerName(global *config.GlobalConfig, prov *config.ProviderRecord) string {
+	for name, p := range global.Providers {
+		if p == prov {
+			return name
+		}
+	}
+	return ""
+}
+
+// resolveRoutingNew walks the new-system *RoutingConfig tree and returns the
+// primary upstream name, backend model, binding, fallback slice, and any error.
+// It is the new-system counterpart of resolveRouting.
+func resolveRoutingNew(global *config.GlobalConfig, node *config.RoutingConfig, entryModel string) (
 	upstream, backendModel, binding string, fallbacks []Target, err error,
 ) {
-	switch {
-	case node.Target != nil:
+	switch node.Kind {
+	case config.RoutingKindTarget:
 		t := node.Target
-		bm := t.Name
+		if t == nil || t.Provider == nil {
+			return "", "", "", nil, fmt.Errorf("routing target has no provider")
+		}
+		bm := t.ModelName
 		if bm == "" {
 			bm = entryModel
 		}
-		return t.Provider, bm, "", nil, nil
+		return providerName(global, t.Provider), bm, "", nil, nil
 
-	case node.Chain != nil:
-		children := node.Chain.Children
-		// Disallow chain-of-chain in v1.
-		for i, child := range children {
-			if child.Chain != nil {
+	case config.RoutingKindChain:
+		ch := node.Chain
+		if ch == nil || len(ch.Children) == 0 {
+			return "", "", "", nil, fmt.Errorf("chain node has no children")
+		}
+		for i, child := range ch.Children {
+			if child.Kind == config.RoutingKindChain {
 				return "", "", "", nil, fmt.Errorf("chain.children[%d] is itself a chain (chain-of-chain not supported)", i)
 			}
 		}
-		u, bm, bi, _, e := resolveRouting(cfg, children[0], entryModel)
+		u, bm, bi, _, e := resolveRoutingNew(global, &ch.Children[0], entryModel)
 		if e != nil {
 			return "", "", "", nil, e
 		}
 		upstream, backendModel, binding = u, bm, bi
-		for _, child := range children[1:] {
-			cu, cbm, _, _, ce := resolveRouting(cfg, child, entryModel)
+		for _, child := range ch.Children[1:] {
+			childCopy := child
+			cu, cbm, _, _, ce := resolveRoutingNew(global, &childCopy, entryModel)
 			if ce != nil {
 				return "", "", "", nil, ce
 			}
 			pk := ""
-			if prov, ok := cfg.Providers[cu]; ok {
-				pk = prov.Kind
+			if prov, ok := global.Providers[cu]; ok {
+				pk = string(prov.Kind)
 			}
 			fallbacks = append(fallbacks, Target{
 				ProviderBackend: cu,
@@ -455,10 +603,14 @@ func resolveRouting(cfg *config.Config, node config.RoutingNode, entryModel stri
 		}
 		return upstream, backendModel, binding, fallbacks, nil
 
-	case node.Split != nil:
-		idx := sampleSplit(node.Split)
-		child := node.Split.Children[idx]
-		return resolveRouting(cfg, child.RoutingNode, entryModel)
+	case config.RoutingKindSplit:
+		sp := node.Split
+		if sp == nil || len(sp.Children) == 0 {
+			return "", "", "", nil, fmt.Errorf("split node has no children")
+		}
+		idx := sampleSplitNew(sp)
+		child := sp.Children[idx].Child
+		return resolveRoutingNew(global, &child, entryModel)
 
 	default:
 		return "", "", "", nil, fmt.Errorf("routing node has no target, chain, or split")
@@ -466,25 +618,30 @@ func resolveRouting(cfg *config.Config, node config.RoutingNode, entryModel stri
 }
 
 // ResolveKey parses the Authorization bearer token from authHeader and looks up
-// the corresponding KeyBlob in the current config snapshot. Returns the blob,
-// key id, and true when found. Returns nil, "", false when key-mode is not
-// active (legacy config with no keys[]) or when the key is absent.
-func ResolveKey(authHeader string) (*config.KeyBlob, string, bool) {
-	return resolveKey(authHeader, config.Get())
-}
-
-// resolveKey is the internal implementation shared by ResolveKey and
-// tagRequestForEndpoint (which already holds a cfg snapshot).
-func resolveKey(authHeader string, cfg *config.Config) (*config.KeyBlob, string, bool) {
-	if !cfg.HasKeys() {
-		return nil, "", false
-	}
-	keyID := parseBearerToken(authHeader)
+// the key in the current AppState snapshot. Returns the resolved workspace,
+// user, keyID, and true when found. Returns "", "", "", false when AppState is
+// not active, no keys are configured, or the key is absent.
+func ResolveKey(authHeader string) (workspace, user, keyID string, found bool) {
+	keyID = parseBearerToken(authHeader)
 	if keyID == "" {
-		return nil, "", false
+		return "", "", "", false
 	}
-	kb, ok := cfg.LookupKey(keyID)
-	return kb, keyID, ok
+	if matchAppState == nil {
+		return "", "", "", false
+	}
+	snap := matchAppState.Snapshot()
+	if snap == nil || snap.Keys == nil || len(snap.Keys) == 0 {
+		return "", "", keyID, false
+	}
+	keyRec, ok := snap.Keys[keyID]
+	if !ok {
+		return "", "", keyID, false
+	}
+	resolvedKey, err := config.ResolveKey(keyRec, snap)
+	if err != nil {
+		return "", "", keyID, false
+	}
+	return resolvedKey.Workspace, resolvedKey.User, keyID, true
 }
 
 // parseBearerToken extracts the token value from an Authorization header.

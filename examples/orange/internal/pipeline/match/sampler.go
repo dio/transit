@@ -6,21 +6,17 @@ import (
 	"github.com/dio/transit/examples/orange/internal/config"
 )
 
-// sampleSplit picks a child index from s.Children using the global
+// sampleSplitNew picks a child index from a *config.SplitConfig using the global
 // math/rand/v2 source and the configured weight distribution.
-// Weights are sampled proportionally to their values; they need not
-// sum to exactly 100. Returns a uniform random index when all weights
-// are zero or no children are present (degenerate config that should
-// have been caught by validateRoutingNode).
-func sampleSplit(s *config.SplitNode) int {
-	return sampleSplitFrom(s.Children, rand.IntN)
+func sampleSplitNew(s *config.SplitConfig) int {
+	return sampleSplitNewFrom(s.Children, rand.IntN)
 }
 
-// sampleSplitFrom is the testable core. randN(n) must return a
-// uniformly distributed value in [0, n).
+// sampleSplitNewFrom is the testable core for the new-system SplitConfig.
+// randN(n) must return a uniformly distributed value in [0, n).
 // When the total weight is zero or children is empty it returns a
 // uniform random index rather than panicking.
-func sampleSplitFrom(children []config.SplitChild, randN func(n int) int) int {
+func sampleSplitNewFrom(children []config.WeightedRoutingConfig, randN func(n int) int) int {
 	if len(children) == 0 {
 		return 0
 	}
@@ -29,9 +25,6 @@ func sampleSplitFrom(children []config.SplitChild, randN func(n int) int) int {
 		total += c.Weight
 	}
 	if total <= 0 {
-		// Degenerate: all weights zero — validateRoutingNode is the strict
-		// gate that rejects this at load time. The fallback here is a second
-		// line of defence: a bad config must not crash the proxy process.
 		return randN(len(children))
 	}
 	draw := randN(total)

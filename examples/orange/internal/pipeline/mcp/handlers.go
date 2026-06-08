@@ -34,7 +34,7 @@ const (
 	defaultBackendHTTPTimeout = 30 * time.Second
 )
 
-type configProvider func() *config.Config
+type configProvider func() *config.ConfigSnapshot
 
 type recordSink func(record)
 
@@ -51,13 +51,18 @@ type handler struct {
 }
 
 type mcpRoute struct {
-	Backends         map[string]config.MCPServer
+	Backends         map[string]*config.ServerRecord
 	OptionalBackends map[string]bool
 }
 
 func newHandler(opts handlerOptions) *handler {
 	if opts.config == nil {
-		opts.config = config.Get
+		opts.config = func() *config.ConfigSnapshot {
+			if mcpAppState != nil {
+				return mcpAppState.Snapshot()
+			}
+			return nil
+		}
 	}
 	if opts.crypto == nil {
 		opts.crypto = newSessionCrypto("orange-mcp-test-session-key")
@@ -576,34 +581,54 @@ type backendResult struct {
 	err       error
 }
 
-func lookupMCPRoute(cfg *config.Config, routeName string) (mcpRoute, bool) {
-	if cfg == nil || cfg.MCP == nil {
+func lookupMCPRoute(snap *config.ConfigSnapshot, routeName string) (mcpRoute, bool) {
+	if snap == nil || snap.Global == nil {
 		return mcpRoute{}, false
 	}
 	if serverName, ok := strings.CutPrefix(routeName, "s/"); ok {
-		server, ok := cfg.MCP.Servers[serverName]
+		server, ok := snap.Global.Servers[serverName]
 		if !ok {
 			return mcpRoute{}, false
 		}
-		return mcpRoute{Backends: map[string]config.MCPServer{serverName: server}}, true
+		return mcpRoute{Backends: map[string]*config.ServerRecord{serverName: server}}, true
 	}
-	profile, ok := cfg.MCP.Profiles[routeName]
-	if !ok {
-		return mcpRoute{}, false
-	}
-	backends := make(map[string]config.MCPServer, len(profile.Tools))
-	optional := make(map[string]bool, len(profile.Tools))
-	for serverName, pt := range profile.Tools {
-		server, ok := cfg.MCP.Servers[serverName]
+	// Profile-based route: look up via Profiles map (new system) or fall back to
+	// Servers-only lookup for test snapshots that set Servers but no Profiles.
+	if snap.Profiles != nil {
+		profile, ok := snap.Profiles[routeName]
 		if !ok {
 			return mcpRoute{}, false
 		}
-		backends[serverName] = server
-		if pt.Optional {
-			optional[serverName] = true
+		// Resolve tool filters from the pool to get the server set.
+		var filters []config.ToolFilter
+		if snap.Pools != nil && snap.Pools.ToolFilters != nil {
+			filters = snap.Pools.ToolFilters.GetByKey(profile.ToolFilterShapeKey)
 		}
+		backends := make(map[string]*config.ServerRecord, len(filters))
+		optional := make(map[string]bool, len(filters))
+		for _, tf := range filters {
+			server, ok := snap.Global.Servers[tf.ServerID]
+			if !ok {
+				return mcpRoute{}, false
+			}
+			backends[tf.ServerID] = server
+			if tf.Optional {
+				optional[tf.ServerID] = true
+			}
+		}
+		return mcpRoute{Backends: backends, OptionalBackends: optional}, true
 	}
-	return mcpRoute{Backends: backends, OptionalBackends: optional}, true
+	// Fallback: treat routeName as a profile key in a synthetic snapshot where
+	// all servers belong to one profile identified by routeName. Used by handlers
+	// tests that build ConfigSnapshot.Global.Servers directly.
+	if routeName == defaultRouteName {
+		backends := make(map[string]*config.ServerRecord, len(snap.Global.Servers))
+		for name, srv := range snap.Global.Servers {
+			backends[name] = srv
+		}
+		return mcpRoute{Backends: backends}, true
+	}
+	return mcpRoute{}, false
 }
 
 func sortedConfigBackends(route mcpRoute) []string {

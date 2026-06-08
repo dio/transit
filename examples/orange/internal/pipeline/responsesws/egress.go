@@ -1,9 +1,9 @@
 package responsesws
 
 import (
+	"context"
 	"net/http"
 
-	"github.com/dio/transit/examples/orange/internal/config"
 	"github.com/dio/transit/examples/orange/internal/pipeline/adapt"
 	"github.com/dio/transit/examples/orange/internal/pipeline/match"
 	"github.com/dio/transit/examples/orange/internal/send"
@@ -55,14 +55,27 @@ func egressHandler(w *up.Writer, r *up.Request) {
 
 	// Cross-check headers against the active config snapshot.
 	// Headers are hints, not a trust boundary — they must still match active config.
-	cfg := config.Get()
-	configProvider, providerConfig, _, ok := cfg.LookupModelProvider(model, match.EndpointResponses)
+	if responsesAppState == nil {
+		send.Errorf(w, http.StatusInternalServerError, send.InternalServerError,
+			"orange.responsesws_config_not_loaded",
+			"orange config not loaded")
+		return
+	}
+	cfgSnap := responsesAppState.Snapshot()
+	if cfgSnap == nil || cfgSnap.Global == nil {
+		send.Errorf(w, http.StatusInternalServerError, send.InternalServerError,
+			"orange.responsesws_config_not_loaded",
+			"orange config not loaded")
+		return
+	}
+	modelRec, ok := cfgSnap.Global.LookupModel(model)
 	if !ok {
 		send.Errorf(w, http.StatusBadRequest, send.InvalidRequestError,
 			"orange.responsesws_model_not_found",
 			"model %q not found in active orange config", model)
 		return
 	}
+	configProvider := match.ProviderNameFromGlobal(cfgSnap.Global, modelRec.Provider)
 	if configProvider != provider {
 		send.Errorf(w, http.StatusBadRequest, send.InvalidRequestError,
 			"orange.responsesws_headers_inconsistent",
@@ -70,11 +83,11 @@ func egressHandler(w *up.Writer, r *up.Request) {
 			provider, configProvider, model)
 		return
 	}
-	if providerConfig.Kind != kind {
+	if string(modelRec.Provider.Kind) != kind {
 		send.Errorf(w, http.StatusBadRequest, send.InvalidRequestError,
 			"orange.responsesws_headers_inconsistent",
 			"x-orange-responsesws-kind %q does not match active config kind %q for provider %q",
-			kind, providerConfig.Kind, provider)
+			kind, string(modelRec.Provider.Kind), provider)
 		return
 	}
 
@@ -88,11 +101,15 @@ func egressHandler(w *up.Writer, r *up.Request) {
 	}
 	d.Apply(w)
 
-	// Rewrite :authority to the provider host so the upstream sees the right Host header.
-	// This mirrors what the HTTP match path does in bodyHandler.
-	w.SetRequestHeader(up.HeaderAuthority, providerConfig.Host())
+	// Rewrite :authority to the provider host.
+	w.SetRequestHeader(up.HeaderAuthority, modelRec.Provider.BindingHost(""))
 
-	if err := adapt.InjectHeaderAuth(w, provider, providerConfig, cfg.ProviderSecret(provider)); err != nil {
+	// Resolve secret for auth injection.
+	var secret string
+	if responsesSecretResolver != nil {
+		secret, _ = responsesSecretResolver.Resolve(context.Background(), modelRec.Provider.Auth.SecretRef)
+	}
+	if err := adapt.InjectHeaderAuthRec(w, provider, modelRec.Provider, secret); err != nil {
 		send.Errorf(w, http.StatusBadGateway, send.InternalServerError,
 			"orange.responsesws_auth_unsupported",
 			"failed to inject Responses WebSocket egress auth for provider %q: %v", provider, err)

@@ -1,8 +1,8 @@
 package mcp
 
 import (
-	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,11 +17,6 @@ llm:
   providers: {}
   models: {}
 mcp:
-  profiles:
-    default:
-      tools:
-        kiwi: {}
-        github: {}
   servers:
     kiwi:
       endpoint: https://mcp.kiwi.com
@@ -35,17 +30,15 @@ mcp:
 func setupEgressConfig(t *testing.T) {
 	t.Helper()
 	t.Setenv("ORANGE_MCP_TEST_GITHUB_TOKEN", "github-test-token")
-	cfg, err := config.Load([]byte(testMCPYAML))
-	require.NoError(t, err)
-	f, err := os.CreateTemp(t.TempDir(), "orange-mcp-egress-*.yaml")
-	require.NoError(t, err)
-	_, err = f.WriteString(testMCPYAML)
-	require.NoError(t, err)
-	require.NoError(t, f.Close())
-	t.Setenv(config.EnvVar, f.Name())
-	config.InitLogger()
-	config.MustReload()
-	require.Equal(t, "github-test-token", cfg.MCPCredential("default", "github"))
+
+	appState := config.NewAppState()
+	require.NoError(t, appState.LoadConfig([]byte(testMCPYAML)))
+
+	resolver := config.NewDefaultResolver(time.Minute)
+	SetAppState(appState, resolver)
+	t.Cleanup(func() {
+		SetAppState(nil, nil)
+	})
 }
 
 func newMCPWriter(headers map[string]string) (*up.Writer, *up.Request, *testutil.FakeFilterHandle) {

@@ -1,0 +1,96 @@
+llm:
+  providers:
+    provider_a:
+      kind: openai
+      endpoint: https://api-a.example.com
+      auth:
+        type: bearer
+        secret_ref: env://OPENAI_API_KEY
+
+    provider_b:
+      kind: openai
+      endpoint: https://api-b.example.com
+      auth:
+        type: bearer
+        secret_ref: env://OPENAI_API_KEY
+
+    provider_c:
+      kind: openai
+      endpoint: https://api-c.example.com
+      auth:
+        type: bearer
+        secret_ref: env://OPENAI_API_KEY
+
+    single_provider:
+      kind: anthropic
+      endpoint: https://api.anthropic.com
+      auth:
+        type: anthropic
+        secret_ref: env://ANTHROPIC_API_KEY
+
+  # Global models are required placeholders; actual routing comes from key overrides.
+  models:
+    split-model:
+      provider: provider_a
+    split-no-name:
+      provider: provider_a
+    split-with-chain:
+      provider: provider_a
+    sugar-model:
+      provider: single_provider
+      name: claude-haiku-4-5
+    chain-model:
+      provider: provider_a
+
+keys:
+  test/anon/split-key:
+    routing_overrides:
+      split-model:
+        split:
+          children:
+            - weight: 34
+              target:
+                provider: provider_a
+                name: split-model
+            - weight: 33
+              target:
+                provider: provider_b
+                name: split-model
+            - weight: 33
+              target:
+                provider: provider_c
+                name: split-model
+      split-no-name:
+        split:
+          children:
+            - weight: 50
+              target:
+                provider: provider_a
+            - weight: 50
+              target:
+                provider: provider_b
+      split-with-chain:
+        split:
+          children:
+            - weight: 50
+              chain:
+                children:
+                  - target:
+                      provider: provider_a
+                      name: chained-model
+                  - target:
+                      provider: provider_b
+                      name: chained-model
+            - weight: 50
+              target:
+                provider: provider_c
+                name: chained-model
+      chain-model:
+        chain:
+          children:
+            - target:
+                provider: provider_a
+                name: chain-model
+            - target:
+                provider: provider_b
+                name: chain-model

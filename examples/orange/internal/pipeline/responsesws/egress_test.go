@@ -1,8 +1,8 @@
 package responsesws
 
 import (
-	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,9 +14,7 @@ import (
 )
 
 // testOrangeYAML is a minimal orange.yaml fixture for egress filter tests.
-// Does not require real API keys — resolveSecrets allows env:// even when unset
-// only if the yaml is loaded via config.Load directly (we skip secret resolution
-// by using a bearer type with a literal token for unit tests).
+// Uses a literal bearer token so secret resolution succeeds without real env vars.
 const testOrangeYAML = `
 llm:
   providers:
@@ -32,22 +30,17 @@ llm:
       provider: openai
 `
 
-// setupTestConfig writes testOrangeYAML to a temp file and wires it as the
-// global config singleton. t.Setenv restores env vars after each test.
+// setupTestConfig loads testOrangeYAML into a fresh AppState and wires it as
+// the responsesws AppState. Cleans up after the test.
 func setupTestConfig(t *testing.T) {
 	t.Helper()
-	// Provide a dummy API key so resolveSecrets does not fail.
 	t.Setenv("ORANGE_RESPONSESWS_TEST_OPENAI_KEY", "sk-test-unit-only")
 
-	f, err := os.CreateTemp(t.TempDir(), "orange-responsesws-test-*.yaml")
-	require.NoError(t, err)
-	_, err = f.WriteString(testOrangeYAML)
-	require.NoError(t, err)
-	require.NoError(t, f.Close())
-
-	t.Setenv(config.EnvVar, f.Name())
-	config.InitLogger() // sets globalLogger; must happen before pipeline() is called
-	config.MustReload() // resets globalPipeline so next Get() reads the fixture file
+	appState := config.NewAppState()
+	require.NoError(t, appState.LoadConfig([]byte(testOrangeYAML)))
+	resolver := config.NewDefaultResolver(time.Minute)
+	SetAppState(appState, resolver)
+	t.Cleanup(func() { SetAppState(nil, nil) })
 }
 
 // newEgressWriter builds an up.Writer and up.Request backed by a FakeFilterHandle

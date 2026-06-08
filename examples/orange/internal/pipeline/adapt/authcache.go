@@ -15,16 +15,16 @@ var (
 )
 
 // clearAuthHandlerCache discards all cached handlers. Called by tests after
-// config.MustReload() to prevent stale handlers crossing test boundaries.
+// config is reloaded to prevent stale handlers crossing test boundaries.
 func clearAuthHandlerCache() {
 	handlerCacheMu.Lock()
 	handlerCache = map[string]backendAuthHandler{}
 	handlerCacheMu.Unlock()
 }
 
-// getOrCreateAuthHandler returns the cached handler for upstreamName,
-// constructing it once on first use.
-func getOrCreateAuthHandler(upstreamName string, prov config.Provider, secret string) (backendAuthHandler, error) {
+// getOrCreateAuthHandlerRec returns the cached handler for upstreamName,
+// constructing it once on first use from *config.ProviderRecord.
+func getOrCreateAuthHandlerRec(upstreamName string, prov *config.ProviderRecord, secret string) (backendAuthHandler, error) {
 	handlerCacheMu.Lock()
 	if h, ok := handlerCache[upstreamName]; ok {
 		handlerCacheMu.Unlock()
@@ -32,7 +32,7 @@ func getOrCreateAuthHandler(upstreamName string, prov config.Provider, secret st
 	}
 	handlerCacheMu.Unlock()
 
-	h, err := buildAuthHandler(prov, secret)
+	h, err := buildAuthHandlerRec(prov, secret)
 	if err != nil {
 		return nil, err
 	}
@@ -47,11 +47,11 @@ func getOrCreateAuthHandler(upstreamName string, prov config.Provider, secret st
 	return h, nil
 }
 
-// InjectHeaderAuth injects provider credentials that can be computed during
-// request headers. It is used by Responses WebSocket egress, where there is no terminal
-// request body event for body-aware signers.
-func InjectHeaderAuth(w *up.Writer, upstreamName string, prov config.Provider, secret string) error {
-	handler, err := getOrCreateAuthHandler(upstreamName, prov, secret)
+// InjectHeaderAuthRec injects provider credentials that can be computed during
+// request headers. It is used by Responses WebSocket egress, where there is no
+// terminal request body event for body-aware signers.
+func InjectHeaderAuthRec(w *up.Writer, upstreamName string, prov *config.ProviderRecord, secret string) error {
+	handler, err := getOrCreateAuthHandlerRec(upstreamName, prov, secret)
 	if err != nil {
 		return err
 	}
@@ -62,18 +62,18 @@ func InjectHeaderAuth(w *up.Writer, upstreamName string, prov config.Provider, s
 	return nil
 }
 
-// buildAuthHandler constructs the right handler for prov using this priority:
+// buildAuthHandlerRec constructs the right handler for prov using this priority:
 //  1. type: gcp → GCPAuth (secret = SA JSON if secret_ref set, otherwise ADC)
 //  2. Secret non-empty → static credential handler
 //  3. gcpvertexai / gcpanthropic (no explicit type) → GCPAuth (ADC)
 //  4. awsbedrock / awsanthropic  → AWSAuth (SigV4; requires extra.aws_region)
 //  5. Otherwise → noAuth{}
-func buildAuthHandler(prov config.Provider, secret string) (backendAuthHandler, error) {
+func buildAuthHandlerRec(prov *config.ProviderRecord, secret string) (backendAuthHandler, error) {
 	if prov.Auth.Type == "gcp" {
 		return NewGCPAuth(context.Background(), secret)
 	}
 	if secret != "" {
-		return staticAuthHandler(prov, secret), nil
+		return staticAuthHandlerRec(prov, secret), nil
 	}
 	switch prov.EffectiveBackendSchema() {
 	case "gcpvertexai", "gcpanthropic":
@@ -88,8 +88,8 @@ func buildAuthHandler(prov config.Provider, secret string) (backendAuthHandler, 
 	return noAuth{}, nil
 }
 
-// staticAuthHandler maps Auth.Type to the appropriate static-credential handler.
-func staticAuthHandler(prov config.Provider, secret string) backendAuthHandler {
+// staticAuthHandlerRec maps Auth.Type to the appropriate static-credential handler.
+func staticAuthHandlerRec(prov *config.ProviderRecord, secret string) backendAuthHandler {
 	switch prov.Auth.Type {
 	case "bearer":
 		return BearerAuth{Token: secret}

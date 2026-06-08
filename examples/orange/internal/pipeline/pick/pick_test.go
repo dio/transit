@@ -14,7 +14,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	orangecfg "github.com/dio/transit/examples/orange/internal/config"
+	"github.com/dio/transit/examples/orange/internal/config"
 	"github.com/dio/transit/examples/orange/internal/pipeline/match"
 	"github.com/dio/transit/up"
 	"github.com/dio/transit/up/testutil"
@@ -126,18 +126,16 @@ func (h *pickRecordingHandle) allAddedAddrs() []string {
 }
 
 func TestInit_HostnamePopulated(t *testing.T) {
-	t.Setenv(orangecfg.EnvVar, "../match/testdata/match_test.yaml")
 	t.Setenv("OPENAI_API_KEY", "sk-test")
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
 	t.Setenv("GROQ_API_KEY", "sk-test")
-	orangecfg.MustReload()
-	t.Cleanup(func() {
-		os.Unsetenv(orangecfg.EnvVar)
-		orangecfg.MustReload()
-	})
+	yamlBytes, err := os.ReadFile("../match/testdata/match_test.yaml")
+	require.NoError(t, err)
+	appState := config.NewAppState()
+	require.NoError(t, appState.LoadConfig(yamlBytes))
 
 	h := &pickRecordingHandle{}
-	c := &cluster{}
+	c := &cluster{appState: appState}
 	c.Init(h)
 
 	h.mu.Lock()
@@ -304,16 +302,16 @@ func TestLBChooseHost_filterStateProvider(t *testing.T) {
 
 // --- DNSDiscovery.buildSnapshot / cluster.reconcileSnapshot ---
 
-// loadPickConfig loads a testdata config file with PICK_TEST_KEY set.
-func loadPickConfig(t *testing.T, path string) {
+// loadPickConfig loads a testdata config file with PICK_TEST_KEY set and
+// returns a populated AppState for injection into the test cluster.
+func loadPickConfig(t *testing.T, path string) *config.AppState {
 	t.Helper()
 	t.Setenv("PICK_TEST_KEY", "sk-pick-test")
-	t.Setenv(orangecfg.EnvVar, path)
-	orangecfg.MustReload()
-	t.Cleanup(func() {
-		os.Unsetenv(orangecfg.EnvVar)
-		orangecfg.MustReload()
-	})
+	yamlBytes, err := os.ReadFile(path)
+	require.NoError(t, err, "loadPickConfig: read %s", path)
+	appState := config.NewAppState()
+	require.NoError(t, appState.LoadConfig(yamlBytes), "loadPickConfig: load %s", path)
+	return appState
 }
 
 // newTestCluster returns a cluster backed by a DNSDiscovery with a stub
@@ -322,6 +320,15 @@ func newTestCluster(fn func(ctx context.Context, endpoint string) ([]string, tim
 	return &cluster{
 		disc:   &DNSDiscovery{resolveFunc: fn, logger: slog.Default().With("component", "orange/pick/test")},
 		logger: slog.Default().With("component", "orange/pick/test"),
+	}
+}
+
+// newTestClusterWithState returns a test cluster with a pre-loaded AppState.
+func newTestClusterWithState(appState *config.AppState, fn func(ctx context.Context, endpoint string) ([]string, time.Duration, error)) *cluster {
+	return &cluster{
+		appState: appState,
+		disc:     &DNSDiscovery{resolveFunc: fn, logger: slog.Default().With("component", "orange/pick/test"), appState: appState},
+		logger:   slog.Default().With("component", "orange/pick/test"),
 	}
 }
 
@@ -350,10 +357,10 @@ func errResolve(msg string) func(context.Context, string) ([]string, time.Durati
 // TestResolveAll_newProvider verifies that a provider that has no prior entry
 // is added via AddHosts and marked healthy.
 func TestResolveAll_newProvider(t *testing.T) {
-	loadPickConfig(t, "testdata/two_providers.yaml")
+	appState := loadPickConfig(t, "testdata/two_providers.yaml")
 
 	h := &pickRecordingHandle{}
-	c := newTestCluster(fixedResolve("1.2.3.4:443", 60*time.Second))
+	c := newTestClusterWithState(appState, fixedResolve("1.2.3.4:443", 60*time.Second))
 
 	resolveAndApply(c, h)
 
@@ -364,10 +371,10 @@ func TestResolveAll_newProvider(t *testing.T) {
 // TestResolveAll_addrUnchanged verifies that when DNS returns the same address
 // the existing HostPtr is preserved (no RemoveHosts/AddHosts churn).
 func TestResolveAll_addrUnchanged(t *testing.T) {
-	loadPickConfig(t, "testdata/two_providers.yaml")
+	appState := loadPickConfig(t, "testdata/two_providers.yaml")
 
 	h := &pickRecordingHandle{}
-	c := newTestCluster(fixedResolve("1.2.3.4:443", 60*time.Second))
+	c := newTestClusterWithState(appState, fixedResolve("1.2.3.4:443", 60*time.Second))
 
 	resolveAndApply(c, h)
 	addCallsAfterFirst := h.addCount()
@@ -395,10 +402,10 @@ func TestResolveAll_addrUnchanged(t *testing.T) {
 // TestResolveAll_addrChanged verifies that when DNS returns a new address for an
 // existing provider the old host is removed and the new one added.
 func TestResolveAll_addrChanged(t *testing.T) {
-	loadPickConfig(t, "testdata/two_providers.yaml")
+	appState := loadPickConfig(t, "testdata/two_providers.yaml")
 
 	h := &pickRecordingHandle{}
-	c := newTestCluster(fixedResolve("1.2.3.4:443", 60*time.Second))
+	c := newTestClusterWithState(appState, fixedResolve("1.2.3.4:443", 60*time.Second))
 	resolveAndApply(c, h)
 	require.Equal(t, 2, h.addCount())
 
@@ -419,10 +426,10 @@ func TestResolveAll_addrChanged(t *testing.T) {
 // TestResolveAll_resolveFailKeepsOld verifies that a transient DNS failure does
 // not evict a previously healthy host.
 func TestResolveAll_resolveFailKeepsOld(t *testing.T) {
-	loadPickConfig(t, "testdata/two_providers.yaml")
+	appState := loadPickConfig(t, "testdata/two_providers.yaml")
 
 	h := &pickRecordingHandle{}
-	c := newTestCluster(fixedResolve("1.2.3.4:443", 60*time.Second))
+	c := newTestClusterWithState(appState, fixedResolve("1.2.3.4:443", 60*time.Second))
 	resolveAndApply(c, h)
 	require.Equal(t, 2, h.addCount())
 
@@ -456,16 +463,18 @@ func TestResolveAll_resolveFailKeepsOld(t *testing.T) {
 // TestResolveAll_providerDeleted verifies that a provider removed from config is
 // evicted via RemoveHosts on the next reconcile cycle.
 func TestResolveAll_providerDeleted(t *testing.T) {
-	loadPickConfig(t, "testdata/two_providers.yaml")
+	appState := loadPickConfig(t, "testdata/two_providers.yaml")
 
 	h := &pickRecordingHandle{}
-	c := newTestCluster(fixedResolve("1.2.3.4:443", 60*time.Second))
+	c := newTestClusterWithState(appState, fixedResolve("1.2.3.4:443", 60*time.Second))
 	resolveAndApply(c, h)
 	require.Equal(t, 2, h.addCount(), "both providers added on first pass")
 
 	// Switch config to only provider_a.
-	t.Setenv(orangecfg.EnvVar, "testdata/one_provider.yaml")
-	orangecfg.MustReload()
+	t.Setenv("PICK_TEST_KEY", "sk-pick-test")
+	yamlBytes, err := os.ReadFile("testdata/one_provider.yaml")
+	require.NoError(t, err)
+	require.NoError(t, appState.LoadConfig(yamlBytes))
 
 	resolveAndApply(c, h)
 
@@ -529,10 +538,10 @@ func TestPickAddrs_single(t *testing.T) {
 // TestResolveAll_multipleAddrs verifies that all IPs returned by DNS are
 // registered as hosts so lookupHost can round-robin among them.
 func TestResolveAll_multipleAddrs(t *testing.T) {
-	loadPickConfig(t, "testdata/one_provider.yaml")
+	appState := loadPickConfig(t, "testdata/one_provider.yaml")
 
 	h := &pickRecordingHandle{}
-	c := newTestCluster(func(_ context.Context, _ string) ([]string, time.Duration, error) {
+	c := newTestClusterWithState(appState, func(_ context.Context, _ string) ([]string, time.Duration, error) {
 		return []string{"1.2.3.4:443", "5.6.7.8:443"}, 60 * time.Second, nil
 	})
 
@@ -548,11 +557,11 @@ func TestResolveAll_multipleAddrs(t *testing.T) {
 // TestResolveAll_ttlFloor verifies that short TTLs are clamped to minTTLFloor
 // in DNSDiscovery's scheduled next-refresh time.
 func TestResolveAll_ttlFloor(t *testing.T) {
-	loadPickConfig(t, "testdata/one_provider.yaml")
+	appState := loadPickConfig(t, "testdata/one_provider.yaml")
 
 	h := &pickRecordingHandle{}
 	// Return a pathologically short TTL (1s < minTTLFloor).
-	c := newTestCluster(func(_ context.Context, _ string) ([]string, time.Duration, error) {
+	c := newTestClusterWithState(appState, func(_ context.Context, _ string) ([]string, time.Duration, error) {
 		return []string{"1.2.3.4:443"}, time.Second, nil
 	})
 	resolveAndApply(c, h)
@@ -568,10 +577,10 @@ func TestResolveAll_ttlFloor(t *testing.T) {
 // TestResolveAll_twoBindings verifies that a provider with two bindings
 // contributes two independent DNS-refresh entries to the hosts map.
 func TestResolveAll_twoBindings(t *testing.T) {
-	loadPickConfig(t, "testdata/bindings_provider.yaml")
+	appState := loadPickConfig(t, "testdata/bindings_provider.yaml")
 
 	h := &pickRecordingHandle{}
-	c := newTestCluster(fixedResolve("1.2.3.4:443", 60*time.Second))
+	c := newTestClusterWithState(appState, fixedResolve("1.2.3.4:443", 60*time.Second))
 
 	resolveAndApply(c, h)
 
@@ -635,18 +644,18 @@ func TestLookupHost_emptyBindingNormalizesToDefault(t *testing.T) {
 	require.Empty(t, got.ErrDetail)
 }
 
-// TestResolveAll_legacyEndpoint verifies that a provider without explicit
-// bindings is registered under the "default" key (backward compat).
-func TestResolveAll_legacyEndpoint(t *testing.T) {
-	loadPickConfig(t, "testdata/one_provider.yaml")
+// TestResolveAll_endpointOnlyProvider verifies that a provider with only an
+// endpoint (no explicit bindings) is registered under the "default" binding key.
+func TestResolveAll_endpointOnlyProvider(t *testing.T) {
+	appState := loadPickConfig(t, "testdata/one_provider.yaml")
 
 	h := &pickRecordingHandle{}
-	c := newTestCluster(fixedResolve("1.2.3.4:443", 60*time.Second))
+	c := newTestClusterWithState(appState, fixedResolve("1.2.3.4:443", 60*time.Second))
 	resolveAndApply(c, h)
 
 	m := c.hosts.Load()
 	_, hasDefault := (*m)[provBindingKey{provider: "provider_a", binding: "default"}]
-	require.True(t, hasDefault, "legacy endpoint-only provider must be stored under 'default' binding")
+	require.True(t, hasDefault, "endpoint-only provider must be stored under 'default' binding")
 }
 
 // allAddedHostnames returns every HostSpec.Hostname passed to AddHosts.
@@ -666,10 +675,10 @@ func (h *pickRecordingHandle) allAddedHostnames() []string {
 // (provider, binding) in the catalog is registered as a host even when no
 // model entry in the config references that binding.
 func TestResolveAll_unreferencedBindingsRegistered(t *testing.T) {
-	loadPickConfig(t, "testdata/unreferenced_binding.yaml")
+	appState := loadPickConfig(t, "testdata/unreferenced_binding.yaml")
 
 	h := &pickRecordingHandle{}
-	c := newTestCluster(fixedResolve("1.2.3.4:443", 60*time.Second))
+	c := newTestClusterWithState(appState, fixedResolve("1.2.3.4:443", 60*time.Second))
 
 	resolveAndApply(c, h)
 
@@ -691,10 +700,10 @@ func TestResolveAll_unreferencedBindingsRegistered(t *testing.T) {
 // reload that drops one binding calls RemoveHosts only for that binding while
 // leaving the surviving binding's HostPtr untouched.
 func TestResolveAll_bindingRemovedEvictsOnlyThatBinding(t *testing.T) {
-	loadPickConfig(t, "testdata/bindings_provider.yaml") // us-east + us-west
+	appState := loadPickConfig(t, "testdata/bindings_provider.yaml") // us-east + us-west
 
 	h := &pickRecordingHandle{}
-	c := newTestCluster(fixedResolve("1.2.3.4:443", 60*time.Second))
+	c := newTestClusterWithState(appState, fixedResolve("1.2.3.4:443", 60*time.Second))
 	resolveAndApply(c, h)
 	require.Equal(t, 2, h.addCount(), "both bindings added on first pass")
 	require.Equal(t, 0, h.removeCount())
@@ -704,8 +713,10 @@ func TestResolveAll_bindingRemovedEvictsOnlyThatBinding(t *testing.T) {
 	require.NotNil(t, eastPtr)
 
 	// Reload: us-west is gone.
-	t.Setenv(orangecfg.EnvVar, "testdata/one_binding.yaml")
-	orangecfg.MustReload()
+	t.Setenv("PICK_TEST_KEY", "sk-pick-test")
+	yamlBytes, err := os.ReadFile("testdata/one_binding.yaml")
+	require.NoError(t, err)
+	require.NoError(t, appState.LoadConfig(yamlBytes))
 
 	resolveAndApply(c, h)
 
@@ -726,10 +737,10 @@ func TestResolveAll_bindingRemovedEvictsOnlyThatBinding(t *testing.T) {
 // Envoy build uses HostSpec.Hostname as the SNI value (auto_host_sni) when
 // connecting to each runtime-added host.
 func TestApplyResolved_hostnameSetForSNI(t *testing.T) {
-	loadPickConfig(t, "testdata/bindings_provider.yaml")
+	appState := loadPickConfig(t, "testdata/bindings_provider.yaml")
 
 	h := &pickRecordingHandle{}
-	c := newTestCluster(fixedResolve("1.2.3.4:443", 60*time.Second))
+	c := newTestClusterWithState(appState, fixedResolve("1.2.3.4:443", 60*time.Second))
 	resolveAndApply(c, h)
 
 	require.Equal(t, 2, h.addCount())

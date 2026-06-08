@@ -64,6 +64,21 @@ const (
 	responseswsMeterWaitTimeout = 250 * time.Millisecond
 )
 
+// responsesAppState is the new-system config source for responsesws. When non-nil,
+// responsesws uses responsesAppState.Snapshot() instead of the legacy config.Get().
+var responsesAppState *config.AppState
+
+// responsesSecretResolver is the secret resolver for the new-system config.
+var responsesSecretResolver config.SecretResolver
+
+// SetAppState configures the new-system AppState and SecretResolver for the
+// responsesws handler and egress filter.
+// Call before the sidecar starts accepting connections.
+func SetAppState(s *config.AppState, r config.SecretResolver) {
+	responsesAppState = s
+	responsesSecretResolver = r
+}
+
 func init() {
 	up.Register(MeterFilterName, requestHandler, up.WithResponse(responseHandler))
 }
@@ -421,14 +436,30 @@ func (h *responseswsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Step 3: resolve provider from active orange.yaml snapshot.
-	cfg := config.Get()
-	var provider config.Provider
-	var ok bool
+	log.Info("orange-responsesws: resolving model provider",
+		"session_id", sessionID,
+		"model", model,
+	)
 
-	// Key-mode: resolve per-key blob when keys[] are configured.
-	var keyBlob *config.KeyBlob
-	if cfg.HasKeys() {
-		kb, _, resolved := match.ResolveKey(r.Header.Get("Authorization"))
+	if responsesAppState == nil {
+		closeReason = closeReasonLookupErr
+		errClass = "config_not_loaded"
+		log.Warn("orange-responsesws: AppState not configured", "session_id", sessionID)
+		clientConn.Close(websocket.StatusInternalError, "config not loaded") //nolint:errcheck
+		return
+	}
+	cfgSnap := responsesAppState.Snapshot()
+	if cfgSnap == nil || cfgSnap.Global == nil {
+		closeReason = closeReasonLookupErr
+		errClass = "config_not_loaded"
+		log.Warn("orange-responsesws: config not loaded", "session_id", sessionID)
+		clientConn.Close(websocket.StatusInternalError, "config not loaded") //nolint:errcheck
+		return
+	}
+
+	// Key-mode: validate the bearer key when keys[] are configured.
+	if len(cfgSnap.Keys) > 0 {
+		_, _, _, resolved := match.ResolveKey(r.Header.Get("Authorization"))
 		if !resolved {
 			closeReason = closeReasonLookupErr
 			errClass = "unknown_key"
@@ -436,18 +467,10 @@ func (h *responseswsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			clientConn.Close(websocket.StatusPolicyViolation, "unknown or missing API key") //nolint:errcheck
 			return
 		}
-		keyBlob = kb
 	}
 
-	log.Info("orange-responsesws: resolving model provider",
-		"session_id", sessionID,
-		"model", model,
-	)
-	if keyBlob != nil {
-		providerName, provider, _, ok = cfg.LookupModelProviderForKey(keyBlob, model, match.EndpointResponses)
-	} else {
-		providerName, provider, _, ok = cfg.LookupModelProvider(model, match.EndpointResponses)
-	}
+	// Resolve model from global catalog.
+	modelRec, ok := cfgSnap.Global.LookupModel(model)
 	if !ok {
 		closeReason = closeReasonLookupErr
 		errClass = "unknown_model"
@@ -455,12 +478,19 @@ func (h *responseswsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		clientConn.Close(websocket.StatusPolicyViolation, "unknown model") //nolint:errcheck
 		return
 	}
-	if keyBlob != nil {
-		_, backendModel, _, _ = cfg.LookupModelForKey(keyBlob, model, match.EndpointResponses)
-	} else {
-		_, backendModel, _ = cfg.LookupModel(model, match.EndpointResponses)
+	providerName = match.ProviderNameFromGlobal(cfgSnap.Global, modelRec.Provider)
+	if providerName == "" {
+		closeReason = closeReasonLookupErr
+		errClass = "unknown_model"
+		log.Warn("orange-responsesws: no provider for model", "model", model)
+		clientConn.Close(websocket.StatusPolicyViolation, "unknown model") //nolint:errcheck
+		return
 	}
-	providerKind = provider.Kind
+	providerKind = string(modelRec.Provider.Kind)
+	backendModel = modelRec.APIName
+	if backendModel == "" {
+		backendModel = model
+	}
 	log.Info("orange-responsesws: model provider resolved",
 		"session_id", sessionID,
 		"provider", providerName,
@@ -477,7 +507,7 @@ func (h *responseswsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Overwrite unconditionally — never preserve client-supplied values.
 	egressHeader := http.Header{}
 	egressHeader.Set(headerProvider, providerName)
-	egressHeader.Set(headerKind, provider.Kind)
+	egressHeader.Set(headerKind, providerKind)
 	egressHeader.Set(headerModel, model)
 	egressHeader.Set(headerBackendModel, backendModel)
 	// Forward trace context from the inbound request.

@@ -25,7 +25,6 @@ import (
 	"math/rand"
 	"net"
 	"net/url"
-	"os"
 	"sort"
 	"strconv"
 	"sync/atomic"
@@ -67,6 +66,17 @@ func Register(logger *slog.Logger) {
 	up.RegisterCluster(ClusterName, &factory{logger: logger})
 }
 
+// globalPickAppState is set by SetAppState and used by NewCluster so that
+// clusters created after init (by Envoy at startup) inherit the AppState
+// injected from the file-based loader or any other out-of-band wiring.
+var globalPickAppState *config.AppState
+
+// SetAppState sets the package-level AppState for all future cluster instances.
+// Call before Envoy initialises clusters (i.e. from an init function or loader).
+func SetAppState(s *config.AppState) {
+	globalPickAppState = s
+}
+
 type factory struct{ logger *slog.Logger }
 
 func (f factory) Create(_ []byte) (up.ClusterConfigFactory, error) {
@@ -76,7 +86,7 @@ func (f factory) Create(_ []byte) (up.ClusterConfigFactory, error) {
 type cfgFactory struct{ logger *slog.Logger }
 
 func (f cfgFactory) NewCluster(h up.ClusterHandle) up.Cluster {
-	return &cluster{handle: h, logger: f.logger}
+	return &cluster{handle: h, logger: f.logger, appState: globalPickAppState}
 }
 func (cfgFactory) Close() {}
 
@@ -128,11 +138,13 @@ type Entry struct {
 }
 
 type cluster struct {
-	handle        up.ClusterHandle
-	stopConfig    func()
-	stopFileWatch func()
-	stopRefresh   context.CancelFunc
-	logger        *slog.Logger
+	handle      up.ClusterHandle
+	stopRefresh context.CancelFunc
+	logger      *slog.Logger
+
+	// appState is the new-system config source. When non-nil, buildSnapshot uses
+	// appState.Snapshot() instead of the old singleton config.Get().
+	appState *config.AppState
 
 	// disc is the Discovery instance used for both the synchronous Init resolve
 	// and the background Run loop. Tests pre-populate this field with a
@@ -148,14 +160,20 @@ type cluster struct {
 	hosts atomic.Pointer[map[provBindingKey]*hostEntry]
 }
 
+// SetAppState injects the AppState used for config lookups. Call before Init.
+func (c *cluster) SetAppState(s *config.AppState) {
+	c.appState = s
+}
+
 func (c *cluster) Init(h up.ClusterHandle) {
 	c.handle = h
 	if c.logger == nil {
 		c.logger = observability.Logger("orange/pick")
 	}
-	config.EnsureLogger()
 	if c.disc == nil {
-		c.disc = &DNSDiscovery{logger: c.logger}
+		c.disc = &DNSDiscovery{logger: c.logger, appState: c.appState}
+	} else if c.disc.appState == nil {
+		c.disc.appState = c.appState
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultResolveTimeout)
@@ -167,11 +185,6 @@ func (c *cluster) Init(h up.ClusterHandle) {
 }
 
 func (c *cluster) ServerInitialized(h up.ClusterHandle) {
-	c.stopConfig = config.Start(context.Background())
-
-	// Enable file watching for the orange config file to trigger immediate refreshes.
-	c.stopFileWatch = config.EnableFileWatch(os.Getenv(config.EnvVar))
-
 	ctx, cancel := context.WithCancel(context.Background())
 	c.stopRefresh = cancel
 
@@ -388,12 +401,6 @@ func (c *cluster) Shutdown(_ up.ClusterHandle, done func()) {
 	if c.stopRefresh != nil {
 		c.stopRefresh()
 	}
-	if c.stopFileWatch != nil {
-		c.stopFileWatch()
-	}
-	if c.stopConfig != nil {
-		c.stopConfig()
-	}
 	done()
 }
 func (c *cluster) Close() {} // required by up.Cluster; Shutdown handles teardown
@@ -462,6 +469,10 @@ func (l *lb) CancelHostSelection(completion *up.ClusterLBCompletion) {
 type DNSDiscovery struct {
 	logger *slog.Logger
 
+	// appState is the new-system config source. When non-nil, buildSnapshot uses
+	// appState.Snapshot() instead of the legacy config.Get().
+	appState *config.AppState
+
 	// resolveFunc is called for each provider endpoint. Nil means use the
 	// package-level resolveUpstream (real DNS). Set in tests to avoid network calls.
 	resolveFunc func(ctx context.Context, endpoint string) (addrs []string, ttl time.Duration, err error)
@@ -485,10 +496,16 @@ func (d *DNSDiscovery) buildSnapshot(ctx context.Context) *Snapshot {
 	if d.nextRefresh == nil {
 		d.nextRefresh = make(map[provBindingKey]time.Time)
 	}
-	cfg := config.Get()
 	snap := &Snapshot{Entries: make(map[provBindingKey]Entry)}
 
-	for name, p := range cfg.Providers {
+	if d.appState == nil {
+		return snap
+	}
+	cfgSnap := d.appState.Snapshot()
+	if cfgSnap == nil || cfgSnap.Global == nil {
+		return snap
+	}
+	for name, p := range cfgSnap.Global.Providers {
 		for _, b := range p.AllBindings() {
 			key := provBindingKey{name, b.Name}
 			hostname := hostnameOf(b.Endpoint)
@@ -506,12 +523,7 @@ func (d *DNSDiscovery) buildSnapshot(ctx context.Context) *Snapshot {
 			}
 		}
 	}
-
-	if cfg.MCP == nil {
-		return snap
-	}
-
-	for name, s := range cfg.MCP.Servers {
+	for name, s := range cfgSnap.Global.Servers {
 		key := provBindingKey{name, "default"}
 		hostname := s.Host()
 		addrs, ttl, err := d.resolve(ctx, s.Endpoint)
@@ -527,7 +539,6 @@ func (d *DNSDiscovery) buildSnapshot(ctx context.Context) *Snapshot {
 			snap.Entries[key] = Entry{Hostname: hostname, Addresses: addrs}
 		}
 	}
-
 	return snap
 }
 

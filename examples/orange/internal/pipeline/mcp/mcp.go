@@ -26,7 +26,6 @@ func NewSidecar(listenAddr string) (*Sidecar, error) {
 	}
 	handler := newHandler(handlerOptions{
 		egressURL: resolveEgressURL(),
-		config:    config.Get,
 		crypto:    resolveSessionCrypto(),
 	})
 	sc := newSidecar(handler, sidecarOptions{
@@ -65,6 +64,20 @@ const (
 )
 
 var log = observability.Logger("orange/mcp")
+
+// mcpAppState and mcpSecResolver are the new-system config source for the MCP
+// egress handler. When non-nil, egressHandler uses them instead of config.Get().
+var (
+	mcpAppState    *config.AppState
+	mcpSecResolver config.SecretResolver
+)
+
+// SetAppState configures the new-system AppState and SecretResolver for the
+// MCP egress filter. Call before Envoy initialises the filter.
+func SetAppState(s *config.AppState, r config.SecretResolver) {
+	mcpAppState = s
+	mcpSecResolver = r
+}
 
 func init() {
 	up.Register(EgressFilterName, egressHandler)
