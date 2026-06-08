@@ -1,4 +1,4 @@
-package egress
+package client
 
 import (
 	"context"

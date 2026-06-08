@@ -1,10 +1,10 @@
-package egress_test
+package client_test
 
 import (
 	"testing"
 	"time"
 
-	"github.com/dio/transit/examples/orange/internal/egress"
+	"github.com/dio/transit/examples/orange/internal/client"
 )
 
 // testToken is a real token issued against the test bundle. It uses slot 2.
@@ -23,11 +23,11 @@ MCowBQYDK2VwAyEAdECf8a01GrSmU5RDo4pcF7ULj1kkwAL797AYrMAwZ6c=
 
 func loadTestKeys(t *testing.T) (pub1, pub2 []byte) {
 	t.Helper()
-	p1, err := egress.ParseEd25519PublicKey(testPaseto1PubPEM)
+	p1, err := client.ParseEd25519PublicKey(testPaseto1PubPEM)
 	if err != nil {
 		t.Fatalf("parse slot-1 public key: %v", err)
 	}
-	p2, err := egress.ParseEd25519PublicKey(testPaseto2PubPEM)
+	p2, err := client.ParseEd25519PublicKey(testPaseto2PubPEM)
 	if err != nil {
 		t.Fatalf("parse slot-2 public key: %v", err)
 	}
@@ -37,7 +37,7 @@ func loadTestKeys(t *testing.T) (pub1, pub2 []byte) {
 func TestVerifyToken(t *testing.T) {
 	pub1, pub2 := loadTestKeys(t)
 
-	claims, err := egress.VerifyToken(testToken, pub1, pub2)
+	claims, err := client.VerifyToken(testToken, pub1, pub2)
 	if err != nil {
 		t.Fatalf("VerifyToken: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestVerifyToken(t *testing.T) {
 func TestVerifyToken_BearerPrefix(t *testing.T) {
 	pub1, pub2 := loadTestKeys(t)
 
-	claims, err := egress.VerifyToken("Bearer "+testToken, pub1, pub2)
+	claims, err := client.VerifyToken("Bearer "+testToken, pub1, pub2)
 	if err != nil {
 		t.Fatalf("VerifyToken with Bearer prefix: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestVerifyToken_WrongSlot(t *testing.T) {
 	pub1, _ := loadTestKeys(t)
 
 	// Token uses slot 2; passing only pub1 (slot-2 key is nil) must fail.
-	_, err := egress.VerifyToken(testToken, pub1, nil)
+	_, err := client.VerifyToken(testToken, pub1, nil)
 	if err == nil {
 		t.Fatal("expected error when slot-2 key is nil, got nil")
 	}
@@ -89,7 +89,7 @@ func TestVerifyToken_TamperedBody(t *testing.T) {
 
 	// Flip the last byte of the base64 body to invalidate the signature.
 	tampered := testToken[:len(testToken)-1] + "A"
-	_, err := egress.VerifyToken(tampered, pub1, pub2)
+	_, err := client.VerifyToken(tampered, pub1, pub2)
 	if err == nil {
 		t.Fatal("expected error for tampered token, got nil")
 	}
@@ -98,7 +98,7 @@ func TestVerifyToken_TamperedBody(t *testing.T) {
 func TestVerifyToken_BadPrefix(t *testing.T) {
 	pub1, pub2 := loadTestKeys(t)
 
-	_, err := egress.VerifyToken("not-a-token", pub1, pub2)
+	_, err := client.VerifyToken("not-a-token", pub1, pub2)
 	if err == nil {
 		t.Fatal("expected error for token without sk- prefix, got nil")
 	}
@@ -107,7 +107,7 @@ func TestVerifyToken_BadPrefix(t *testing.T) {
 func TestVerifyToken_MissingSeparator(t *testing.T) {
 	pub1, pub2 := loadTestKeys(t)
 
-	_, err := egress.VerifyToken("sk-noDotHere", pub1, pub2)
+	_, err := client.VerifyToken("sk-noDotHere", pub1, pub2)
 	if err == nil {
 		t.Fatal("expected error for token without '.' separator, got nil")
 	}
@@ -117,13 +117,13 @@ func TestTokenClaims_Expired(t *testing.T) {
 	past := time.Now().UTC().Add(-time.Hour)
 	future := time.Now().UTC().Add(time.Hour)
 
-	if c := (&egress.TokenClaims{Exp: past}); !c.Expired() {
+	if c := (&client.TokenClaims{Exp: past}); !c.Expired() {
 		t.Error("past expiry: Expired() = false, want true")
 	}
-	if c := (&egress.TokenClaims{Exp: future}); c.Expired() {
+	if c := (&client.TokenClaims{Exp: future}); c.Expired() {
 		t.Error("future expiry: Expired() = true, want false")
 	}
-	if c := (&egress.TokenClaims{}); c.Expired() {
+	if c := (&client.TokenClaims{}); c.Expired() {
 		t.Error("zero expiry: Expired() = true, want false (never expires)")
 	}
 }
@@ -137,7 +137,7 @@ func TestParseEd25519PublicKey(t *testing.T) {
 		{"slot2", testPaseto2PubPEM},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			key, err := egress.ParseEd25519PublicKey(tc.pem)
+			key, err := client.ParseEd25519PublicKey(tc.pem)
 			if err != nil {
 				t.Fatalf("ParseEd25519PublicKey: %v", err)
 			}
@@ -158,7 +158,7 @@ func TestParseEd25519PublicKey_Invalid(t *testing.T) {
 		{"wrong type", "-----BEGIN CERTIFICATE-----\nYQ==\n-----END CERTIFICATE-----"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := egress.ParseEd25519PublicKey(tc.pem)
+			_, err := client.ParseEd25519PublicKey(tc.pem)
 			if err == nil {
 				t.Fatal("expected error, got nil")
 			}

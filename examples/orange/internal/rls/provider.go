@@ -87,6 +87,10 @@ func newNoopManager() rlsstats.Manager {
 	return &noopManager{store: store, counter: store.NewCounter("noop")}
 }
 
+// NewNoopStatsManager returns a stats manager with a null sink.
+// Use when internal rate-limit metrics are not needed (e.g. in the serve command).
+func NewNoopStatsManager() rlsstats.Manager { return newNoopManager() }
+
 func (m *noopManager) GetStatsStore() gostats.Store { return m.store }
 
 func (m *noopManager) NewStats(key string) rlsstats.RateLimitStats {

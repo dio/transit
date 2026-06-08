@@ -19,7 +19,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dio/transit/examples/orange/internal/config"
-	"github.com/dio/transit/examples/orange/internal/egress"
+	"github.com/dio/transit/examples/orange/internal/client"
 )
 
 // newEgressProxyCmd is the root for proxy-facing egress subcommands. It lives
@@ -88,7 +88,7 @@ Use --once to do a single pass and exit. Interrupt with CTRL-C.`,
 			if bundlePath == "" {
 				bundlePath = "."
 			}
-			bundle, err := egress.LoadBundle(bundlePath)
+			bundle, err := client.LoadBundle(bundlePath)
 			if err != nil {
 				return fmt.Errorf("load bundle: %w", err)
 			}
@@ -114,14 +114,14 @@ Use --once to do a single pass and exit. Interrupt with CTRL-C.`,
 //     using the built-in env://, file://, and literal:// resolvers. Resolved
 //     values are masked before printing so the terminal does not leak secrets.
 //
-// The egress.Client carries the SoTW cursor (lastVersion/lastChecksum) across
+// The client.Client carries the SoTW cursor (lastVersion/lastChecksum) across
 // ticks so that Fetch returns Unchanged when nothing has changed, letting the
 // emulator run cheaply at short intervals.
-func runEgressEmulate(parent context.Context, bundle *egress.BundleData, interval time.Duration, once bool) error {
+func runEgressEmulate(parent context.Context, bundle *client.BundleData, interval time.Duration, once bool) error {
 	ctx, cancel := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	privKey, err := egress.ParseEd25519PrivateKey(bundle.EgressKey)
+	privKey, err := client.ParseEd25519PrivateKey(bundle.EgressKey)
 	if err != nil {
 		return fmt.Errorf("parse egress.key: %w", err)
 	}
@@ -131,8 +131,8 @@ func runEgressEmulate(parent context.Context, bundle *egress.BundleData, interva
 	fmt.Printf("egress_id:    %s\n", bundle.EgressID)
 	fmt.Printf("workspace_id: %s\n", bundle.WorkspaceID)
 	fmt.Printf("server_url:   %s\n", bundle.ServerURL)
-	// identity.crt is displayed but not used for auth (see egress.AssertionTransport).
-	fmt.Printf("identity:     %s\n", egress.ParseCertSubject(bundle.IdentityCert))
+	// identity.crt is displayed but not used for auth (see client.AssertionTransport).
+	fmt.Printf("identity:     %s\n", client.ParseCertSubject(bundle.IdentityCert))
 	// Print only the first 8 bytes of the public key — enough to identify the
 	// key without leaking the full value to the terminal.
 	pub, ok := privKey.Public().(ed25519.PublicKey)
@@ -147,7 +147,7 @@ func runEgressEmulate(parent context.Context, bundle *egress.BundleData, interva
 	}
 	fmt.Println()
 
-	client, err := egress.NewClient(bundle)
+	c, err := client.NewClient(bundle)
 	if err != nil {
 		return err
 	}
@@ -155,14 +155,14 @@ func runEgressEmulate(parent context.Context, bundle *egress.BundleData, interva
 	tick := func() {
 		ts := time.Now().Format(time.RFC3339)
 
-		serverTime, err := client.Heartbeat(ctx)
+		serverTime, err := c.Heartbeat(ctx)
 		if err != nil {
 			fmt.Printf("[%s] heartbeat  ERROR %v\n", ts, err)
 		} else {
 			fmt.Printf("[%s] heartbeat  OK server_time=%s\n", ts, serverTime.Format(time.RFC3339))
 		}
 
-		snap, raw, changed, err := client.Fetch(ctx)
+		snap, raw, changed, err := c.Fetch(ctx)
 		if err != nil {
 			fmt.Printf("[%s] config/fetch ERROR %v\n", ts, err)
 			return
@@ -181,7 +181,7 @@ func runEgressEmulate(parent context.Context, bundle *egress.BundleData, interva
 		} else {
 			fmt.Printf("[%s] config/secrets resolving %d ref(s):\n", ts, len(refs))
 			for _, ref := range refs {
-				val, err := client.Resolver.Resolve(ctx, ref.secretRef)
+				val, err := c.Resolver.Resolve(ctx, ref.secretRef)
 				if err != nil {
 					fmt.Printf("                 [%s] %s => ERROR: %v\n", ref.location, ref.secretRef, err)
 				} else {
@@ -269,7 +269,7 @@ func newEgressVerifyCmd() *cobra.Command {
 			if bundlePath == "" {
 				bundlePath = "."
 			}
-			bundle, err := egress.LoadBundle(bundlePath)
+			bundle, err := client.LoadBundle(bundlePath)
 			if err != nil {
 				return fmt.Errorf("load bundle: %w", err)
 			}
@@ -282,7 +282,7 @@ func newEgressVerifyCmd() *cobra.Command {
 
 // runVerifyToken verifies raw (an Authorization header value or bare token)
 // against the PASETO public keys in bundle and prints decoded claims.
-func runVerifyToken(cmd *cobra.Command, bundle *egress.BundleData, raw string) error {
+func runVerifyToken(cmd *cobra.Command, bundle *client.BundleData, raw string) error {
 	pub1, err1 := loadOptionalPub(bundle.Paseto1Pub, 1)
 	pub2, err2 := loadOptionalPub(bundle.Paseto2Pub, 2)
 	if err1 != nil {
@@ -292,7 +292,7 @@ func runVerifyToken(cmd *cobra.Command, bundle *egress.BundleData, raw string) e
 		return err2
 	}
 
-	claims, err := egress.VerifyToken(raw, pub1, pub2)
+	claims, err := client.VerifyToken(raw, pub1, pub2)
 	if err != nil {
 		fmt.Fprintf(cmd.OutOrStdout(), "INVALID  %v\n", err)
 		return nil
@@ -321,7 +321,7 @@ func loadOptionalPub(pemStr string, slot int) (ed25519.PublicKey, error) {
 	if pemStr == "" {
 		return nil, nil
 	}
-	pub, err := egress.ParseEd25519PublicKey(pemStr)
+	pub, err := client.ParseEd25519PublicKey(pemStr)
 	if err != nil {
 		return nil, fmt.Errorf("parse slot %d public key: %w", slot, err)
 	}

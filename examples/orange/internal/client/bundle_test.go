@@ -1,4 +1,4 @@
-package egress_test
+package client_test
 
 import (
 	"crypto/ed25519"
@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dio/transit/examples/orange/internal/egress"
+	"github.com/dio/transit/examples/orange/internal/client"
 )
 
 // bundleTarGz is the path to the test bundle archive relative to this package.
@@ -43,7 +43,7 @@ yv+4xkzAyAsC5L5rO+ttIi8rs3Jm+JOir5ma/k+IBOL1rr+1ogJEAg==
 
 // TestLoadBundle_TarGz loads the real test archive and checks all fields.
 func TestLoadBundle_TarGz(t *testing.T) {
-	b, err := egress.LoadBundle(bundleTarGz)
+	b, err := client.LoadBundle(bundleTarGz)
 	if err != nil {
 		t.Fatalf("LoadBundle(%q): %v", bundleTarGz, err)
 	}
@@ -75,7 +75,7 @@ func TestLoadBundle_TarGz(t *testing.T) {
 func TestLoadBundle_Dir(t *testing.T) {
 	dir := extractBundleToDir(t, bundleTarGz)
 
-	b, err := egress.LoadBundle(dir)
+	b, err := client.LoadBundle(dir)
 	if err != nil {
 		t.Fatalf("LoadBundle(dir): %v", err)
 	}
@@ -93,7 +93,7 @@ func TestLoadBundle_MissingConfigYAML(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "egress.key"), []byte(testEgressKeyPEM), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := egress.LoadBundle(dir)
+	_, err := client.LoadBundle(dir)
 	if err == nil {
 		t.Fatal("expected error for missing config.yaml, got nil")
 	}
@@ -126,7 +126,7 @@ func TestLoadBundle_EmptyFields(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(tc.yaml), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			_, err := egress.LoadBundle(dir)
+			_, err := client.LoadBundle(dir)
 			if err == nil {
 				t.Fatalf("expected error containing %q, got nil", tc.errSub)
 			}
@@ -138,7 +138,7 @@ func TestLoadBundle_EmptyFields(t *testing.T) {
 }
 
 func TestParseEd25519PrivateKey(t *testing.T) {
-	key, err := egress.ParseEd25519PrivateKey(testEgressKeyPEM)
+	key, err := client.ParseEd25519PrivateKey(testEgressKeyPEM)
 	if err != nil {
 		t.Fatalf("ParseEd25519PrivateKey: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestParseEd25519PrivateKey_Invalid(t *testing.T) {
 		{"garbage", "not-pem"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := egress.ParseEd25519PrivateKey(tc.pem)
+			_, err := client.ParseEd25519PrivateKey(tc.pem)
 			if err == nil {
 				t.Fatal("expected error, got nil")
 			}
@@ -172,17 +172,17 @@ func TestParseEd25519PrivateKey_Invalid(t *testing.T) {
 }
 
 func TestParseCertSubject(t *testing.T) {
-	got := egress.ParseCertSubject(testIdentityCertPEM)
+	got := client.ParseCertSubject(testIdentityCertPEM)
 	if got != wantCertSubject {
 		t.Errorf("ParseCertSubject = %q, want %q", got, wantCertSubject)
 	}
 }
 
 func TestParseCertSubject_EmptyAndInvalid(t *testing.T) {
-	if got := egress.ParseCertSubject(""); got != "(none)" {
+	if got := client.ParseCertSubject(""); got != "(none)" {
 		t.Errorf("empty PEM: got %q, want %q", got, "(none)")
 	}
-	if got := egress.ParseCertSubject("not-pem"); got != "(invalid PEM)" {
+	if got := client.ParseCertSubject("not-pem"); got != "(invalid PEM)" {
 		t.Errorf("garbage PEM: got %q, want %q", got, "(invalid PEM)")
 	}
 }
@@ -190,7 +190,7 @@ func TestParseCertSubject_EmptyAndInvalid(t *testing.T) {
 // TestAssertionTransport verifies the transport injects a well-formed
 // X-Egress-Assertion header whose Ed25519 signature is valid.
 func TestAssertionTransport(t *testing.T) {
-	privKey, err := egress.ParseEd25519PrivateKey(testEgressKeyPEM)
+	privKey, err := client.ParseEd25519PrivateKey(testEgressKeyPEM)
 	if err != nil {
 		t.Fatalf("parse private key: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestAssertionTransport(t *testing.T) {
 		return &http.Response{StatusCode: 200, Body: http.NoBody}, nil
 	})
 
-	transport := &egress.AssertionTransport{
+	transport := &client.AssertionTransport{
 		Base:        fake,
 		PrivKey:     privKey,
 		EgressID:    wantEgressID,
@@ -260,7 +260,7 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { retu
 // extractBundleToDir extracts the named tar.gz to a temp directory and returns its path.
 func extractBundleToDir(t *testing.T, archivePath string) string {
 	t.Helper()
-	b, err := egress.LoadBundle(archivePath)
+	b, err := client.LoadBundle(archivePath)
 	if err != nil {
 		t.Fatalf("load bundle for extraction: %v", err)
 	}

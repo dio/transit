@@ -1,4 +1,4 @@
-package egress
+package client
 
 // watcher.go — shared poll state for the egress emulator REPL.
 //

@@ -86,6 +86,7 @@ Run 'orange <command> --help' for command-specific help.`,
 	root.AddCommand(newLocalDataCmd())
 	root.AddCommand(newAdminCmd())
 	root.AddCommand(newEgressProxyCmd())
+	root.AddCommand(newRLSCmd())
 	root.AddCommand(newTokenCmd())
 
 	return root

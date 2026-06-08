@@ -1,10 +1,9 @@
-// Package egress provides the runtime primitives used by an egress proxy to
-// authenticate itself to the management plane and load its bootstrap bundle.
+// Package client provides runtime primitives for proxy components (egress, rls)
+// to authenticate to the orange management plane and load their bootstrap bundle.
 //
-// These types are shared between the debug emulator (orange egress emulate) and
-// any real egress implementation so that both exercise exactly the same bundle
-// loading and assertion-signing paths.
-package egress
+// These types are shared by egress and rls so both exercise the same bundle
+// loading and assertion-signing paths when communicating with orange CP.
+package client
 
 import (
 	"archive/tar"

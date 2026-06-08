@@ -19,38 +19,38 @@ import (
 
 	"github.com/chzyer/readline"
 
-	"github.com/dio/transit/examples/orange/internal/egress"
+	"github.com/dio/transit/examples/orange/internal/client"
 )
 
 type egressReplState struct {
-	bundle  *egress.BundleData
-	watcher *egress.Watcher
+	bundle  *client.BundleData
+	watcher *client.Watcher
 	rl      *readline.Instance
 }
 
 // runEgressEmulateREPL is the entry point for --repl mode. It sets up a
-// shared egress.Client (bundle credentials + connect transport), wraps it in
+// shared client.Client (bundle credentials + connect transport), wraps it in
 // a Watcher for poll-state tracking, and enters the readline loop.
-func runEgressEmulateREPL(parent context.Context, bundle *egress.BundleData, interval time.Duration) error {
+func runEgressEmulateREPL(parent context.Context, bundle *client.BundleData, interval time.Duration) error {
 	// Parse the private key here only for the startup fingerprint display.
-	// egress.NewClient parses it again internally.
-	privKey, err := egress.ParseEd25519PrivateKey(bundle.EgressKey)
+	// client.NewClient parses it again internally.
+	privKey, err := client.ParseEd25519PrivateKey(bundle.EgressKey)
 	if err != nil {
 		return fmt.Errorf("parse egress.key: %w", err)
 	}
 
-	client, err := egress.NewClient(bundle)
+	c, err := client.NewClient(bundle)
 	if err != nil {
 		return err
 	}
-	watcher := egress.NewWatcher(client)
+	watcher := client.NewWatcher(c)
 
 	// Startup summary identical to the non-REPL mode so the operator can
 	// confirm the bundle was loaded correctly before any network calls.
 	fmt.Printf("egress_id:     %s\n", bundle.EgressID)
 	fmt.Printf("workspace_id:  %s\n", bundle.WorkspaceID)
 	fmt.Printf("server_url:    %s\n", bundle.ServerURL)
-	fmt.Printf("identity:      %s\n", egress.ParseCertSubject(bundle.IdentityCert))
+	fmt.Printf("identity:      %s\n", client.ParseCertSubject(bundle.IdentityCert))
 	if pub, ok := privKey.Public().(ed25519.PublicKey); ok {
 		fmt.Printf("signing key:   Ed25519 pub=%x…\n", pub[:8])
 	}
