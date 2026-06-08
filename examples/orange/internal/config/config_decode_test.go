@@ -552,7 +552,7 @@ func TestProtoToRaw_RateLimits_AdminScope(t *testing.T) {
 	raw, err := protoToRaw(p)
 	require.NoError(t, err)
 
-	rules, ok := raw.RateLimits["demo"]
+	rules, ok := raw.RateLimit.Policies["demo"]
 	require.True(t, ok)
 	require.Len(t, rules, 2)
 
@@ -570,7 +570,7 @@ func TestProtoToRaw_RateLimits_AdminScope(t *testing.T) {
 
 func TestProtoToRaw_RateLimits_KeyScope_ViaKeyRecord(t *testing.T) {
 	// Key-scope rate limit rules come from Key.rate_limit_rules and are stored
-	// in raw.RateLimits under the key ID (3-segment scope).
+	// in raw.RateLimit.Policies under the key ID (3-segment scope).
 	p, idx := makePayload("demo/alice/sk-001", "*")
 	p.Keys = []*configv1.Key{{
 		IdIdx: idx("demo/alice/sk-001"),
@@ -583,8 +583,8 @@ func TestProtoToRaw_RateLimits_KeyScope_ViaKeyRecord(t *testing.T) {
 	raw, err := protoToRaw(p)
 	require.NoError(t, err)
 
-	rules, ok := raw.RateLimits["demo/alice/sk-001"]
-	require.True(t, ok, "key-scope rate limits must appear in raw.RateLimits")
+	rules, ok := raw.RateLimit.Policies["demo/alice/sk-001"]
+	require.True(t, ok, "key-scope rate limits must appear in raw.RateLimit.Policies")
 	require.Len(t, rules, 1)
 	assert.Equal(t, 1000, rules[0].RPD)
 }
@@ -602,7 +602,7 @@ func TestProtoToRaw_OnExceedUnspecified_ProducesEmpty(t *testing.T) {
 	}}
 	raw, err := protoToRaw(p)
 	require.NoError(t, err)
-	assert.Equal(t, "", raw.RateLimits["demo"][0].OnExceed)
+	assert.Equal(t, "", raw.RateLimit.Policies["demo"][0].OnExceed)
 }
 
 // ── decodeRawConfig ───────────────────────────────────────────────────────────

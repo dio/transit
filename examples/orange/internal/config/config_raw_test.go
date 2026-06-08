@@ -179,27 +179,28 @@ keys:
                   - target:
                       provider: split_p3
 
-rate_limits:
-  demo:
-    - models: ["*"]
-      usd_per_day: 1000.00
-      rpm: 500
-  demo/adi:
-    - models: ["*"]
-      usd_per_day: 200.00
-      rpm: 100
-  demo/adi/sk-direct:
-    - models: [claude-haiku-4-5, gpt-4o-mini]
-      usd_per_hour: 5.00
-      usd_per_day: 50.00
-      input_tokens_per_hour: 800000
-      output_tokens_per_hour: 200000
-      cache_read_tokens_per_hour: 1000000
-      cache_write_tokens_per_hour: 100000
-      on_exceed: reject
-    - models: ["*"]
-      rpm: 20
-      on_exceed: reject
+rate_limit:
+  policies:
+    demo:
+      - models: ["*"]
+        usd_per_day: 1000.00
+        rpm: 500
+    demo/adi:
+      - models: ["*"]
+        usd_per_day: 200.00
+        rpm: 100
+    demo/adi/sk-direct:
+      - models: [claude-haiku-4-5, gpt-4o-mini]
+        usd_per_hour: 5.00
+        usd_per_day: 50.00
+        input_tokens_per_hour: 800000
+        output_tokens_per_hour: 200000
+        cache_read_tokens_per_hour: 1000000
+        cache_write_tokens_per_hour: 100000
+        on_exceed: reject
+      - models: ["*"]
+        rpm: 20
+        on_exceed: reject
 `
 
 func mustUnmarshalRaw(t *testing.T, src string) *RawConfig {
@@ -447,13 +448,13 @@ func TestRawRoutingNode_SplitOfChains(t *testing.T) {
 func TestRawConfig_RateLimits(t *testing.T) {
 	rc := mustUnmarshalRaw(t, fullExampleYAML)
 
-	workspace := rc.RateLimits["demo"]
+	workspace := rc.RateLimit.Policies["demo"]
 	require.Len(t, workspace, 1)
 	assert.Equal(t, []string{"*"}, workspace[0].Models)
 	assert.Equal(t, decimal.RequireFromString("1000.00"), workspace[0].USDPerDay)
 	assert.Equal(t, 500, workspace[0].RPM)
 
-	keyRules := rc.RateLimits["demo/adi/sk-direct"]
+	keyRules := rc.RateLimit.Policies["demo/adi/sk-direct"]
 	require.Len(t, keyRules, 2)
 
 	first := keyRules[0]

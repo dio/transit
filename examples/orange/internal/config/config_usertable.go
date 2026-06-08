@@ -39,6 +39,19 @@ type ResolvedProfile struct {
 	AuthOverrides []AuthOverride
 }
 
+// AuthForServer returns the profile-level auth override for serverID, or nil
+// when the profile carries no override for that server. Callers fall back to
+// ServerRecord.Auth when nil is returned.
+func (rp *ResolvedProfile) AuthForServer(serverID string) *AuthConfig {
+	for i := range rp.AuthOverrides {
+		if rp.AuthOverrides[i].ServerID == serverID {
+			auth := rp.AuthOverrides[i].Auth
+			return &auth
+		}
+	}
+	return nil
+}
+
 // ── UserTable ─────────────────────────────────────────────────────────────────
 
 // UserTable[M, R] is a two-tier read cache for user-owned records.

@@ -7,11 +7,22 @@ import "github.com/shopspring/decimal"
 // decode paths (YAML, JSON, proto expansion) before compile() is called.
 // No validation or cross-reference resolution happens at this layer.
 type RawConfig struct {
-	LLM        RawLLM                        `yaml:"llm"                  json:"llm"`
-	MCP        RawMCP                        `yaml:"mcp"                  json:"mcp"`
-	Profiles   map[string]RawProfile         `yaml:"profiles,omitempty"   json:"profiles,omitempty"`
-	Keys       map[string]RawKey             `yaml:"keys,omitempty"       json:"keys,omitempty"`
-	RateLimits map[string][]RawRateLimitRule `yaml:"rate_limits,omitempty" json:"rate_limits,omitempty"`
+	LLM        RawLLM                `yaml:"llm"                  json:"llm"`
+	MCP        RawMCP                `yaml:"mcp"                  json:"mcp"`
+	Profiles   map[string]RawProfile `yaml:"profiles,omitempty"   json:"profiles,omitempty"`
+	Keys       map[string]RawKey     `yaml:"keys,omitempty"       json:"keys,omitempty"`
+	RateLimit  RawRateLimit          `yaml:"rate_limit,omitempty" json:"rate_limit,omitempty"`
+}
+
+// RawRateLimit is the top-level rate-limiting config section.
+// It separates named tier primitives (rules) from per-scope policy assignments
+// (policies). Orange CP expands rule references server-side before encoding the
+// snapshot proto; the proto decode path populates Policies directly with already-
+// expanded entries and leaves Tiers empty. Tiers are only relevant for YAML
+// authoring and direct-file configs.
+type RawRateLimit struct {
+	Tiers    map[string]RawRateLimitTier          `yaml:"rules,omitempty"    json:"rules,omitempty"`
+	Policies map[string][]RawRateLimitPolicyEntry `yaml:"policies,omitempty" json:"policies,omitempty"`
 }
 
 // RawLLM holds the admin-owned LLM subsystem: providers and the model catalog.
@@ -25,23 +36,34 @@ type RawMCP struct {
 	Servers map[string]RawServer `yaml:"servers" json:"servers"`
 }
 
+// RawBinding is one named endpoint alias within a provider. The adapter layer
+// selects it when a model's binding field matches this entry's name.
+type RawBinding struct {
+	Name     string `yaml:"name"     json:"name"`
+	Endpoint string `yaml:"endpoint" json:"endpoint"`
+}
+
 // RawProvider is the serde form of one upstream LLM provider.
 type RawProvider struct {
-	Kind          string            `yaml:"kind"                    json:"kind"`
-	BackendSchema string            `yaml:"backend_schema,omitempty" json:"backend_schema,omitempty"`
-	Endpoint      string            `yaml:"endpoint"                json:"endpoint"`
-	Auth          RawAuth           `yaml:"auth"                    json:"auth"`
-	Extra         map[string]string `yaml:"extra,omitempty"         json:"extra,omitempty"`
+	Kind          string            `yaml:"kind"                     json:"kind"`
+	BackendSchema string            `yaml:"backend_schema,omitempty"  json:"backend_schema,omitempty"`
+	Endpoint      string            `yaml:"endpoint"                 json:"endpoint"`
+	PathPrefix    *string           `yaml:"path_prefix,omitempty"    json:"path_prefix,omitempty"`
+	Auth          RawAuth           `yaml:"auth"                     json:"auth"`
+	Extra         map[string]string `yaml:"extra,omitempty"          json:"extra,omitempty"`
+	Bindings      []RawBinding      `yaml:"bindings,omitempty"       json:"bindings,omitempty"`
 }
 
 // RawModel is the serde form of one client-facing model catalog entry.
 // Provider is required; Name defaults to the map key when absent.
+// Binding names a provider binding (alternate endpoint) to use for this model.
 type RawModel struct {
-	Provider          string            `yaml:"provider"                    json:"provider"`
-	Name              string            `yaml:"name,omitempty"              json:"name,omitempty"`
+	Provider          string            `yaml:"provider"                     json:"provider"`
+	Name              string            `yaml:"name,omitempty"               json:"name,omitempty"`
+	Binding           string            `yaml:"binding,omitempty"            json:"binding,omitempty"`
 	EndpointOverrides map[string]string `yaml:"endpoint_overrides,omitempty" json:"endpoint_overrides,omitempty"`
-	Pricing           *RawModelPricing  `yaml:"pricing,omitempty"           json:"pricing,omitempty"`
-	Metadata          *RawMetadata      `yaml:"metadata,omitempty"          json:"metadata,omitempty"`
+	Pricing           *RawModelPricing  `yaml:"pricing,omitempty"            json:"pricing,omitempty"`
+	Metadata          *RawMetadata      `yaml:"metadata,omitempty"           json:"metadata,omitempty"`
 }
 
 // RawModelPricing holds per-model token prices in USD per million tokens.
@@ -121,8 +143,11 @@ type RawChain struct {
 
 // RawRetry configures Envoy-compatible retry behaviour for a chain node.
 type RawRetry struct {
-	RetryOn         string `yaml:"retry_on,omitempty"          json:"retry_on,omitempty"`
-	PerTryTimeoutMs int    `yaml:"per_try_timeout_ms,omitempty" json:"per_try_timeout_ms,omitempty"`
+	RetryOn               string   `yaml:"retry_on,omitempty"                json:"retry_on,omitempty"`
+	RetryGrpcOn           string   `yaml:"retry_grpc_on,omitempty"           json:"retry_grpc_on,omitempty"`
+	PerTryTimeoutMs       int      `yaml:"per_try_timeout_ms,omitempty"      json:"per_try_timeout_ms,omitempty"`
+	RetriableStatusCodes  []int    `yaml:"retriable_status_codes,omitempty"  json:"retriable_status_codes,omitempty"`
+	RetriableHeaderNames  []string `yaml:"retriable_header_names,omitempty"  json:"retriable_header_names,omitempty"`
 }
 
 // RawSplit distributes traffic across children by weight; weights must sum to 100.
@@ -138,14 +163,45 @@ type RawSplitChild struct {
 	RawRoutingNode `yaml:",inline" json:",inline"`
 }
 
-// RawRateLimitRule is one entry in a rate_limits scope list.
-// Zero values are unconstrained for that dimension. Multiple limits on the
-// same rule are independent — whichever is exhausted first triggers OnExceed.
-// USD limits require a pricing block on every targeted model.
-type RawRateLimitRule struct {
-	Models []string `yaml:"models" json:"models"`
+// RawRateLimitTier defines a named rate-limit tier — a reusable set of limit
+// values referenced by policy entries via the rule: field. Tiers have no
+// Models filter; model applicability is controlled by the policy entry.
+// Zero values mean unconstrained for that dimension.
+type RawRateLimitTier struct {
+	USDPerMinute decimal.Decimal `yaml:"usd_per_minute,omitempty" json:"usd_per_minute,omitempty"`
+	USDPerHour   decimal.Decimal `yaml:"usd_per_hour,omitempty"   json:"usd_per_hour,omitempty"`
+	USDPerDay    decimal.Decimal `yaml:"usd_per_day,omitempty"    json:"usd_per_day,omitempty"`
 
-	// USD spend limits use decimal.Decimal for exact monetary arithmetic.
+	RPM int `yaml:"rpm,omitempty" json:"rpm,omitempty"`
+	RPH int `yaml:"rph,omitempty" json:"rph,omitempty"`
+	RPD int `yaml:"rpd,omitempty" json:"rpd,omitempty"`
+
+	InputTokensPerMinute int `yaml:"input_tokens_per_minute,omitempty"  json:"input_tokens_per_minute,omitempty"`
+	InputTokensPerHour   int `yaml:"input_tokens_per_hour,omitempty"    json:"input_tokens_per_hour,omitempty"`
+	InputTokensPerDay    int `yaml:"input_tokens_per_day,omitempty"     json:"input_tokens_per_day,omitempty"`
+
+	OutputTokensPerMinute int `yaml:"output_tokens_per_minute,omitempty" json:"output_tokens_per_minute,omitempty"`
+	OutputTokensPerHour   int `yaml:"output_tokens_per_hour,omitempty"   json:"output_tokens_per_hour,omitempty"`
+	OutputTokensPerDay    int `yaml:"output_tokens_per_day,omitempty"    json:"output_tokens_per_day,omitempty"`
+
+	CacheReadTokensPerHour int `yaml:"cache_read_tokens_per_hour,omitempty"  json:"cache_read_tokens_per_hour,omitempty"`
+	CacheReadTokensPerDay  int `yaml:"cache_read_tokens_per_day,omitempty"   json:"cache_read_tokens_per_day,omitempty"`
+
+	CacheWriteTokensPerHour int `yaml:"cache_write_tokens_per_hour,omitempty" json:"cache_write_tokens_per_hour,omitempty"`
+	CacheWriteTokensPerDay  int `yaml:"cache_write_tokens_per_day,omitempty"  json:"cache_write_tokens_per_day,omitempty"`
+
+	OnExceed string `yaml:"on_exceed,omitempty" json:"on_exceed,omitempty"`
+}
+
+// RawRateLimitPolicyEntry is one entry in a scope's policy list.
+// Rule names a tier from rate_limit.rules; its fields are used as the base and
+// any non-zero inline fields on this entry override the tier. Either Rule or
+// inline fields (or both) must be set. Models must be non-empty; use ["*"] as
+// a catch-all. USD limits require a pricing block on every targeted model.
+type RawRateLimitPolicyEntry struct {
+	Rule   string   `yaml:"rule,omitempty" json:"rule,omitempty"`
+	Models []string `yaml:"models"         json:"models"`
+
 	USDPerMinute decimal.Decimal `yaml:"usd_per_minute,omitempty" json:"usd_per_minute,omitempty"`
 	USDPerHour   decimal.Decimal `yaml:"usd_per_hour,omitempty"   json:"usd_per_hour,omitempty"`
 	USDPerDay    decimal.Decimal `yaml:"usd_per_day,omitempty"    json:"usd_per_day,omitempty"`

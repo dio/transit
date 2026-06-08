@@ -121,6 +121,24 @@ func (s *AppState) LoadConfig(yamlBytes []byte) error {
 	})
 }
 
+// ValidateConfig decodes and compiles yamlBytes without publishing the result.
+// Use this to check incoming YAML for schema and cross-reference errors before
+// storing it (see Phase 6: config_service.go).
+func (s *AppState) ValidateConfig(yamlBytes []byte) error {
+	raw, err := decodeRawConfig(SnapshotEnvelope{
+		Format:      SnapshotFormatYAML,
+		Compression: CompressionNone,
+		Payload:     yamlBytes,
+	})
+	if err != nil {
+		return fmt.Errorf("appstate: decode: %w", err)
+	}
+	if _, err = compile(raw, s.interns, 0); err != nil {
+		return fmt.Errorf("appstate: compile: %w", err)
+	}
+	return nil
+}
+
 // Resolve returns the fully resolved key and profile for a request. It performs
 // one atomic snapshot load followed by two UserTable lookups.
 //

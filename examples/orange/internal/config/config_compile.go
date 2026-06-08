@@ -31,12 +31,18 @@ func compile(raw *RawConfig, interns *InternPool, generation uint64) (*ConfigSna
 			kind != ProviderKindBedrock {
 			return nil, fmt.Errorf("provider %q: unknown kind %q", id, r.Kind)
 		}
+		bindings := make([]Binding, len(r.Bindings))
+		for i, b := range r.Bindings {
+			bindings[i] = Binding{Name: b.Name, Endpoint: b.Endpoint}
+		}
 		providers[id] = &ProviderRecord{
 			Kind:          kind,
 			BackendSchema: BackendSchema(r.BackendSchema),
 			Endpoint:      r.Endpoint,
+			PathPrefix:    r.PathPrefix,
 			Auth:          AuthConfig(r.Auth),
 			Extra:         cloneStringMap(r.Extra),
+			Bindings:      bindings,
 		}
 	}
 
@@ -81,6 +87,7 @@ func compile(raw *RawConfig, interns *InternPool, generation uint64) (*ConfigSna
 		models[id] = &ModelRecord{
 			Provider:          provider,
 			APIName:           apiName,
+			Binding:           r.Binding,
 			EndpointOverrides: overrides,
 			Pricing:           compilePricing(r.Pricing),
 			Metadata:          compileMetadata(r.Metadata),
@@ -91,16 +98,20 @@ func compile(raw *RawConfig, interns *InternPool, generation uint64) (*ConfigSna
 	// Key-scope rules (3-segment keys) are user-managed and compiled into
 	// KeyRecord.RateLimitRules in Phase 4, not into GlobalConfig.RateLimits.
 
-	rateLimits := make(map[string][]RateLimitRule, len(raw.RateLimits))
-	for scope, rawRules := range raw.RateLimits {
+	rateLimits := make(map[string][]RateLimitRule, len(raw.RateLimit.Policies))
+	for scope, rawRules := range raw.RateLimit.Policies {
 		if err := validateScopeKey(scope); err != nil {
-			return nil, fmt.Errorf("rate_limits[%q]: %w", scope, err)
+			return nil, fmt.Errorf("rate_limit.policies[%q]: %w", scope, err)
 		}
 		// Skip 3-segment (key-scope) entries; they are handled in Phase 4.
 		if strings.Count(scope, "/") == 2 {
 			continue
 		}
-		rules, err := compileRateLimitRules(rawRules, models, scope)
+		expanded, err := expandPolicyEntries(rawRules, raw.RateLimit.Tiers, scope)
+		if err != nil {
+			return nil, err
+		}
+		rules, err := compileRateLimitRules(expanded, models, scope)
 		if err != nil {
 			return nil, err
 		}
@@ -144,7 +155,7 @@ func compile(raw *RawConfig, interns *InternPool, generation uint64) (*ConfigSna
 			// Key-scope rate limits are looked up from the shared rate_limits map by
 			// the key's full ID. They are user-managed and not present in GlobalConfig.
 			var keyRules []RateLimitRule
-			if rawKeyRules, ok := raw.RateLimits[id]; ok {
+			if rawKeyRules, ok := raw.RateLimit.Policies[id]; ok {
 				keyRules, err = compileRateLimitRules(rawKeyRules, models, id)
 				if err != nil {
 					return nil, fmt.Errorf("keys[%q].rate_limits: %w", id, err)
@@ -278,8 +289,11 @@ func compileChainNode(r *RawChain, providers map[string]*ProviderRecord) (Routin
 	var retry *RetryConfig
 	if r.Retry != nil {
 		retry = &RetryConfig{
-			RetryOn:         r.Retry.RetryOn,
-			PerTryTimeoutMs: r.Retry.PerTryTimeoutMs,
+			RetryOn:              r.Retry.RetryOn,
+			RetryGrpcOn:          r.Retry.RetryGrpcOn,
+			PerTryTimeoutMs:      r.Retry.PerTryTimeoutMs,
+			RetriableStatusCodes: r.Retry.RetriableStatusCodes,
+			RetriableHeaderNames: r.Retry.RetriableHeaderNames,
 		}
 	}
 	return RoutingConfig{
@@ -426,18 +440,18 @@ func buildAuthShapeKey(overrides []AuthOverride) string {
 // compileRateLimitRules validates and compiles a slice of raw rate-limit rules
 // for a given scope string. It is shared by Phase 3 (admin scopes) and Phase 4
 // (key-scope rules from KeyRecord).
-func compileRateLimitRules(rawRules []RawRateLimitRule, models map[string]*ModelRecord, scope string) ([]RateLimitRule, error) {
+func compileRateLimitRules(rawRules []RawRateLimitPolicyEntry, models map[string]*ModelRecord, scope string) ([]RateLimitRule, error) {
 	rules := make([]RateLimitRule, len(rawRules))
 	for i, r := range rawRules {
 		if len(r.Models) == 0 {
-			return nil, fmt.Errorf("rate_limits[%q][%d]: models must not be empty", scope, i)
+			return nil, fmt.Errorf("rate_limit.policies[%q][%d]: models must not be empty", scope, i)
 		}
 		if err := validateUSDDependency(r, models, scope, i); err != nil {
 			return nil, err
 		}
 		compiled, err := compileRateLimitRule(r)
 		if err != nil {
-			return nil, fmt.Errorf("rate_limits[%q][%d]: %w", scope, i, err)
+			return nil, fmt.Errorf("rate_limit.policies[%q][%d]: %w", scope, i, err)
 		}
 		rules[i] = compiled
 	}
@@ -447,18 +461,18 @@ func compileRateLimitRules(rawRules []RawRateLimitRule, models map[string]*Model
 // validateUSDDependency rejects any USD spend limit that targets a model without
 // a pricing block. Without pricing, the proxy cannot convert token counts to
 // dollars and the limit would silently never trigger.
-func validateUSDDependency(r RawRateLimitRule, models map[string]*ModelRecord, scope string, i int) error {
+func validateUSDDependency(r RawRateLimitPolicyEntry, models map[string]*ModelRecord, scope string, i int) error {
 	if r.USDPerMinute.IsZero() && r.USDPerHour.IsZero() && r.USDPerDay.IsZero() {
 		return nil
 	}
 	check := func(modelID string) error {
 		m, ok := models[modelID]
 		if !ok {
-			return fmt.Errorf("rate_limits[%q][%d]: model %q not found", scope, i, modelID)
+			return fmt.Errorf("rate_limit.policies[%q][%d]: model %q not found", scope, i, modelID)
 		}
 		if m.Pricing == nil {
 			return fmt.Errorf(
-				"rate_limits[%q][%d]: usd limit requires pricing block on model %q",
+				"rate_limit.policies[%q][%d]: usd limit requires pricing block on model %q",
 				scope, i, modelID,
 			)
 		}
@@ -485,6 +499,48 @@ func validateUSDDependency(r RawRateLimitRule, models map[string]*ModelRecord, s
 	return nil
 }
 
+// expandPolicyEntries resolves rule: references in each policy entry against
+// the named tiers. Tier fields are used as the base; entry inline fields
+// override them. Returns an error if an entry references an unknown tier.
+func expandPolicyEntries(entries []RawRateLimitPolicyEntry, tiers map[string]RawRateLimitTier, scope string) ([]RawRateLimitPolicyEntry, error) {
+	out := make([]RawRateLimitPolicyEntry, len(entries))
+	for i, e := range entries {
+		if e.Rule == "" {
+			out[i] = e
+			continue
+		}
+		tier, ok := tiers[e.Rule]
+		if !ok {
+			return nil, fmt.Errorf("rate_limit.policies[%q][%d]: unknown rule %q", scope, i, e.Rule)
+		}
+		out[i] = applyTier(e, tier)
+	}
+	return out, nil
+}
+
+// applyTier returns a copy of entry with any zero/empty field filled from tier.
+// Non-zero entry fields take precedence (entry overrides tier).
+func applyTier(entry RawRateLimitPolicyEntry, tier RawRateLimitTier) RawRateLimitPolicyEntry {
+	if entry.USDPerMinute.IsZero() { entry.USDPerMinute = tier.USDPerMinute }
+	if entry.USDPerHour.IsZero()   { entry.USDPerHour = tier.USDPerHour }
+	if entry.USDPerDay.IsZero()    { entry.USDPerDay = tier.USDPerDay }
+	if entry.RPM == 0 { entry.RPM = tier.RPM }
+	if entry.RPH == 0 { entry.RPH = tier.RPH }
+	if entry.RPD == 0 { entry.RPD = tier.RPD }
+	if entry.InputTokensPerMinute == 0  { entry.InputTokensPerMinute = tier.InputTokensPerMinute }
+	if entry.InputTokensPerHour == 0    { entry.InputTokensPerHour = tier.InputTokensPerHour }
+	if entry.InputTokensPerDay == 0     { entry.InputTokensPerDay = tier.InputTokensPerDay }
+	if entry.OutputTokensPerMinute == 0 { entry.OutputTokensPerMinute = tier.OutputTokensPerMinute }
+	if entry.OutputTokensPerHour == 0   { entry.OutputTokensPerHour = tier.OutputTokensPerHour }
+	if entry.OutputTokensPerDay == 0    { entry.OutputTokensPerDay = tier.OutputTokensPerDay }
+	if entry.CacheReadTokensPerHour == 0  { entry.CacheReadTokensPerHour = tier.CacheReadTokensPerHour }
+	if entry.CacheReadTokensPerDay == 0   { entry.CacheReadTokensPerDay = tier.CacheReadTokensPerDay }
+	if entry.CacheWriteTokensPerHour == 0 { entry.CacheWriteTokensPerHour = tier.CacheWriteTokensPerHour }
+	if entry.CacheWriteTokensPerDay == 0  { entry.CacheWriteTokensPerDay = tier.CacheWriteTokensPerDay }
+	if entry.OnExceed == "" { entry.OnExceed = tier.OnExceed }
+	return entry
+}
+
 // validateScopeKey ensures a rate-limit scope string is a valid 1-, 2-, or
 // 3-segment slash-separated key (workspace, workspace/user, or workspace/user/name).
 // Four or more segments are rejected to prevent accidental key-collisions.
@@ -504,7 +560,7 @@ func validateScopeKey(scope string) error {
 // compileRateLimitRule converts a raw rate limit rule into its domain form.
 // It defaults OnExceed to "reject" and validates that the supplied value is
 // one of the three known actions.
-func compileRateLimitRule(r RawRateLimitRule) (RateLimitRule, error) {
+func compileRateLimitRule(r RawRateLimitPolicyEntry) (RateLimitRule, error) {
 	onExceed := r.OnExceed
 	switch onExceed {
 	case "", "reject":

@@ -64,6 +64,19 @@ func decodeRawConfig(env SnapshotEnvelope) (*RawConfig, error) {
 	}
 }
 
+// DecodeRaw decodes a SnapshotEnvelope (Go struct) into a RawConfig. It is the
+// exported counterpart of decodeRawConfig for callers outside this package that
+// hold a Go SnapshotEnvelope directly (e.g. the config service's Fetch path).
+func DecodeRaw(env SnapshotEnvelope) (*RawConfig, error) {
+	return decodeRawConfig(env)
+}
+
+// MarshalRawYAML marshals a RawConfig to YAML bytes. Used by the config service
+// to re-encode a workspace-projected RawConfig before delivering it to an egress.
+func MarshalRawYAML(raw *RawConfig) ([]byte, error) {
+	return yaml.Marshal(raw)
+}
+
 // DecodeRawFromProtoEnvelope converts a wire-level configv1.SnapshotEnvelope
 // into a RawConfig. It is the exported decode path for callers outside the
 // config package (e.g. the egress emulator CLI).
@@ -152,9 +165,9 @@ func decompress(kind CompressionKind, payload []byte) ([]byte, error) {
 // (e.g. "anthropic").
 //
 // Key-scope rate limit rules (Key.rate_limit_rules) are stored in
-// raw.RateLimits under the key ID, following the same 3-segment scope
+// raw.RateLimit.Policies under the key ID, following the same 3-segment scope
 // convention. compile() Phase 3 skips 3-segment scopes; Phase 4 picks them up
-// from raw.RateLimits when processing each KeyRecord.
+// from raw.RateLimit.Policies when processing each KeyRecord.
 func protoToRaw(p *configv1.ConfigPayload) (*RawConfig, error) {
 	if p == nil {
 		return nil, fmt.Errorf("protoToRaw: nil ConfigPayload")
@@ -306,12 +319,13 @@ func protoToRaw(p *configv1.ConfigPayload) (*RawConfig, error) {
 	// rateLimits accumulates both admin-owned scope entries and key-scope entries.
 	// Admin-owned entries come from ConfigPayload.rate_limits (1-2 segment scopes).
 	// Key-scope entries come from Key.rate_limit_rules (3-segment scope = key ID).
-	rateLimits := make(map[string][]RawRateLimitRule)
+	// The proto path never carries tier definitions; Tiers is left empty.
+	rateLimits := make(map[string][]RawRateLimitPolicyEntry)
 	for _, scope := range p.RateLimits {
 		id := str(scope.ScopeIdx)
-		rules, err := rawRateLimitRulesFromProto(scope.Rules, str)
+		rules, err := rawRateLimitPolicyEntriesFromProto(scope.Rules, str)
 		if err != nil {
-			return nil, fmt.Errorf("rate_limits scope %q: %w", id, err)
+			return nil, fmt.Errorf("rate_limit.policies scope %q: %w", id, err)
 		}
 		rateLimits[id] = rules
 	}
@@ -336,9 +350,9 @@ func protoToRaw(p *configv1.ConfigPayload) (*RawConfig, error) {
 		keys[id] = RawKey{RoutingOverrides: overrides}
 
 		// Key-scope rate limit rules: stored under the key ID so compile() Phase 4
-		// can find them via raw.RateLimits[keyID].
+		// can find them via raw.RateLimit.Policies[keyID].
 		if len(k.RateLimitRules) > 0 {
-			rules, err := rawRateLimitRulesFromProto(k.RateLimitRules, str)
+			rules, err := rawRateLimitPolicyEntriesFromProto(k.RateLimitRules, str)
 			if err != nil {
 				return nil, fmt.Errorf("key %q rate_limit_rules: %w", id, err)
 			}
@@ -347,11 +361,11 @@ func protoToRaw(p *configv1.ConfigPayload) (*RawConfig, error) {
 	}
 
 	return &RawConfig{
-		LLM:        RawLLM{Providers: providers, Models: models},
-		MCP:        RawMCP{Servers: servers},
-		Profiles:   profiles,
-		Keys:       keys,
-		RateLimits: rateLimits,
+		LLM:      RawLLM{Providers: providers, Models: models},
+		MCP:      RawMCP{Servers: servers},
+		Profiles: profiles,
+		Keys:     keys,
+		RateLimit: RawRateLimit{Policies: rateLimits},
 	}, nil
 }
 
@@ -427,18 +441,19 @@ func routingNodeFromProto(n *configv1.RoutingNode, str func(uint32) string) (Raw
 
 // ── Rate limit rule expansion ─────────────────────────────────────────────────
 
-// rawRateLimitRulesFromProto converts a slice of proto RateLimitRule messages
-// into RawRateLimitRule values. USD double fields are converted to
-// decimal.Decimal via decimal.NewFromFloat for exact monetary arithmetic.
+// rawRateLimitPolicyEntriesFromProto converts a slice of proto RateLimitRule
+// messages into RawRateLimitPolicyEntry values. The proto path never carries
+// tier names (Rule is always empty — entries are already expanded server-side).
+// USD double fields are converted to decimal.Decimal via decimal.NewFromFloat.
 // OnExceed_UNSPECIFIED is converted to "" so compile() can default it to "reject".
-func rawRateLimitRulesFromProto(rules []*configv1.RateLimitRule, str func(uint32) string) ([]RawRateLimitRule, error) {
-	out := make([]RawRateLimitRule, 0, len(rules))
+func rawRateLimitPolicyEntriesFromProto(rules []*configv1.RateLimitRule, str func(uint32) string) ([]RawRateLimitPolicyEntry, error) {
+	out := make([]RawRateLimitPolicyEntry, 0, len(rules))
 	for _, r := range rules {
 		models := make([]string, len(r.ModelIdxs))
 		for i, idx := range r.ModelIdxs {
 			models[i] = str(idx)
 		}
-		out = append(out, RawRateLimitRule{
+		out = append(out, RawRateLimitPolicyEntry{
 			Models: models,
 
 			USDPerMinute: decimal.NewFromFloat(r.UsdPerMinute),

@@ -1,10 +1,44 @@
 package config
 
 import (
+	"context"
+	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/shopspring/decimal"
 )
+
+// ── Cross-cutting types ───────────────────────────────────────────────────────
+
+// SecretResolver resolves opaque secret references (env://, file://, literal://, etc.)
+// to their plaintext values. Implementations are allowed to cache resolved values;
+// callers may call Invalidate to force a fresh lookup on the next Resolve call.
+type SecretResolver interface {
+	Resolve(ctx context.Context, ref string) (string, error)
+	Invalidate(ref string)
+}
+
+// Binding names an alternate endpoint for a provider. Providers with multiple
+// bindings allow per-model selection of the same provider at different endpoints.
+type Binding struct {
+	Name     string
+	Endpoint string
+}
+
+// V1Model is an OpenAI-compatible model entry for the GET /v1/models response.
+type V1Model struct {
+	ID       string         `json:"id"`
+	Object   string         `json:"object"`
+	OwnedBy  string         `json:"owned_by"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
+// V1ModelList is the OpenAI-compatible response body for GET /v1/models.
+type V1ModelList struct {
+	Object string    `json:"object"`
+	Data   []V1Model `json:"data"`
+}
 
 // ── Provider ──────────────────────────────────────────────────────────────────
 
@@ -44,8 +78,78 @@ type ProviderRecord struct {
 	Kind          ProviderKind
 	BackendSchema BackendSchema
 	Endpoint      string
+	PathPrefix    *string // optional; nil means "/v1"
 	Auth          AuthConfig
 	Extra         map[string]string
+	Bindings      []Binding
+}
+
+// EffectiveBackendSchema returns BackendSchema if set, otherwise Kind.
+func (p *ProviderRecord) EffectiveBackendSchema() string {
+	if p.BackendSchema != "" {
+		return string(p.BackendSchema)
+	}
+	return string(p.Kind)
+}
+
+// ResolvedPathPrefix returns the path prefix, defaulting to "/v1".
+func (p *ProviderRecord) ResolvedPathPrefix() string {
+	if p.PathPrefix == nil {
+		return "/v1"
+	}
+	return *p.PathPrefix
+}
+
+// Host returns the hostname of the provider endpoint.
+func (p *ProviderRecord) Host() string {
+	if p.Endpoint == "" {
+		return ""
+	}
+	u, err := url.Parse(p.Endpoint)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
+}
+
+// AllBindings returns the list of named bindings for this provider.
+// When no explicit bindings are configured it synthesises a single
+// "default" binding from Endpoint to maintain back-compat.
+func (p *ProviderRecord) AllBindings() []Binding {
+	if len(p.Bindings) > 0 {
+		return p.Bindings
+	}
+	return []Binding{{Name: "default", Endpoint: p.Endpoint}}
+}
+
+// BindingEndpoint returns the endpoint URL for the named binding.
+// Falls back to Endpoint when binding is empty, "default", or not found.
+func (p *ProviderRecord) BindingEndpoint(binding string) string {
+	if binding != "" && binding != "default" {
+		for _, b := range p.Bindings {
+			if b.Name == binding {
+				return b.Endpoint
+			}
+		}
+	}
+	return p.Endpoint
+}
+
+// BindingHost returns the hostname for the named binding.
+// Falls back to Host() when binding is empty, "default", or not found.
+func (p *ProviderRecord) BindingHost(binding string) string {
+	if binding != "" && binding != "default" {
+		for _, b := range p.Bindings {
+			if b.Name == binding {
+				u, err := url.Parse(b.Endpoint)
+				if err != nil {
+					return ""
+				}
+				return u.Hostname()
+			}
+		}
+	}
+	return p.Host()
 }
 
 // ── Model ─────────────────────────────────────────────────────────────────────
@@ -86,9 +190,12 @@ type ModelMetadata struct {
 // ModelRecord is the compiled, immutable form of one catalog entry.
 // Provider is a resolved pointer; EndpointOverrides maps operation names
 // (e.g. "chat_completions") to alternate providers for that operation only.
+// Binding names a provider binding (alternate endpoint) to use for this model;
+// empty means use the provider's default endpoint.
 type ModelRecord struct {
 	Provider          *ProviderRecord
 	APIName           string // backend model name; defaults to the catalog key
+	Binding           string
 	EndpointOverrides map[string]*ProviderRecord
 	Pricing           *ModelPricing  // nil when not configured
 	Metadata          *ModelMetadata // nil when not configured
@@ -102,6 +209,30 @@ type ServerRecord struct {
 	Namespace    string
 	Auth         *AuthConfig // nil when no auth is configured
 	ToolsInclude []string    // server-level allowlist; profiles must be a subset
+}
+
+// Host returns the hostname of the MCP server endpoint.
+func (s *ServerRecord) Host() string {
+	if s.Endpoint == "" {
+		return ""
+	}
+	u, err := url.Parse(s.Endpoint)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
+}
+
+// Path returns the path component of the MCP server endpoint, defaulting to "/".
+func (s *ServerRecord) Path() string {
+	if s.Endpoint == "" {
+		return "/"
+	}
+	u, err := url.Parse(s.Endpoint)
+	if err != nil || u.Path == "" || u.Path == "/" {
+		return "/"
+	}
+	return u.Path
 }
 
 // ── Rate limits ───────────────────────────────────────────────────────────────
@@ -187,6 +318,30 @@ func (g *GlobalConfig) ResolveRateLimitRules(keyID, modelID string) []RateLimitR
 	return result
 }
 
+// LookupModel returns the compiled model record for modelID. Returns false when
+// modelID is not present in the catalog.
+func (g *GlobalConfig) LookupModel(modelID string) (*ModelRecord, bool) {
+	m, ok := g.Models[modelID]
+	return m, ok
+}
+
+// V1Models returns a stable, sorted slice of V1Model entries for every model
+// in the catalog. OwnedBy is set to the provider's Kind string.
+func (g *GlobalConfig) V1Models() []V1Model {
+	out := make([]V1Model, 0, len(g.Models))
+	for id, m := range g.Models {
+		ownedBy := ""
+		if m.Provider != nil {
+			ownedBy = string(m.Provider.Kind)
+		}
+		out = append(out, V1Model{ID: id, Object: "model", OwnedBy: ownedBy})
+	}
+	slices.SortFunc(out, func(a, b V1Model) int {
+		return strings.Compare(a.ID, b.ID)
+	})
+	return out
+}
+
 func filterRulesByModel(rules []RateLimitRule, modelID string) []RateLimitRule {
 	var result []RateLimitRule
 	for _, r := range rules {
@@ -217,8 +372,11 @@ type RoutingTarget struct {
 
 // RetryConfig carries Envoy-compatible retry settings for a chain node.
 type RetryConfig struct {
-	RetryOn         string
-	PerTryTimeoutMs int
+	RetryOn              string
+	RetryGrpcOn          string
+	PerTryTimeoutMs      int
+	RetriableStatusCodes []int
+	RetriableHeaderNames []string
 }
 
 // RoutingConfig is one node in a compiled routing tree.

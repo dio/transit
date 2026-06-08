@@ -176,19 +176,20 @@ mcp:
   servers: {}
 keys:
   "ws/alice/k1": {}
-rate_limits:
-  ws:
-    - models: ["*"]
-      rpm: 500
-  ws/alice:
-    - models: ["*"]
-      rpm: 100
-  ws/alice/k1:
-    - models: ["m1"]
-      usd_per_day: "5.00"
-      on_exceed: throttle
-    - models: ["*"]
-      rpm: 20
+rate_limit:
+  policies:
+    ws:
+      - models: ["*"]
+        rpm: 500
+    ws/alice:
+      - models: ["*"]
+        rpm: 100
+    ws/alice/k1:
+      - models: ["m1"]
+        usd_per_day: "5.00"
+        on_exceed: throttle
+      - models: ["*"]
+        rpm: 20
 `
 	snap := mustCompile(t, src)
 
@@ -229,10 +230,11 @@ mcp:
   servers: {}
 keys:
   "ws/alice/k1": {}
-rate_limits:
-  ws/alice/k1:
-    - models: ["m1"]
-      usd_per_day: "1.00"
+rate_limit:
+  policies:
+    ws/alice/k1:
+      - models: ["m1"]
+        usd_per_day: "1.00"
 `
 	raw := mustDecodeYAML(t, src)
 	_, err := compile(raw, NewInternPool(), 1)
@@ -367,10 +369,11 @@ llm:
     m1: {provider: p1}
 mcp:
   servers: {}
-rate_limits:
-  demo:
-    - models: []
-      rpm: 10
+rate_limit:
+  policies:
+    demo:
+      - models: []
+        rpm: 10
 `
 	raw := mustDecodeYAML(t, src)
 	_, err := compile(raw, NewInternPool(), 1)
@@ -387,10 +390,11 @@ llm:
     m1: {provider: p1}
 mcp:
   servers: {}
-rate_limits:
-  "a/b/c/d":
-    - models: ["*"]
-      rpm: 10
+rate_limit:
+  policies:
+    "a/b/c/d":
+      - models: ["*"]
+        rpm: 10
 `
 	raw := mustDecodeYAML(t, src)
 	_, err := compile(raw, NewInternPool(), 1)
@@ -407,10 +411,11 @@ llm:
     m1: {provider: p1}
 mcp:
   servers: {}
-rate_limits:
-  demo:
-    - models: ["m1"]
-      usd_per_day: "1.00"
+rate_limit:
+  policies:
+    demo:
+      - models: ["m1"]
+        usd_per_day: "1.00"
 `
 	raw := mustDecodeYAML(t, src)
 	_, err := compile(raw, NewInternPool(), 1)
@@ -427,11 +432,12 @@ llm:
     m1: {provider: p1}
 mcp:
   servers: {}
-rate_limits:
-  demo:
-    - models: ["*"]
-      rpm: 10
-      on_exceed: blow_up
+rate_limit:
+  policies:
+    demo:
+      - models: ["*"]
+        rpm: 10
+        on_exceed: blow_up
 `
 	raw := mustDecodeYAML(t, src)
 	_, err := compile(raw, NewInternPool(), 1)
@@ -774,13 +780,13 @@ func TestValidateScopeKey(t *testing.T) {
 // ── validateUSDDependency ─────────────────────────────────────────────────────
 
 func TestValidateUSDDependency_NoUSDLimits(t *testing.T) {
-	r := RawRateLimitRule{Models: []string{"m1"}, RPM: 10}
+	r := RawRateLimitPolicyEntry{Models: []string{"m1"}, RPM: 10}
 	models := map[string]*ModelRecord{"m1": {}} // no pricing — must not matter
 	assert.NoError(t, validateUSDDependency(r, models, "scope", 0))
 }
 
 func TestValidateUSDDependency_NoPricingBlock(t *testing.T) {
-	r := RawRateLimitRule{
+	r := RawRateLimitPolicyEntry{
 		Models:    []string{"m1"},
 		USDPerDay: decimal.RequireFromString("5.00"),
 	}
@@ -791,7 +797,7 @@ func TestValidateUSDDependency_NoPricingBlock(t *testing.T) {
 }
 
 func TestValidateUSDDependency_WithPricing(t *testing.T) {
-	r := RawRateLimitRule{
+	r := RawRateLimitPolicyEntry{
 		Models:    []string{"m1"},
 		USDPerDay: decimal.RequireFromString("5.00"),
 	}
@@ -805,7 +811,7 @@ func TestValidateUSDDependency_WithPricing(t *testing.T) {
 }
 
 func TestValidateUSDDependency_WildcardAllPriced(t *testing.T) {
-	r := RawRateLimitRule{
+	r := RawRateLimitPolicyEntry{
 		Models:    []string{"*"},
 		USDPerDay: decimal.RequireFromString("5.00"),
 	}
@@ -816,7 +822,7 @@ func TestValidateUSDDependency_WildcardAllPriced(t *testing.T) {
 }
 
 func TestValidateUSDDependency_WildcardMissingPricing(t *testing.T) {
-	r := RawRateLimitRule{
+	r := RawRateLimitPolicyEntry{
 		Models:    []string{"*"},
 		USDPerDay: decimal.RequireFromString("5.00"),
 	}
@@ -829,7 +835,7 @@ func TestValidateUSDDependency_WildcardMissingPricing(t *testing.T) {
 }
 
 func TestValidateUSDDependency_ModelNotFound(t *testing.T) {
-	r := RawRateLimitRule{
+	r := RawRateLimitPolicyEntry{
 		Models:    []string{"ghost"},
 		USDPerDay: decimal.RequireFromString("5.00"),
 	}
@@ -842,7 +848,7 @@ func TestValidateUSDDependency_ModelNotFound(t *testing.T) {
 // ── compileRateLimitRule ──────────────────────────────────────────────────────
 
 func TestCompileRateLimitRule_DefaultsOnExceed(t *testing.T) {
-	r := RawRateLimitRule{Models: []string{"*"}, RPM: 100}
+	r := RawRateLimitPolicyEntry{Models: []string{"*"}, RPM: 100}
 	compiled, err := compileRateLimitRule(r)
 	require.NoError(t, err)
 	assert.Equal(t, "reject", compiled.OnExceed)
@@ -850,7 +856,7 @@ func TestCompileRateLimitRule_DefaultsOnExceed(t *testing.T) {
 
 func TestCompileRateLimitRule_ValidOnExceedValues(t *testing.T) {
 	for _, v := range []string{"reject", "throttle", "log_only"} {
-		r := RawRateLimitRule{Models: []string{"*"}, OnExceed: v}
+		r := RawRateLimitPolicyEntry{Models: []string{"*"}, OnExceed: v}
 		compiled, err := compileRateLimitRule(r)
 		require.NoError(t, err, "value %q should be valid", v)
 		assert.Equal(t, v, compiled.OnExceed)
@@ -858,7 +864,7 @@ func TestCompileRateLimitRule_ValidOnExceedValues(t *testing.T) {
 }
 
 func TestCompileRateLimitRule_InvalidOnExceed(t *testing.T) {
-	r := RawRateLimitRule{Models: []string{"*"}, OnExceed: "explode"}
+	r := RawRateLimitPolicyEntry{Models: []string{"*"}, OnExceed: "explode"}
 	_, err := compileRateLimitRule(r)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid on_exceed")
@@ -866,7 +872,7 @@ func TestCompileRateLimitRule_InvalidOnExceed(t *testing.T) {
 
 func TestCompileRateLimitRule_ClonesModels(t *testing.T) {
 	models := []string{"m1", "m2"}
-	r := RawRateLimitRule{Models: models}
+	r := RawRateLimitPolicyEntry{Models: models}
 	compiled, err := compileRateLimitRule(r)
 	require.NoError(t, err)
 	// Mutating the original slice must not affect the compiled rule.
