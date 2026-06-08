@@ -40,7 +40,10 @@ func (m *manager[T]) record(item *T) unsafe.Pointer {
 }
 
 func (m *manager[T]) unwrap(ptr unsafe.Pointer) *T {
-	return (*T)(ptr)
+	idx := uintptr(ptr) % numManagerShards
+	m.mutex[idx].Lock()
+	defer m.mutex[idx].Unlock()
+	return m.data[idx][uintptr(ptr)]
 }
 
 func (m *manager[T]) remove(ptr unsafe.Pointer) {
