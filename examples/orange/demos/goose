@@ -5,28 +5,19 @@ set -euo pipefail
 #
 # Orange serves an OpenAI-compatible Chat Completions endpoint at
 # /v1/chat/completions and routes by model field.  Goose's openai
-# provider reads OPENAI_HOST + OPENAI_BASE_PATH and OPENAI_API_KEY;
-# Orange ignores the client key on inbound requests.
-#
-# Interactive:
-#   ./demos/goose
-#
-# One-shot (mirrors claude -p):
-#   ./demos/goose -p "write a hello-world in Go"
+# provider reads OPENAI_HOST + OPENAI_BASE_PATH and OPENAI_API_KEY.
 
 ORANGE_BASE_URL="${ORANGE_GOOSE_BASE_URL:-http://localhost:8080}"
 MODEL="${ORANGE_GOOSE_MODEL:-gpt-4o-mini}"
+ORANGE_API_KEY="${ORANGE_API_KEY:-demo/dio/sk-default}"
 
 export GOOSE_PROVIDER=openai
 export GOOSE_MODEL="$MODEL"
 export OPENAI_HOST="${ORANGE_BASE_URL}"
 export OPENAI_BASE_PATH="v1/chat/completions"
 
-# Orange ignores the inbound client key; set a placeholder so Goose
-# doesn't reject the missing value and doesn't hit the real OpenAI API.
-if [[ -z "${OPENAI_API_KEY:-}" ]]; then
-  export OPENAI_API_KEY="orange-demo"
-fi
+# Orange requires API key for routing; override any existing OPENAI_API_KEY.
+export OPENAI_API_KEY="$ORANGE_API_KEY"
 
 if [[ $# -eq 0 ]]; then
   exec goose session

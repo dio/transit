@@ -33,21 +33,19 @@ llm:
       auth:
         type: gcp
         secret_ref: env://GCP_SERVICE_ACCOUNT_JSON
-  models: {}
+  models:
+    claude-haiku-4-5:
+      provider: primary
 
 keys:
-  demo/maya/sk-split:
-    workspace: demo
-    user: maya
-    llm:
-      models:
-        claude-haiku-4-5:   # the map key is the client-facing alias; any string works
-          routing:
-            split:
-              children:
-                - weight: 34
-                  target: { provider: primary,  name: claude-haiku-4-5 }
-                - weight: 33
-                  target: { provider: primary2, name: claude-haiku-4-5 }
-                - weight: 33
-                  target: { provider: primary3, name: claude-haiku-4-5 }
+  demo/dio/sk-split:
+    routing_overrides:
+      claude-haiku-4-5:   # the map key is the client-facing alias; any string works
+        split:
+          children:
+            - weight: 34
+              target: { provider: primary,  name: claude-haiku-4-5 }
+            - weight: 33
+              target: { provider: primary2, name: claude-haiku-4-5 }
+            - weight: 33
+              target: { provider: primary3, name: claude-haiku-4-5 }

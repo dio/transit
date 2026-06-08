@@ -80,39 +80,45 @@ demo:
 	@echo " Listener  : http://localhost:8080"
 	@echo " Admin     : http://localhost:9901"
 	@echo ""
+	@echo " API Keys (sent via Authorization: Bearer <KEY> or x-api-key header):"
+	@echo "   demo/dio/sk-default   → Direct routing (all models)"
+	@echo "   demo/dio/sk-fallback  → Fallback demo (claude-haiku-4-5 only)"
+	@echo "   demo/dio/sk-split     → Traffic splitting (claude-haiku-4-5 only)"
+	@echo ""
 	@echo " Try (from another shell):"
 	@echo ""
 	@echo "   # OpenAI Chat Completions (gpt-4o-mini → api.openai.com)"
 	@echo "   curl -s localhost:8080/v1/chat/completions -H 'content-type: application/json' \\"
+	@echo "     -H 'Authorization: Bearer demo/dio/sk-default' \\"
 	@echo "     -d '{\"model\":\"gpt-4o-mini\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'"
 	@echo ""
 	@echo "   # OpenAI Responses API — non-streaming"
 	@echo "   curl -s localhost:8080/v1/responses -H 'content-type: application/json' \\"
+	@echo "     -H 'Authorization: Bearer demo/dio/sk-default' \\"
 	@echo "     -d '{\"model\":\"gpt-4o-mini\",\"input\":\"hi\"}'"
 	@echo ""
-	@echo "   # OpenAI Chat Completions — streaming (SSE)"
-	@echo "   curl -N -s localhost:8080/v1/chat/completions -H 'content-type: application/json' \\"
-	@echo "     -d '{\"model\":\"gpt-4o-mini\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"count 1 to 5\"}]}'"
-	@echo ""
-	@echo "   # OpenAI Responses API — streaming (SSE)"
-	@echo "   curl -N -s localhost:8080/v1/responses -H 'content-type: application/json' \\"
-	@echo "     -d '{\"model\":\"gpt-4o-mini\",\"stream\":true,\"input\":\"count 1 to 5\"}'"
-	@echo ""
-	@echo "   # Anthropic Messages (claude-haiku-4-5 → api.anthropic.com)"
+	@echo "   # Anthropic Messages with fallback routing (demo/dio/sk-fallback)"
 	@echo "   curl -s localhost:8080/v1/messages -H 'content-type: application/json' \\"
-	@echo "     -d '{\"model\":\"claude-haiku-4-5\",\"max_tokens\":32,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'"
+	@echo "     -H 'Authorization: Bearer demo/dio/sk-fallback' \\"
+	@echo "     -d '{\"model\":\"claude-haiku-4-5\",\"max_tokens\":64,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'"
 	@echo ""
-	@echo "   # Anthropic Messages — streaming (SSE)"
-	@echo "   curl -N -s localhost:8080/v1/messages -H 'content-type: application/json' \\"
-	@echo "     -d '{\"model\":\"claude-haiku-4-5\",\"max_tokens\":64,\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"count 1 to 5\"}]}'"
+	@echo "   # Anthropic Messages with traffic splitting (demo/dio/sk-split)"
+	@echo "   curl -s localhost:8080/v1/messages -H 'content-type: application/json' \\"
+	@echo "     -H 'Authorization: Bearer demo/dio/sk-split' \\"
+	@echo "     -d '{\"model\":\"claude-haiku-4-5\",\"max_tokens\":64,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'"
 	@echo ""
-	@echo "   # LLM demos (chat/responses/messages, streaming, model list):"
-	@echo "   cd $(CURDIR) && ./demos/llm"
+	@echo "   # LLM demos (uses sk-default key by default):"
+	@echo "   cd $(CURDIR) && ./demos/llm 'hello world'"
 	@echo "   cd $(CURDIR) && ./demos/llm --stream 'count 1 to 5'"
-	@echo "   cd $(CURDIR) && ./demos/llm --api responses 'hi'"
-	@echo "   cd $(CURDIR) && ./demos/llm --api messages --stream 'count 1 to 5'"
+	@echo "   cd $(CURDIR) && ./demos/llm --api messages 'hi'"
 	@echo "   cd $(CURDIR) && ./demos/llm --model amazon.nova-lite-v1:0 'hi'"
 	@echo "   cd $(CURDIR) && ./demos/llm models"
+	@echo ""
+	@echo "   # Fallback demo (uses sk-fallback key for routing):"
+	@echo "   cd $(CURDIR)/demos/fallback && make demo"
+	@echo ""
+	@echo "   # Traffic split demo (uses sk-split key for routing):"
+	@echo "   cd $(CURDIR)/demos/split && make demo"
 	@echo ""
 	@echo "   # Image generation demos (/v1/images/generations):"
 	@echo "   cd $(CURDIR) && ./demos/images"
@@ -125,6 +131,8 @@ demo:
 	@echo "   cd $(CURDIR) && ./demos/mcp profile=default"
 	@echo "   cd $(CURDIR) && ORANGE_MCP_SESSION_ID=<session> ./demos/mcp profile=default list"
 	@echo ""
+	@echo "   # CLI demos (all use ORANGE_API_KEY, defaults to demo/dio/sk-default):"
+	@echo ""
 	@echo "   # Claude Code CLI through orange (uses /v1/messages):"
 	@echo "   cd $(CURDIR) && ./demos/claude"
 	@echo "   cd $(CURDIR) && ./demos/claude -p 'hi'"
@@ -135,25 +143,19 @@ demo:
 	@echo ""
 	@echo "   # Codex CLI through orange (uses Responses API path):"
 	@echo "   cd $(CURDIR) && ./demos/codex"
+	@echo "   cd $(CURDIR) && ./demos/codex exec 'write a hello-world HTTP server in Go'"
 	@echo ""
 	@echo "   # Codex CLI through orange — WebSocket mode:"
 	@echo "   cd $(CURDIR) && ./demos/codex --ws"
+	@echo "   cd $(CURDIR) && ./demos/codex --ws exec 'write hello world in Rust'"
 	@echo ""
-	@echo "   # Codex CLI through orange — one-shot prompt:"
-	@echo "   cd $(CURDIR) && ./demos/codex exec \\"
-	@echo "     'write a hello-world HTTP server in Go'"
-	@echo ""
-	@echo "   # Codex CLI through orange — one-shot prompt over WebSocket:"
-	@echo "   cd $(CURDIR) && ./demos/codex --ws exec \\"
-	@echo "     'write a hello-world HTTP server in Go'"
-	@echo ""
-	@echo "   # Validate Codex is using orange's local model catalog:"
+	@echo "   # Validate Codex model catalog:"
 	@echo "   cd $(CURDIR) && ORANGE_CODEX_HOME=\"\$$(mktemp -d)\" ./demos/codex debug models \\"
-	@echo "     | jq '.models[] | select(.slug == \"gpt-4o-mini\") | {slug, context_window, max_context_window, supports_parallel_tool_calls}'"
+	@echo "     | jq '.models[] | select(.slug == \"gpt-4o-mini\")'"
 	@echo ""
-	@echo "   # Validate Codex over WebSocket with Codex-side WS trace logs:"
+	@echo "   # Codex over WebSocket with trace logs:"
 	@echo "   cd $(CURDIR) && ORANGE_CODEX_HOME=\"\$$(mktemp -d)\" ORANGE_CODEX_TRACE=1 \\"
-	@echo "     ./demos/codex --ws exec --json 'reply with exactly: orange responsesws ok'"
+	@echo "     ./demos/codex --ws exec 'write a hello-world HTTP server'"
 	@echo ""
 	@echo "   # AWS Bedrock (amazon.nova-lite-v1:0 → bedrock-runtime.us-east-1.amazonaws.com)"
 	@echo "   curl -s localhost:8080/v1/chat/completions -H 'content-type: application/json' \\"
@@ -187,62 +189,10 @@ $(CURDIR)/envoy.yaml: $(CURDIR)/envoy.tmpl.yaml
 # which produces ECONNREFUSED → Envoy connect-failure → retry → vertex_anthropic fallback.
 # No stubs required; the real Vertex AI endpoint serves the fallback attempt.
 demo-fallback: build $(ENVOY_BIN)
-	@if [ -z "$${GCP_PROJECT}" ]; then \
-	  echo "GCP_PROJECT is unset — set it in examples/orange/.env or on the command line"; exit 1; fi
-	@if [ -z "$${GCP_SERVICE_ACCOUNT_JSON}" ]; then \
-	  echo "GCP_SERVICE_ACCOUNT_JSON is unset — set it in examples/orange/.env or on the command line"; exit 1; fi
-	@echo "=== orange fallback demo ==="
-	@echo ""
-	@echo "  Primary  : https://192.0.2.1 (TEST-NET-1, connect-timeout)"
-	@echo "  Primary2 : https://192.0.2.2 (TEST-NET-1, connect-timeout)"
-	@echo "  Primary3 : https://192.0.2.3 (TEST-NET-1, connect-timeout)"
-	@echo "  Fallback : https://us-east5-aiplatform.googleapis.com (Vertex AI)"
-	@echo ""
-	@echo "  Run from another shell:"
-	@echo "  curl -s localhost:8080/v1/messages \\"
-	@echo "    -H 'content-type: application/json' \\"
-	@echo "    -H 'authorization: Bearer demo/maya/sk-fallback' \\"
-	@echo "    -d '{\"model\":\"claude-haiku-4-5\",\"max_tokens\":32,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'"
-	@echo ""
-	@FALLBACK_ENVOY_YAML=$$(mktemp /tmp/orange-fallback-envoy.XXXXXX.yaml) ; \
-	 trap "rm -f $$FALLBACK_ENVOY_YAML" EXIT INT TERM ; \
-	 ORANGE_TRUSTED_CA=$(ORANGE_TRUSTED_CA) envsubst '$$ORANGE_TRUSTED_CA' \
-	   < $(CURDIR)/demos/fallback/envoy.tmpl.yaml > $$FALLBACK_ENVOY_YAML ; \
-	 ORANGE_CONFIG=$(CURDIR)/demos/fallback/orange.yaml \
-	 ENVOY_DYNAMIC_MODULES_SEARCH_PATH=$(CURDIR) \
-	 GODEBUG=cgocheck=0 \
-	 $(ENVOY_BIN) -c $$FALLBACK_ENVOY_YAML --log-level info
+	$(MAKE) -C $(CURDIR)/demos/fallback demo ENVOY_BIN=$(ENVOY_BIN) ORANGE_TRUSTED_CA=$(ORANGE_TRUSTED_CA)
 
 demo-split: build $(ENVOY_BIN)
-	@if [ -z "$${GCP_PROJECT}" ]; then \
-	  echo "GCP_PROJECT is unset — set it in examples/orange/.env or on the command line"; exit 1; fi
-	@if [ -z "$${GCP_SERVICE_ACCOUNT_JSON}" ]; then \
-	  echo "GCP_SERVICE_ACCOUNT_JSON is unset — set it in examples/orange/.env or on the command line"; exit 1; fi
-	@echo "=== orange split demo ==="
-	@echo ""
-	@echo "  Split   : claude-haiku-4-5 across primary / primary2 / primary3"
-	@echo "            all pointing to Vertex AI us-east5 — every arm succeeds"
-	@echo "  Weights : 34 / 33 / 33"
-	@echo ""
-	@echo "  Run from another shell (10-20 times, watch provider_backend distribution):"
-	@echo "  for i in \$$(seq 1 20); do \\"
-	@echo "    curl -s localhost:8080/v1/messages \\"
-	@echo "      -H 'content-type: application/json' \\"
-	@echo "      -H 'authorization: Bearer demo/maya/sk-split' \\"
-	@echo "      -d '{\"model\":\"claude-haiku-4-5\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}' \\"
-	@echo "      > /dev/null; done"
-	@echo ""
-	@echo "  Then pipe the access log through jq to see the distribution:"
-	@echo "  # (in the terminal running envoy) | jq -r '.provider_backend'"
-	@echo ""
-	@SPLIT_ENVOY_YAML=$$(mktemp /tmp/orange-split-envoy.XXXXXX.yaml) ; \
-	 trap "rm -f $$SPLIT_ENVOY_YAML" EXIT INT TERM ; \
-	 ORANGE_TRUSTED_CA=$(ORANGE_TRUSTED_CA) envsubst '$$ORANGE_TRUSTED_CA' \
-	   < $(CURDIR)/demos/split/envoy.tmpl.yaml > $$SPLIT_ENVOY_YAML ; \
-	 ORANGE_CONFIG=$(CURDIR)/demos/split/orange.yaml \
-	 ENVOY_DYNAMIC_MODULES_SEARCH_PATH=$(CURDIR) \
-	 GODEBUG=cgocheck=0 \
-	 $(ENVOY_BIN) -c $$SPLIT_ENVOY_YAML --log-level info
+	$(MAKE) -C $(CURDIR)/demos/split demo ENVOY_BIN=$(ENVOY_BIN) ORANGE_TRUSTED_CA=$(ORANGE_TRUSTED_CA)
 
 .PHONY: proto-deps
 proto-deps: ## Update buf module dependencies (writes buf.lock).

@@ -57,14 +57,12 @@ static_resources:
                             cluster: orange_default
                             timeout: 60s
                             retry_policy:
-                              # Base floor — enables RetryStateImpl so that orange's
-                              # per-request x-envoy-* headers (injected by match from
-                              # chain.retry in orange.yaml) are honoured.
-                              # num_retries and per_try_timeout are auto-derived from
-                              # the chain config; retriable_status_codes is additive.
+                              # Ceiling for the full chain; x-envoy-max-retries and
+                              # x-envoy-upstream-rq-per-try-timeout-ms will override
+                              # per-request once that injection is wired in match.
                               retry_on: "connect-failure,reset,5xx,gateway-error,retriable-status-codes"
                               retriable_status_codes: [429]
-                              num_retries: 1
+                              num_retries: 7
                               retry_back_off:
                                 base_interval: 0.1s
                                 max_interval: 1s

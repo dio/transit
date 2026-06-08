@@ -36,22 +36,20 @@ llm:
       auth:
         type: gcp
         secret_ref: env://GCP_SERVICE_ACCOUNT_JSON
-  models: {}
+  models:
+    claude-haiku-4-5:
+      provider: primary
 
 keys:
-  demo/maya/sk-fallback:
-    workspace: demo
-    user: maya
-    llm:
-      models:
-        claude-haiku-4-5:
-          routing:
-            chain:
-              retry:
-                retry_on: "connect-failure,reset,5xx,retriable-status-codes"
-                per_try_timeout_ms: 10000
-              children:
-                - target: { provider: primary,  name: claude-haiku-4-5 }
-                - target: { provider: primary2, name: claude-haiku-4-5 }
-                - target: { provider: primary3, name: claude-haiku-4-5 }
-                - target: { provider: vertex_anthropic, name: claude-opus-4@20250514 }
+  demo/dio/sk-fallback:
+    routing_overrides:
+      claude-haiku-4-5:
+        chain:
+          retry:
+            retry_on: "connect-failure,reset,5xx,retriable-status-codes"
+            per_try_timeout_ms: 10000
+          children:
+            - target: { provider: primary,  name: claude-haiku-4-5 }
+            - target: { provider: primary2, name: claude-haiku-4-5 }
+            - target: { provider: primary3, name: claude-haiku-4-5 }
+            - target: { provider: vertex_anthropic, name: claude-opus-4@20250514 }

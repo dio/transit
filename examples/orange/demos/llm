@@ -3,6 +3,7 @@ set -euo pipefail
 
 BASE_URL="${ORANGE_LLM_BASE_URL:-http://localhost:8080}"
 SHOW_HEADERS="${ORANGE_LLM_SHOW_HEADERS:-0}"
+API_KEY="${ORANGE_API_KEY:-demo/dio/sk-default}"
 API="chat"
 MODEL=""
 MESSAGE="hi"
@@ -28,6 +29,8 @@ Options:
 Environment:
   ORANGE_LLM_BASE_URL      Base URL. Default: http://localhost:8080
   ORANGE_LLM_SHOW_HEADERS  Set to 1 to print headers (or --headers)
+  ORANGE_API_KEY           API key (Bearer token). Default: demo/dio/sk-default
+                           Other keys: demo/dio/sk-fallback, demo/dio/sk-split
 
 Default models per API:
   chat         /v1/chat/completions       gpt-4o-mini
@@ -178,7 +181,7 @@ do_send() {
   local payload
   payload="$(build_payload "$model" "$MESSAGE" "$stream_flag")"
   local headers="$tmpdir/headers"
-  local curl_flags=(-sS -H 'content-type: application/json' --data-binary "$payload")
+  local curl_flags=(-sS -H 'content-type: application/json' -H "Authorization: Bearer $API_KEY" --data-binary "$payload")
   if [[ "$STREAM" -eq 1 ]]; then
     curl_flags+=(-N)
   fi
@@ -220,7 +223,7 @@ do_count_tokens() {
   local headers="$tmpdir/headers"
   local body="$tmpdir/body"
   local code
-  code="$(curl -sS -H 'content-type: application/json' \
+  code="$(curl -sS -H 'content-type: application/json' -H "Authorization: Bearer $API_KEY" \
     --data-binary "$payload" \
     -D "$headers" -o "$body" -w '%{http_code}' "$url")"
   print_response_headers "$headers"
@@ -256,7 +259,7 @@ do_embed() {
   local headers="$tmpdir/headers"
   local body="$tmpdir/body"
   local code
-  code="$(curl -sS -H 'content-type: application/json' \
+  code="$(curl -sS -H 'content-type: application/json' -H "Authorization: Bearer $API_KEY" \
     --data-binary "$payload" \
     -D "$headers" -o "$body" -w '%{http_code}' "$url")"
   print_response_headers "$headers"
@@ -290,7 +293,7 @@ do_models() {
   local headers="$tmpdir/headers"
   local body="$tmpdir/body"
   local code
-  code="$(curl -sS -D "$headers" -o "$body" -w '%{http_code}' "$url")"
+  code="$(curl -sS -H "Authorization: Bearer $API_KEY" -D "$headers" -o "$body" -w '%{http_code}' "$url")"
   print_response_headers "$headers"
   if [[ "$code" == 404 || "$code" == 503 ]]; then
     echo "HTTP $code from $url" >&2
