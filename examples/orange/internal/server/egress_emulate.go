@@ -31,6 +31,7 @@ func newEgressProxyCmd() *cobra.Command {
 		Use:   "egress",
 		Short: "Egress proxy operations (uses bundle credentials, not admin API key)",
 	}
+	cmd.AddCommand(newEgressServeCmd())
 	cmd.AddCommand(newEgressEmulateCmd())
 	cmd.AddCommand(newEgressVerifyCmd())
 	return cmd
