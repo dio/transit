@@ -2,8 +2,8 @@ package server
 
 // egress_serve.go — "orange egress serve" launches the Envoy proxy for a local
 // egress instance. It renders the embedded envoy.tmpl.yaml (substituting
-// ${ORANGE_TRUSTED_CA}), writes the result to ~/.orange/egress/envoy.yaml, and
-// exec's envoy with the orange dynamic module wired up.
+// ${ORANGE_TRUSTED_CA}) and passes the result inline via Envoy's --config-yaml
+// flag, so no config file is written to disk.
 //
 // Signal handling: SIGINT/SIGTERM are forwarded to the envoy process so it can
 // drain connections gracefully rather than being hard-killed.
@@ -32,25 +32,24 @@ func newEgressServeCmd() *cobra.Command {
 		modulePath string
 		trustedCA  string
 		logLevel   string
-		configDir  string
 	)
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Run the Envoy proxy for this egress instance",
-		Long: `Serve renders the embedded Envoy config template, writes it to
-~/.orange/egress/envoy.yaml, and launches Envoy with the orange dynamic module.
+		Long: `Serve renders the embedded Envoy config template and launches Envoy with
+the orange dynamic module — equivalent to "make run" but self-contained.
 
-Equivalent to "make run" but self-contained: no Makefile, no envsubst needed.
+The rendered config is passed inline via --config-yaml; no file is written.
 
 Environment variable mapping:
   --envoy-bin    ENVOY_BIN                          default: ~/.orange/bin/envoy, then PATH
-  --config       ORANGE_CONFIG                      required: path to orange.yaml
+  --config       ORANGE_CONFIG                      required for now; later: ORANGE_CONFIG_URL / ORANGE_CLIENT_BUNDLE
   --module-path  ENVOY_DYNAMIC_MODULES_SEARCH_PATH  default: directory of the orange binary
   --trusted-ca   ORANGE_TRUSTED_CA                  default: OS trust bundle
 
 For development with "go run" the orange binary resolves to a temp path, so
-set --module-path (or ENVOY_DYNAMIC_MODULES_SEARCH_PATH) to the directory that
-contains liborange.so (typically examples/orange/).`,
+set --module-path (or ENVOY_DYNAMIC_MODULES_SEARCH_PATH) to the directory
+containing liborange.so (typically examples/orange/).`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// ── envoy binary ──────────────────────────────────────────────────
@@ -70,6 +69,8 @@ contains liborange.so (typically examples/orange/).`,
 			}
 
 			// ── orange config ─────────────────────────────────────────────────
+			// TODO: accept ORANGE_CONFIG_URL and ORANGE_CLIENT_BUNDLE as
+			// alternatives once the CP-based config path is implemented.
 			if orangeCfg == "" {
 				orangeCfg = os.Getenv("ORANGE_CONFIG")
 			}
@@ -95,19 +96,8 @@ contains liborange.so (typically examples/orange/).`,
 				return fmt.Errorf("trusted CA bundle %q not readable: %w", trustedCA, err)
 			}
 
-			// ── render and write envoy config ─────────────────────────────────
+			// ── render config inline ──────────────────────────────────────────
 			rendered := strings.ReplaceAll(envoyConfigTemplate, "${ORANGE_TRUSTED_CA}", trustedCA)
-			if configDir == "" {
-				home, _ := os.UserHomeDir()
-				configDir = filepath.Join(home, ".orange", "egress")
-			}
-			if err := os.MkdirAll(configDir, 0o700); err != nil {
-				return fmt.Errorf("create config dir %s: %w", configDir, err)
-			}
-			envoyYAMLPath := filepath.Join(configDir, "envoy.yaml")
-			if err := os.WriteFile(envoyYAMLPath, []byte(rendered), 0o644); err != nil {
-				return fmt.Errorf("write %s: %w", envoyYAMLPath, err)
-			}
 
 			// ── dynamic module search path ────────────────────────────────────
 			if modulePath == "" {
@@ -124,7 +114,6 @@ contains liborange.so (typically examples/orange/).`,
 
 			// ── startup summary ───────────────────────────────────────────────
 			fmt.Fprintf(os.Stderr, "egress:serve  envoy=%s\n", envoyBin)
-			fmt.Fprintf(os.Stderr, "egress:serve  config=%s\n", envoyYAMLPath)
 			fmt.Fprintf(os.Stderr, "egress:serve  ORANGE_CONFIG=%s\n", absOrangeCfg)
 			fmt.Fprintf(os.Stderr, "egress:serve  ENVOY_DYNAMIC_MODULES_SEARCH_PATH=%s\n", modulePath)
 			fmt.Fprintf(os.Stderr, "egress:serve  ORANGE_TRUSTED_CA=%s\n", trustedCA)
@@ -134,7 +123,7 @@ contains liborange.so (typically examples/orange/).`,
 			// Use cmd.Start + manual signal forwarding (not exec.CommandContext)
 			// so SIGTERM/SIGINT are forwarded to envoy for a graceful drain
 			// rather than being hard-killed by the Go runtime.
-			envoyProc := exec.Command(envoyBin, "-c", envoyYAMLPath, "--log-level", logLevel)
+			envoyProc := exec.Command(envoyBin, "--config-yaml", rendered, "--log-level", logLevel)
 			envoyProc.Env = append(os.Environ(),
 				"GODEBUG=cgocheck=0",
 				"ORANGE_CONFIG="+absOrangeCfg,
@@ -167,7 +156,6 @@ contains liborange.so (typically examples/orange/).`,
 	cmd.Flags().StringVar(&modulePath, "module-path", "", "ENVOY_DYNAMIC_MODULES_SEARCH_PATH (default: dir of orange binary)")
 	cmd.Flags().StringVar(&trustedCA, "trusted-ca", "", "TLS trust bundle path (env: ORANGE_TRUSTED_CA)")
 	cmd.Flags().StringVar(&logLevel, "log-level", "info", "envoy log level")
-	cmd.Flags().StringVar(&configDir, "config-dir", "", "directory to write rendered envoy.yaml (default: ~/.orange/egress)")
 	return cmd
 }
 
