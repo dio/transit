@@ -65,7 +65,8 @@ Five top-level keys:
 - `mcp`: admin-owned MCP servers
 - `profiles`: user-owned MCP tool filters
 - `keys`: user-owned LLM routing overrides
-- `rate_limits`: admin-owned spend and throughput policies
+- `rate_limit`: admin-owned spend and throughput configuration — split into `rules`
+  (named tier primitives) and `policies` (per-scope assignments)
 
 Admin-owned sections are small and can change over time. They are loaded,
 validated, compiled, and published as immutable snapshots.
@@ -83,7 +84,7 @@ User-owned record IDs use this convention:
 The path is the identity. There are no `workspace` or `user` fields inside the
 record body.
 
-`rate_limits` keys use a prefix of the same convention — 1, 2, or 3 segments:
+`rate_limit.policies` keys use a prefix of the same convention — 1, 2, or 3 segments:
 
 ```text
 "demo"               workspace scope — applies to all keys under demo
@@ -200,23 +201,32 @@ keys:
             - target: { provider: fallback_p1, name: claude-haiku-4-5 }
             - target: { provider: vertex_anthropic, name: "claude-opus-4@20250514" }
 
-rate_limits:
-  demo:                          # workspace ceiling — affects every demo key
-    - models: ["*"]
+rate_limit:
+  rules:                         # named tier primitives — reusable limit sets
+    standard:
+      usd_per_day: 200.00
+      rpm: 100
+    premium:
       usd_per_day: 1_000.00
       rpm: 500
+      input_tokens_per_hour: 4_000_000
 
-  demo/adi:                      # user ceiling — stacks on top of workspace rule
-    - models: ["*"]
-      usd_per_day: 200.00
+  policies:
+    demo:                        # workspace ceiling — affects every demo key
+      - rule: premium            # inherit the premium tier
+        models: ["*"]
 
-  demo/adi/sk-direct:            # key override — stacks on top of both above
-    - models: [claude-haiku-4-5, gpt-4o-mini]
-      usd_per_hour: 5.00
-      input_tokens_per_hour: 800_000
-      on_exceed: reject
-    - models: ["*"]              # catch-all for any other model this key calls
-      rpm: 20
+    demo/adi:                    # user ceiling — stacks on top of workspace rule
+      - rule: standard           # inherit the standard tier
+        models: ["*"]
+
+    demo/adi/sk-direct:          # key override — stacks on top of both above
+      - models: [claude-haiku-4-5, gpt-4o-mini]
+        usd_per_hour: 5.00
+        input_tokens_per_hour: 800_000
+        on_exceed: reject
+      - models: ["*"]            # catch-all for any other model this key calls
+        rpm: 20
 ```
 
 ---
@@ -687,13 +697,13 @@ func protoToRaw(p *configpb.ConfigPayload) (*RawConfig, error) {
         }
     }
 
-    // profiles, keys, rate_limits follow the same expand-then-map pattern
+    // profiles, keys, rate_limit.policies follow the same expand-then-map pattern
     // (structure mirrors providers/servers above)
 
     return &RawConfig{
         LLM: RawLLM{Providers: providers, Models: models},
         MCP: RawMCP{Servers: servers},
-        // Profiles, Keys, RateLimits populated similarly
+        // Profiles, Keys, RateLimit.Policies populated similarly
     }, nil
 }
 ```
@@ -775,11 +785,20 @@ Rules for raw structs:
 
 ```go
 type RawConfig struct {
-    LLM        RawLLM                        `yaml:"llm"`
-    MCP        RawMCP                        `yaml:"mcp"`
-    Profiles   map[string]RawProfile         `yaml:"profiles,omitempty"`
-    Keys       map[string]RawKey             `yaml:"keys,omitempty"`
-    RateLimits map[string][]RawRateLimitRule `yaml:"rate_limits,omitempty"`
+    LLM       RawLLM                `yaml:"llm"`
+    MCP       RawMCP                `yaml:"mcp"`
+    Profiles  map[string]RawProfile `yaml:"profiles,omitempty"`
+    Keys      map[string]RawKey     `yaml:"keys,omitempty"`
+    RateLimit RawRateLimit          `yaml:"rate_limit,omitempty"`
+}
+
+// RawRateLimit is the top-level rate-limiting config section.
+// Tiers are named primitives authored in YAML; orange CP expands them into
+// policy entries server-side before encoding the snapshot proto, so Tiers is
+// always empty on the proto decode path.
+type RawRateLimit struct {
+    Tiers    map[string]RawRateLimitTier          `yaml:"rules,omitempty"`
+    Policies map[string][]RawRateLimitPolicyEntry `yaml:"policies,omitempty"`
 }
 
 type RawLLM struct {
@@ -881,11 +900,44 @@ type RawRoutingTarget struct {
     Name     string `yaml:"name,omitempty"`
 }
 
-// RawRateLimitRule is one entry in a rate_limits scope list.
-// All numeric fields default to zero, which means unconstrained for that
-// dimension. Multiple limits on the same rule are independent — whichever
-// is exhausted first triggers on_exceed.
-type RawRateLimitRule struct {
+// RawRateLimitTier defines a named rate-limit tier — a reusable set of limit
+// values referenced by policy entries via the rule: field. Tiers have no
+// Models filter; model applicability is controlled by the policy entry.
+// Zero values mean unconstrained for that dimension.
+type RawRateLimitTier struct {
+    USDPerMinute decimal.Decimal `yaml:"usd_per_minute,omitempty"`
+    USDPerHour   decimal.Decimal `yaml:"usd_per_hour,omitempty"`
+    USDPerDay    decimal.Decimal `yaml:"usd_per_day,omitempty"`
+
+    RPM int `yaml:"rpm,omitempty"`
+    RPH int `yaml:"rph,omitempty"`
+    RPD int `yaml:"rpd,omitempty"`
+
+    InputTokensPerMinute int `yaml:"input_tokens_per_minute,omitempty"`
+    InputTokensPerHour   int `yaml:"input_tokens_per_hour,omitempty"`
+    InputTokensPerDay    int `yaml:"input_tokens_per_day,omitempty"`
+
+    OutputTokensPerMinute int `yaml:"output_tokens_per_minute,omitempty"`
+    OutputTokensPerHour   int `yaml:"output_tokens_per_hour,omitempty"`
+    OutputTokensPerDay    int `yaml:"output_tokens_per_day,omitempty"`
+
+    CacheReadTokensPerHour int `yaml:"cache_read_tokens_per_hour,omitempty"`
+    CacheReadTokensPerDay  int `yaml:"cache_read_tokens_per_day,omitempty"`
+
+    CacheWriteTokensPerHour int `yaml:"cache_write_tokens_per_hour,omitempty"`
+    CacheWriteTokensPerDay  int `yaml:"cache_write_tokens_per_day,omitempty"`
+
+    OnExceed string `yaml:"on_exceed,omitempty"`
+}
+
+// RawRateLimitPolicyEntry is one entry in a rate_limit.policies scope list.
+// Rule names a tier from rate_limit.rules; its fields are used as the base,
+// and any non-zero inline fields on this entry override the tier.
+// Either Rule or inline fields (or both) must be set.
+// Models must be non-empty; use ["*"] as a catch-all.
+// All numeric fields default to zero, meaning unconstrained for that dimension.
+type RawRateLimitPolicyEntry struct {
+    Rule   string   `yaml:"rule,omitempty"` // names a RawRateLimitTier
     Models []string `yaml:"models"`
 
     USDPerMinute decimal.Decimal `yaml:"usd_per_minute,omitempty"`
@@ -896,16 +948,16 @@ type RawRateLimitRule struct {
     RPH int `yaml:"rph,omitempty"`
     RPD int `yaml:"rpd,omitempty"`
 
-    InputTokensPerMinute  int `yaml:"input_tokens_per_minute,omitempty"`
-    InputTokensPerHour    int `yaml:"input_tokens_per_hour,omitempty"`
-    InputTokensPerDay     int `yaml:"input_tokens_per_day,omitempty"`
+    InputTokensPerMinute int `yaml:"input_tokens_per_minute,omitempty"`
+    InputTokensPerHour   int `yaml:"input_tokens_per_hour,omitempty"`
+    InputTokensPerDay    int `yaml:"input_tokens_per_day,omitempty"`
 
     OutputTokensPerMinute int `yaml:"output_tokens_per_minute,omitempty"`
     OutputTokensPerHour   int `yaml:"output_tokens_per_hour,omitempty"`
     OutputTokensPerDay    int `yaml:"output_tokens_per_day,omitempty"`
 
-    CacheReadTokensPerHour  int `yaml:"cache_read_tokens_per_hour,omitempty"`
-    CacheReadTokensPerDay   int `yaml:"cache_read_tokens_per_day,omitempty"`
+    CacheReadTokensPerHour int `yaml:"cache_read_tokens_per_hour,omitempty"`
+    CacheReadTokensPerDay  int `yaml:"cache_read_tokens_per_day,omitempty"`
 
     CacheWriteTokensPerHour int `yaml:"cache_write_tokens_per_hour,omitempty"`
     CacheWriteTokensPerDay  int `yaml:"cache_write_tokens_per_day,omitempty"`
@@ -1047,7 +1099,7 @@ Invalid:
   /adi/sk-001            → empty workspace segment
 ```
 
-`rate_limits` scope keys follow the same segment rules but allow 1, 2, or 3
+`rate_limit.policies` scope keys follow the same segment rules but allow 1, 2, or 3
 segments. A 1-segment key is a workspace scope; 2-segment is a user scope;
 3-segment is a key scope.
 
@@ -1228,7 +1280,7 @@ type ServerRecord struct {
     ToolsInclude []string
 }
 
-// RateLimitRule is the compiled form of RawRateLimitRule.
+// RateLimitRule is the compiled form of RawRateLimitPolicyEntry (after tier expansion).
 type RateLimitRule struct {
     Models []string
 
@@ -1267,14 +1319,16 @@ func (r RateLimitRule) MatchesModel(modelID string) bool {
 }
 
 // GlobalConfig is the admin-owned configuration tree for one snapshot generation.
-// RateLimits holds only workspace-scope (1-segment) and user-scope (2-segment)
-// rules. Key-scope rules (3-segment) are user-managed and live in
-// KeyRecord.RateLimitRules (see §11).
+// RateLimit.Policies holds only workspace-scope (1-segment) and user-scope
+// (2-segment) entries after tier expansion. Key-scope entries (3-segment) are
+// user-managed and live in KeyRecord.RateLimitRules (see §11).
 type GlobalConfig struct {
     Providers  map[string]*ProviderRecord
     Models     map[string]*ModelRecord
     Servers    map[string]*ServerRecord
-    RateLimits map[string][]RateLimitRule // workspace and user scopes only
+    RateLimit  struct {
+        Policies map[string][]RateLimitRule // workspace and user scopes only; tiers already expanded
+    }
     Interns    *InternPool
 }
 ```
@@ -1314,7 +1368,7 @@ type KeyRecord struct {
     RoutingShapeKeys map[string]string
 
     // RateLimitRules holds key-scope rate-limit rules set by the key owner.
-    // Applied after workspace and user-scope rules from GlobalConfig.RateLimits;
+    // Applied after workspace and user-scope rules from GlobalConfig.RateLimit.Policies;
     // all three scopes accumulate — none short-circuits the others.
     RateLimitRules []RateLimitRule
 }
@@ -1330,7 +1384,7 @@ type ProfileRecord struct {
 ```
 
 **Rate-limit ownership.** Workspace and user-scope rules are admin-managed and
-live in `GlobalConfig.RateLimits`. Key-scope rules are set by the key owner
+live in `GlobalConfig.RateLimit.Policies`. Key-scope rules are set by the key owner
 (the user who holds the API key) and compile into `KeyRecord.RateLimitRules`.
 The full accumulation order is:
 
@@ -1455,7 +1509,7 @@ Compilation has four phases:
    user scopes only) — validate USD dependencies against compiled models.
    Key-scope entries (3 segments) are skipped here and handled in Phase 4.
 4. Compile user records from the snapshot payload: routing shapes and tool-filter
-   sets are interned into Pools; key-scope rate-limit rules from `raw.RateLimits`
+   sets are interned into Pools; key-scope rate-limit rules from `raw.RateLimit.Policies`
    are compiled into `KeyRecord.RateLimitRules`. Publish `ConfigSnapshot` only if
    all validation succeeds. Keys and Profiles are `nil` when absent from the payload.
 
@@ -1536,16 +1590,21 @@ func compile(
         }
     }
 
-    // Phase 3: rate limits
-    rateLimits := make(map[string][]RateLimitRule, len(raw.RateLimits))
-    for scope, rawRules := range raw.RateLimits {
+    // Phase 3: rate limits — expand tier references, then compile policy entries.
+    rateLimits := make(map[string][]RateLimitRule, len(raw.RateLimit.Policies))
+    for scope, rawRules := range raw.RateLimit.Policies {
         if err := validateScopeKey(scope); err != nil {
-            return nil, fmt.Errorf("rate_limits[%q]: %w", scope, err)
+            return nil, fmt.Errorf("rate_limit.policies[%q]: %w", scope, err)
         }
         rules := make([]RateLimitRule, len(rawRules))
         for i, r := range rawRules {
+            if r.Rule != "" {
+                if t, ok := raw.RateLimit.Tiers[r.Rule]; ok {
+                    r = applyTier(r, t)
+                }
+            }
             if len(r.Models) == 0 {
-                return nil, fmt.Errorf("rate_limits[%q][%d]: models must not be empty", scope, i)
+                return nil, fmt.Errorf("rate_limit.policies[%q][%d]: models must not be empty", scope, i)
             }
             if err := validateUSDDependency(r, models, scope, i); err != nil {
                 return nil, err
@@ -1623,18 +1682,18 @@ func compile(
     }, nil
 }
 
-func validateUSDDependency(r RawRateLimitRule, models map[string]*ModelRecord, scope string, i int) error {
+func validateUSDDependency(r RawRateLimitPolicyEntry, models map[string]*ModelRecord, scope string, i int) error {
     if r.USDPerMinute.IsZero() && r.USDPerHour.IsZero() && r.USDPerDay.IsZero() {
         return nil
     }
     check := func(modelID string) error {
         m, ok := models[modelID]
         if !ok {
-            return fmt.Errorf("rate_limits[%q][%d]: model %q not found", scope, i, modelID)
+            return fmt.Errorf("rate_limit.policies[%q][%d]: model %q not found", scope, i, modelID)
         }
         if m.Pricing == nil {
             return fmt.Errorf(
-                "rate_limits[%q][%d]: usd limit requires pricing block on model %q",
+                "rate_limit.policies[%q][%d]: usd limit requires pricing block on model %q",
                 scope, i, modelID,
             )
         }
@@ -1906,17 +1965,18 @@ Rate limits are resolved at request time after the key and model are known.
 Rules from all three scopes accumulate — none short-circuits the others.
 
 ```go
-// ResolveRateLimitRules returns all rules that apply to the given key+model
-// combination, ordered workspace → user → key.
+// ResolveRateLimitRules returns all policy entries that apply to the given
+// key+model combination, ordered workspace → user → key. Tier references
+// are already expanded by compile(); entries are ready for enforcement.
 func (g *GlobalConfig) ResolveRateLimitRules(keyID, modelID string) []RateLimitRule {
     parts := strings.SplitN(keyID, "/", 3)
     if len(parts) != 3 {
         return nil
     }
     var result []RateLimitRule
-    result = append(result, filterRulesByModel(g.RateLimits[parts[0]], modelID)...)
-    result = append(result, filterRulesByModel(g.RateLimits[parts[0]+"/"+parts[1]], modelID)...)
-    result = append(result, filterRulesByModel(g.RateLimits[keyID], modelID)...)
+    result = append(result, filterRulesByModel(g.RateLimit.Policies[parts[0]], modelID)...)
+    result = append(result, filterRulesByModel(g.RateLimit.Policies[parts[0]+"/"+parts[1]], modelID)...)
+    result = append(result, filterRulesByModel(g.RateLimit.Policies[keyID], modelID)...)
     return result
 }
 
@@ -1931,28 +1991,55 @@ func filterRulesByModel(rules []RateLimitRule, modelID string) []RateLimitRule {
 }
 ```
 
+### Tier expansion
+
+Before compile stores policy entries into `GlobalConfig`, it expands tier
+references. For each `RawRateLimitPolicyEntry` with a non-empty `Rule` field,
+the named `RawRateLimitTier` is looked up from `raw.RateLimit.Tiers` and merged
+in — entry inline fields take precedence, tier fields fill in zeros:
+
+```go
+func applyTier(entry RawRateLimitPolicyEntry, tier RawRateLimitTier) RawRateLimitPolicyEntry {
+    if entry.USDPerDay.IsZero() { entry.USDPerDay = tier.USDPerDay }
+    if entry.RPM == 0           { entry.RPM = tier.RPM }
+    // ... all other fields
+    return entry
+}
+```
+
+The proto decode path produces entries with `Rule: ""` — orange CP expands tiers
+server-side before encoding the snapshot proto. `Tiers` is always empty on the
+wire; it is a YAML-authoring convenience only.
+
 ### Accumulation walkthrough
 
 Given this config:
 
 ```yaml
-rate_limits:
-  demo:
-    - models: ["*"]
+rate_limit:
+  rules:
+    standard:
+      usd_per_day: 200.00
+      rpm: 100
+    premium:
       usd_per_day: 1_000.00
       rpm: 500
 
-  demo/adi:
-    - models: ["*"]
-      usd_per_day: 200.00
-      rpm: 100
+  policies:
+    demo:
+      - rule: premium
+        models: ["*"]
 
-  demo/adi/sk-direct:
-    - models: [claude-haiku-4-5, gpt-4o-mini]
-      usd_per_hour: 5.00
-      input_tokens_per_hour: 800_000
-    - models: ["*"]
-      rpm: 20
+    demo/adi:
+      - rule: standard
+        models: ["*"]
+
+    demo/adi/sk-direct:
+      - models: [claude-haiku-4-5, gpt-4o-mini]
+        usd_per_hour: 5.00
+        input_tokens_per_hour: 800_000
+      - models: ["*"]
+        rpm: 20
 ```
 
 A request from key `demo/adi/sk-direct` calling `claude-haiku-4-5`:
@@ -1968,7 +2055,7 @@ All four checks must pass. The request is rejected if any counter is exhausted.
 
 ### Counter storage
 
-`GlobalConfig.RateLimits` carries only policy definitions. Actual counters are
+`GlobalConfig.RateLimit.Policies` carries only policy definitions. Actual counters are
 owned by the enforcement layer: a sidecar, Redis cluster, or in-process atomics
 depending on deployment. The config system does not track enforcement state.
 
@@ -2634,7 +2721,133 @@ create trigger profiles_updated_at
     for each row execute function touch_updated_at();
 ```
 
-### 18.3 Rate limit counter tables
+### 18.3 Rate limit authoring tables
+
+These are the control-plane source of truth for `rate_limit.rules` and
+`rate_limit.policies`. The data plane never reads from these tables directly; the
+control plane reads them at compile time, expands tier references into policy
+entries, embeds the result in the `SnapshotEnvelope` proto, and writes the
+compiled blob to `config_snapshots`. The snapshot payload contains already-
+expanded policy entries — tiers are a YAML/admin-API authoring convenience.
+
+#### `rate_limit_tiers`
+
+```sql
+-- Named tier primitives (rate_limit.rules in YAML).
+-- Each row is one named tier; all limit fields default to 0 (unconstrained).
+create table rate_limit_tiers (
+    name        text        not null,   -- unique tier name, e.g. "standard", "premium"
+
+    -- Spend limits (stored as exact numeric to avoid float rounding).
+    usd_per_minute  numeric(18,8)   not null default 0,
+    usd_per_hour    numeric(18,8)   not null default 0,
+    usd_per_day     numeric(18,8)   not null default 0,
+
+    -- Request rate limits.
+    rpm     int     not null default 0,
+    rph     int     not null default 0,
+    rpd     int     not null default 0,
+
+    -- Token throughput limits.
+    input_tokens_per_minute     int     not null default 0,
+    input_tokens_per_hour       int     not null default 0,
+    input_tokens_per_day        int     not null default 0,
+    output_tokens_per_minute    int     not null default 0,
+    output_tokens_per_hour      int     not null default 0,
+    output_tokens_per_day       int     not null default 0,
+    cache_read_tokens_per_hour  int     not null default 0,
+    cache_read_tokens_per_day   int     not null default 0,
+    cache_write_tokens_per_hour int     not null default 0,
+    cache_write_tokens_per_day  int     not null default 0,
+
+    on_exceed   on_exceed_action    not null default 'reject',
+
+    created_at  timestamptz not null default now(),
+    updated_at  timestamptz not null default now(),
+    deleted_at  timestamptz,            -- soft delete; NULL = active
+
+    constraint rate_limit_tiers_pk primary key (name),
+    constraint rate_limit_tiers_name_nonempty check (name <> '')
+);
+
+create index rate_limit_tiers_updated_at_idx
+    on rate_limit_tiers (updated_at desc)
+    where deleted_at is null;
+
+create trigger rate_limit_tiers_updated_at
+    before update on rate_limit_tiers
+    for each row execute function touch_updated_at();
+
+comment on table rate_limit_tiers is
+    'Named rate-limit tier primitives (rate_limit.rules in YAML). '
+    'Referenced by rate_limit_policies.tier_name. '
+    'Control plane expands references before compiling the snapshot; '
+    'the snapshot proto carries only expanded policy entries.';
+```
+
+#### `rate_limit_policies`
+
+```sql
+-- Per-scope policy assignments (rate_limit.policies in YAML).
+-- scope follows the workspace/user/name path convention with 1–3 segments.
+-- Inline limit fields (non-zero) override the named tier; either tier_name
+-- or at least one inline limit field must be set — enforced by application.
+create table rate_limit_policies (
+    id          bigint      generated always as identity primary key,
+    scope       text        not null,   -- e.g. "demo", "demo/adi", "demo/adi/sk-vip"
+    models      text[]      not null,   -- client-facing model IDs; '{*}' = catch-all
+    tier_name   text        references rate_limit_tiers (name),  -- may be null (inline-only entry)
+    sort_order  int         not null default 0,  -- order within a scope's entry list
+
+    -- Inline overrides (0 = inherit from tier or unconstrained).
+    usd_per_minute  numeric(18,8)   not null default 0,
+    usd_per_hour    numeric(18,8)   not null default 0,
+    usd_per_day     numeric(18,8)   not null default 0,
+    rpm     int     not null default 0,
+    rph     int     not null default 0,
+    rpd     int     not null default 0,
+    input_tokens_per_minute     int not null default 0,
+    input_tokens_per_hour       int not null default 0,
+    input_tokens_per_day        int not null default 0,
+    output_tokens_per_minute    int not null default 0,
+    output_tokens_per_hour      int not null default 0,
+    output_tokens_per_day       int not null default 0,
+    cache_read_tokens_per_hour  int not null default 0,
+    cache_read_tokens_per_day   int not null default 0,
+    cache_write_tokens_per_hour int not null default 0,
+    cache_write_tokens_per_day  int not null default 0,
+
+    on_exceed   on_exceed_action,       -- NULL = inherit from tier or use default
+
+    created_at  timestamptz not null default now(),
+    updated_at  timestamptz not null default now(),
+    deleted_at  timestamptz,
+
+    constraint rate_limit_policies_scope_nonempty check (scope <> ''),
+    constraint rate_limit_policies_models_nonempty check (array_length(models, 1) > 0)
+);
+
+-- Compile query: fetch all active entries ordered per scope.
+create index rate_limit_policies_scope_idx
+    on rate_limit_policies (scope, sort_order)
+    where deleted_at is null;
+
+create index rate_limit_policies_tier_idx
+    on rate_limit_policies (tier_name)
+    where tier_name is not null and deleted_at is null;
+
+create trigger rate_limit_policies_updated_at
+    before update on rate_limit_policies
+    for each row execute function touch_updated_at();
+
+comment on table rate_limit_policies is
+    'Per-scope rate-limit policy assignments (rate_limit.policies in YAML). '
+    'Tier references are expanded by the control plane at compile time. '
+    'The snapshot proto stores only expanded entries; this table is the '
+    'authoring source of truth.';
+```
+
+### 18.4 Rate limit counter tables
 
 These tables are owned by the enforcement layer. They are not read by the config
 pipeline; they are listed here so the full persistence picture is in one place.
