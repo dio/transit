@@ -18,6 +18,8 @@ import (
 	egressconnect "github.com/dio/transit/examples/orange/api/orange/egress/admin/v1/adminv1connect"
 	orgv1 "github.com/dio/transit/examples/orange/api/orange/org/admin/v1"
 	orgconnect "github.com/dio/transit/examples/orange/api/orange/org/admin/v1/adminv1connect"
+	profilev1 "github.com/dio/transit/examples/orange/api/orange/profile/admin/v1"
+	profileconnect "github.com/dio/transit/examples/orange/api/orange/profile/admin/v1/adminv1connect"
 	projectv1 "github.com/dio/transit/examples/orange/api/orange/project/admin/v1"
 	projectconnect "github.com/dio/transit/examples/orange/api/orange/project/admin/v1/adminv1connect"
 	secretv1 "github.com/dio/transit/examples/orange/api/orange/secret/admin/v1"
@@ -276,6 +278,12 @@ func (s *replState) dispatch(line string) error {
 
 	case "keyentry-routing", "ker":
 		return s.cmdKeyEntryRouting(toks[1:])
+
+	case "profile", "prof":
+		return s.cmdProfile(toks[1:])
+
+	case "su":
+		return s.cmdSu(toks[1:])
 
 	default:
 		return fmt.Errorf("unknown command %q — type 'help' for a list", toks[0])
@@ -884,13 +892,39 @@ func (s *replState) cmdEgress(args []string) error {
 
 // ── secret ────────────────────────────────────────────────────────────────────
 
-// cmdSecret routes secret subcommands. realm is always the canonical form
-// ("org/<uuid>/purpose", "proj/<uuid>/purpose", "ws/<uuid>/purpose").
+// expandRealm resolves a realm argument against the current REPL context.
+// A fully-qualified realm ("ws/<uuid>/purpose", "proj/<uuid>/purpose",
+// "org/<uuid>/purpose") is returned unchanged. A bare purpose string
+// ("api-keys", "providers") is expanded to the innermost active scope:
+// ws → proj → org. Returns an error when no context is set.
+func (s *replState) expandRealm(raw string) (string, error) {
+	if strings.HasPrefix(raw, "ws/") || strings.HasPrefix(raw, "proj/") || strings.HasPrefix(raw, "org/") {
+		return raw, nil
+	}
+	switch {
+	case s.wsID != "":
+		return "ws/" + s.wsID + "/" + raw, nil
+	case s.projID != "":
+		return "proj/" + s.projID + "/" + raw, nil
+	case s.orgID != "":
+		return "org/" + s.orgID + "/" + raw, nil
+	default:
+		return "", fmt.Errorf("no context set — use 'ws use <id>' or provide a full realm (ws/<id>/purpose)")
+	}
+}
+
+// cmdSecret routes secret subcommands.
+//
+// Realm inference: when the REPL prompt shows a workspace/project/org context,
+// a bare purpose string is automatically expanded to the innermost scope:
+//
+//	secret set api-keys anthropic        → ws/<ws-id>/api-keys  (in ws context)
+//	secret set proj/<id>/api-keys foo    → used as-is (explicit)
 //
 // Usage in REPL:
 //
-//	secret ls [realm-prefix]
-//	secret set <realm> <name>          prompts for material with hidden input
+//	secret ls [realm-prefix]             defaults to current scope when omitted
+//	secret set <realm> <name>            prompts for material with hidden input
 //	secret get <realm> <name>
 //	secret versions <realm> <name>
 //	secret enable  <realm> <name> <version-id>
@@ -910,6 +944,17 @@ func (s *replState) cmdSecret(args []string) error {
 		if len(args) > 1 {
 			realm = args[1]
 		}
+		// Default to listing the current scope when no prefix is given.
+		if realm == "" {
+			switch {
+			case s.wsID != "":
+				realm = "ws/" + s.wsID + "/"
+			case s.projID != "":
+				realm = "proj/" + s.projID + "/"
+			case s.orgID != "":
+				realm = "org/" + s.orgID + "/"
+			}
+		}
 		resp, err := client.ListSecrets(ctx, connect.NewRequest(&secretv1.ListSecretsRequest{Realm: realm}))
 		if err != nil {
 			return err
@@ -920,10 +965,14 @@ func (s *replState) cmdSecret(args []string) error {
 		if len(args) < 3 {
 			return fmt.Errorf("usage: secret set <realm> <name>")
 		}
-		realm, name := args[1], args[2]
+		realm, err := s.expandRealm(args[1])
+		if err != nil {
+			return err
+		}
 		if _, _, _, err := secret.ParseRealm(realm); err != nil {
 			return err
 		}
+		name := args[2]
 		material, err := s.readHiddenInput("Value (hidden): ")
 		if err != nil {
 			return err
@@ -946,10 +995,13 @@ func (s *replState) cmdSecret(args []string) error {
 		if len(args) < 3 {
 			return fmt.Errorf("usage: secret get <realm> <name>")
 		}
-		realm, name := args[1], args[2]
+		realm, err := s.expandRealm(args[1])
+		if err != nil {
+			return err
+		}
 		resp, err := client.ResolveVersion(ctx, connect.NewRequest(&secretv1.ResolveVersionRequest{
 			Realm:    realm,
-			SecretId: name,
+			SecretId: args[2],
 		}))
 		if err != nil {
 			return err
@@ -962,10 +1014,13 @@ func (s *replState) cmdSecret(args []string) error {
 		if len(args) < 3 {
 			return fmt.Errorf("usage: secret versions <realm> <name>")
 		}
-		realm, name := args[1], args[2]
+		realm, err := s.expandRealm(args[1])
+		if err != nil {
+			return err
+		}
 		resp, err := client.ListVersions(ctx, connect.NewRequest(&secretv1.ListVersionsRequest{
 			Realm:    realm,
-			SecretId: name,
+			SecretId: args[2],
 		}))
 		if err != nil {
 			return err
@@ -976,8 +1031,12 @@ func (s *replState) cmdSecret(args []string) error {
 		if len(args) < 4 {
 			return fmt.Errorf("usage: secret enable <realm> <name> <version-id>")
 		}
+		realm, err := s.expandRealm(args[1])
+		if err != nil {
+			return err
+		}
 		resp, err := client.EnableVersion(ctx, connect.NewRequest(&secretv1.EnableVersionRequest{
-			Realm:     args[1],
+			Realm:     realm,
 			SecretId:  args[2],
 			VersionId: args[3],
 		}))
@@ -990,8 +1049,12 @@ func (s *replState) cmdSecret(args []string) error {
 		if len(args) < 4 {
 			return fmt.Errorf("usage: secret disable <realm> <name> <version-id>")
 		}
+		realm, err := s.expandRealm(args[1])
+		if err != nil {
+			return err
+		}
 		resp, err := client.DisableVersion(ctx, connect.NewRequest(&secretv1.DisableVersionRequest{
-			Realm:     args[1],
+			Realm:     realm,
 			SecretId:  args[2],
 			VersionId: args[3],
 		}))
@@ -1004,8 +1067,12 @@ func (s *replState) cmdSecret(args []string) error {
 		if len(args) < 4 {
 			return fmt.Errorf("usage: secret retire <realm> <name> <version-id>")
 		}
+		realm, err := s.expandRealm(args[1])
+		if err != nil {
+			return err
+		}
 		resp, err := client.RetireVersion(ctx, connect.NewRequest(&secretv1.RetireVersionRequest{
-			Realm:     args[1],
+			Realm:     realm,
 			SecretId:  args[2],
 			VersionId: args[3],
 		}))
@@ -1073,6 +1140,171 @@ func (s *replState) readHiddenInput(prompt string) ([]byte, error) {
 	}
 	defer rl.Close()
 	return rl.ReadPassword(prompt)
+}
+
+// ── profile ───────────────────────────────────────────────────────────────────
+
+func (s *replState) cmdProfile(args []string) error {
+	sub := ""
+	if len(args) > 0 {
+		sub = args[0]
+	}
+	if s.wsID == "" {
+		return fmt.Errorf("no workspace in context — run 'use ws <id>' first")
+	}
+	ctx := context.Background()
+	client := profileconnect.NewProfileAdminServiceClient(s.rc.HTTPClient, s.rc.ServerURL, s.rc.ConnectOpts...)
+
+	switch sub {
+	case "ls", "list":
+		userID := ""
+		if len(args) > 1 {
+			userID = args[1]
+		}
+		req := &profilev1.ListProfilesRequest{WorkspaceId: s.wsID}
+		if userID != "" {
+			req.UserId = &userID
+		}
+		resp, err := client.ListProfiles(ctx, connect.NewRequest(req))
+		if err != nil {
+			return err
+		}
+		return printProfiles(s.rc.Printer, s.wsName, resp.Msg.GetProfiles()...)
+
+	case "get":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: profile get <profile-id>")
+		}
+		resp, err := client.GetProfile(ctx, connect.NewRequest(&profilev1.GetProfileRequest{ProfileId: args[1]}))
+		if err != nil {
+			return err
+		}
+		return printProfileDetail(s.rc.Printer, resp.Msg.GetProfile())
+
+	case "add", "create":
+		if len(args) < 3 {
+			return fmt.Errorf("usage: profile add <user-id> <name> [desc=<text>]")
+		}
+		userID, name := args[1], args[2]
+		req := &profilev1.CreateProfileRequest{
+			WorkspaceId: s.wsID,
+			UserId:      userID,
+			Name:        name,
+		}
+		if desc := kvGet(args[3:], "desc"); desc != "" {
+			req.Description = &desc
+		}
+		resp, err := client.CreateProfile(ctx, connect.NewRequest(req))
+		if err != nil {
+			return err
+		}
+		p := resp.Msg.GetProfile()
+		if err := printProfileDetail(s.rc.Printer, p); err != nil {
+			return err
+		}
+		path := derivedProfilePath(s.wsName, p.GetUserId(), p.GetName())
+		fmt.Printf("  MCP path (add to config): %s\n", path)
+		return nil
+
+	case "rm", "delete":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: profile rm <profile-id>")
+		}
+		_, err := client.DeleteProfile(ctx, connect.NewRequest(&profilev1.DeleteProfileRequest{ProfileId: args[1]}))
+		if err != nil {
+			return err
+		}
+		s.rc.Printer.OK("deleted")
+
+	default:
+		return fmt.Errorf("unknown profile subcommand %q — try: ls [user-id], get <id>, add <user-id> <name>, rm <id>", sub)
+	}
+	return nil
+}
+
+// profileSlug converts a string to a URL-safe slug (lowercase, non-alphanum runs → "-").
+func profileSlug(s string) string {
+	var b strings.Builder
+	prev := rune('-')
+	for _, ch := range strings.ToLower(s) {
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') {
+			b.WriteRune(ch)
+			prev = ch
+		} else if prev != '-' {
+			b.WriteByte('-')
+			prev = '-'
+		}
+	}
+	return strings.TrimRight(b.String(), "-")
+}
+
+// derivedProfilePath produces the opaque MCP URL token for a profile:
+// slug(wsName)--slug(user)--slug(profileName).
+// For user, only the local part of an email is used ("alice@…" → "alice").
+func derivedProfilePath(wsName, userID, profileName string) string {
+	user := userID
+	if at := strings.IndexByte(user, '@'); at >= 0 {
+		user = user[:at]
+	}
+	return profileSlug(wsName) + "--" + profileSlug(user) + "--" + profileSlug(profileName)
+}
+
+func printProfiles(p *Printer, wsName string, profiles ...*profilev1.Profile) error {
+	switch p.Format {
+	case FormatJSON, FormatYAML:
+		for _, pr := range profiles {
+			if err := p.Proto(pr); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		rows := make([]string, len(profiles))
+		for i, pr := range profiles {
+			path := derivedProfilePath(wsName, pr.GetUserId(), pr.GetName())
+			rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s\t%d tool(s)",
+				pr.GetProfileId(), pr.GetUserId(), pr.GetName(), path, len(pr.GetTools()))
+		}
+		p.Table("PROFILE-ID\tUSER-ID\tNAME\tMCP-PATH\tTOOLS", rows)
+		return nil
+	}
+}
+
+func printProfileDetail(p *Printer, pr *profilev1.Profile) error {
+	switch p.Format {
+	case FormatJSON, FormatYAML:
+		return p.Proto(pr)
+	default:
+		fmt.Printf("profile:  %s\n", pr.GetProfileId())
+		fmt.Printf("ws:       %s\n", pr.GetWorkspaceId())
+		fmt.Printf("user:     %s\n", pr.GetUserId())
+		fmt.Printf("name:     %s\n", pr.GetName())
+		if desc := pr.GetDescription(); desc != "" {
+			fmt.Printf("desc:     %s\n", desc)
+		}
+		if len(pr.GetTools()) > 0 {
+			fmt.Println("tools:")
+			for _, tf := range pr.GetTools() {
+				opt := ""
+				if tf.GetOptional() {
+					opt = " (optional)"
+				}
+				inc := "*"
+				if len(tf.GetInclude()) > 0 {
+					inc = strings.Join(tf.GetInclude(), ", ")
+				}
+				fmt.Printf("  %-20s  [%s]%s\n", tf.GetServer(), inc, opt)
+			}
+		}
+		if len(pr.GetAuthOverrides()) > 0 {
+			fmt.Println("auth overrides:")
+			for _, ao := range pr.GetAuthOverrides() {
+				fmt.Printf("  %-20s  %s  %s\n", ao.GetServer(), ao.GetAuthType(), ao.GetSecretRef())
+			}
+		}
+		fmt.Printf("created:  %s\n", age(pr.GetCreatedAt()))
+		return nil
+	}
 }
 
 // ── help ──────────────────────────────────────────────────────────────────────
@@ -1327,6 +1559,38 @@ func collectSelected(candidates []string, selected []bool, existing []string) []
 	return add
 }
 
+// cmdSu switches to the user REPL using a provided or prompted API key.
+// Ctrl-D / exit in the user REPL returns to the admin REPL.
+func (s *replState) cmdSu(args []string) error {
+	var apiKey string
+	if len(args) > 0 {
+		apiKey = os.ExpandEnv(args[0])
+	} else {
+		raw, err := s.readHiddenInput("API key: ")
+		if err != nil {
+			return err
+		}
+		apiKey = strings.TrimSpace(string(raw))
+	}
+	if apiKey == "" {
+		return fmt.Errorf("API key is required")
+	}
+	userRC := makeAdminRunCtx(s.rc.ServerURL, apiKey)
+	var seeds []string
+	if s.wsID != "" {
+		// Pass id:name so the user REPL can set ws context without an admin API call.
+		seed := "ws=" + s.wsID
+		if s.wsName != "" {
+			seed += ":" + s.wsName
+		}
+		seeds = append(seeds, seed)
+	}
+	fmt.Fprintln(os.Stderr, "# entering user REPL — Ctrl-D to return to admin")
+	_ = runUserREPL(userRC, seeds)
+	fmt.Fprintln(os.Stderr, "# back in admin REPL")
+	return nil
+}
+
 func printReplHelp() {
 	fmt.Print(`
 Start with context (seed args):
@@ -1387,9 +1651,10 @@ API Key  (requires org context for ls/issue; alias: key):
                                                 issue a new API key (plaintext shown once)
   apikey revoke <key-id>                        revoke an API key
 
-Secret  (realm: org/<uuid>/<purpose> | proj/<uuid>/<purpose> | ws/<uuid>/<purpose>):
-  secret ls [realm-prefix]             list secrets (prefix filter, e.g. org/<uuid>/)
-  secret set <realm> <name>            create + enable; prompts for material (hidden input)
+Secret  (realm inferred from context; bare purpose expanded to ws/<id>/purpose when in ws):
+  secret ls [realm-prefix]             list secrets; defaults to current scope when omitted
+  secret set <purpose> <name>          create + enable in current scope (prompts, hidden input)
+  secret set <realm> <name>            same but with explicit realm (ws/proj/org/<uuid>/<purpose>)
   secret get <realm> <name>            print active material to stdout
   secret versions <realm> <name>       list all versions
   secret enable  <realm> <name> <vid>  enable a specific version
@@ -1467,7 +1732,17 @@ Routing overrides  (alias: ker):
   Advanced:    chain: [{target:A}, {target:B}]  ordered fallback (by provider or by backend_model)
                split: [{weight:80,target:A}, {weight:20,target:A,backend_model:B}]  A/B by provider or model
 
+Profile  (requires ws context; alias: prof):
+  profile ls [user-id]                         list profiles in current workspace
+  profile get <profile-id>                     show profile details (tools, auth overrides)
+  profile add <user-id> <name> [desc=<text>]   create profile (prints derived MCP path)
+  profile rm <profile-id>                      delete profile
+
+  MCP path is auto-derived as: slug(ws)--slug(user)--slug(name)
+  Add it as 'path:' under the profile key in orange.yaml so the proxy can route /mcp/<path>.
+
 Other:
+  su [api-key]          switch to user REPL (prompts for API key if omitted); Ctrl-D to return
   help / ?              show this help
   exit / quit / Ctrl+D  exit REPL
 

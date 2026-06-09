@@ -174,10 +174,16 @@ func (s *userReplState) dispatch(line string) error {
 
 // ── navigation ────────────────────────────────────────────────────────────────
 
-func (s *userReplState) cmdUseWS(id string) error {
+func (s *userReplState) cmdUseWS(idOrPair string) error {
+	// Accept "id:name" from admin REPL seed — no API call needed.
+	if id, name, ok := strings.Cut(idOrPair, ":"); ok && name != "" {
+		s.wsID, s.wsName = id, name
+		fmt.Printf("workspace: %s (%s)\n", s.wsName, s.wsID)
+		return nil
+	}
 	ctx := context.Background()
 	client := workspaceconnect.NewWorkspaceAdminServiceClient(s.rc.HTTPClient, s.rc.ServerURL, s.rc.ConnectOpts...)
-	resp, err := client.GetWorkspace(ctx, connect.NewRequest(&workspacev1.GetWorkspaceRequest{WorkspaceId: id}))
+	resp, err := client.GetWorkspace(ctx, connect.NewRequest(&workspacev1.GetWorkspaceRequest{WorkspaceId: idOrPair}))
 	if err != nil {
 		return err
 	}
