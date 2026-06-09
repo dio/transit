@@ -414,7 +414,7 @@ func TestFilter_OnRequestHeaders_stripsFramingOnSyncContinue(t *testing.T) {
 		requestBodyHandler: func(_ *Writer, _ *BodyChunk) {},
 	}
 	status := f.OnRequestHeaders(handle.RequestHeaders(), false)
-	require.Equal(t, shared.HeadersStatusContinue, status)
+	require.Equal(t, shared.HeadersStatusStop, status)
 	// Strip happened inside flush, after the queued mutation was applied.
 	require.Empty(t, handle.RequestHeaders().GetOne("content-length").ToString())
 	require.Empty(t, handle.RequestHeaders().GetOne("transfer-encoding").ToString())

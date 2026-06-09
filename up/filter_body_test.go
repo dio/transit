@@ -98,7 +98,7 @@ func TestFilter_OnRequestHeaders_bodyHandler_capturesContentMetadata(t *testing.
 
 // In buffered mode, content-length and transfer-encoding must be removed from
 // request headers before they are forwarded, since the body may be replaced.
-// The filter must return Continue (not StopAllAndBuffer — that freezes the chain).
+// The filter must return Stop (not StopAllAndBuffer — that freezes the chain).
 func TestFilter_OnRequestHeaders_bufferedMode_stripsLengthHeaders(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	handle := newMockHandle(ctrl)
@@ -115,7 +115,7 @@ func TestFilter_OnRequestHeaders_bufferedMode_stripsLengthHeaders(t *testing.T) 
 
 	status := f.OnRequestHeaders(headers, false)
 
-	require.Equal(t, shared.HeadersStatusContinue, status)
+	require.Equal(t, shared.HeadersStatusStop, status)
 	require.Empty(t, headers.Headers["content-length"])
 	require.Empty(t, headers.Headers["transfer-encoding"])
 	require.NotEmpty(t, headers.Headers["content-type"]) // unrelated header untouched

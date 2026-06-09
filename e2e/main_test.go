@@ -27,6 +27,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	_ "embed"
+	"encoding/binary"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -43,6 +44,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/dio/transit/e2e/internal/grpctestproto"
 	"github.com/dio/transit/e2e/sinks/accessloggersink"
 	"github.com/dio/transit/e2e/sinks/alssink"
 	"github.com/dio/transit/e2e/sinks/otelsink"
@@ -75,6 +77,7 @@ var (
 	asyncCalloutBodyAddr          string
 	asyncCalloutLocalResponseAddr string
 	mutableBodyUpstreamAddr       string
+	grpcCalloutAddr               string
 	lbPolicySelectionAddr         string
 	accessLoggerLocalReplyAddr    string
 	accessLoggerFlagsAddr         string
@@ -143,6 +146,8 @@ func TestMain(m *testing.M) {
 	mutableBodyUpstreamPort := freePort()
 	mutableBodyRecorder = startRecorderUpstream()
 	asyncCalloutLocalResponsePort := freePort()
+	grpcCalloutPort := freePort()
+	grpcCalloutUpstreamPort := startGRPCCalloutUpstream()
 	lbPolicySelectionPort := freePort()
 	lbPolicyHost0Port := startIdentifiedUpstream("lb-host-0")
 	lbPolicyHost1Port := startIdentifiedUpstream("lb-host-1")
@@ -184,6 +189,7 @@ func TestMain(m *testing.M) {
 	asyncCalloutBodyAddr = fmt.Sprintf("http://localhost:%d", asyncCalloutBodyPort)
 	mutableBodyUpstreamAddr = fmt.Sprintf("http://localhost:%d", mutableBodyUpstreamPort)
 	asyncCalloutLocalResponseAddr = fmt.Sprintf("http://localhost:%d", asyncCalloutLocalResponsePort)
+	grpcCalloutAddr = fmt.Sprintf("http://localhost:%d", grpcCalloutPort)
 	lbPolicySelectionAddr = fmt.Sprintf("http://localhost:%d", lbPolicySelectionPort)
 	accessLoggerLocalReplyAddr = fmt.Sprintf("http://localhost:%d", accessLoggerLocalReplyPort)
 	accessLoggerFlagsAddr = fmt.Sprintf("http://localhost:%d", accessLoggerFlagsPort)
@@ -272,6 +278,8 @@ func TestMain(m *testing.M) {
 		MutableBodyUpstreamPort:            mutableBodyUpstreamPort,
 		MutableBodyRecorderPort:            mutableBodyRecorder.port,
 		AsyncCalloutLocalResponsePort:      asyncCalloutLocalResponsePort,
+		GRPCCalloutPort:                    grpcCalloutPort,
+		GRPCCalloutUpstreamPort:            grpcCalloutUpstreamPort,
 		LbPolicySelectionPort:              lbPolicySelectionPort,
 		LbPolicyHost0Port:                  lbPolicyHost0Port,
 		LbPolicyHost1Port:                  lbPolicyHost1Port,
@@ -413,6 +421,62 @@ func startAsyncCalloutUpstream() int {
 		_, _ = w.Write([]byte(strings.TrimPrefix(r.URL.Path, "/")))
 	})
 	go http.Serve(l, mux) //nolint:errcheck
+	return l.Addr().(*net.TCPAddr).Port
+}
+
+// startGRPCCalloutUpstream starts a minimal h2c gRPC server for the GRPCCallout
+// e2e tests. It handles /e2e.Echo/Echo by decoding a framed EchoRequest proto
+// and returning a framed EchoResponse proto with grpc-status: 0 in the trailers.
+func startGRPCCalloutUpstream() int {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic("startGRPCCalloutUpstream: " + err.Error())
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/e2e.Echo/Echo", func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if len(body) < 5 || body[0] != 0 {
+			http.Error(w, "invalid grpc frame", http.StatusBadRequest)
+			return
+		}
+		msgLen := binary.BigEndian.Uint32(body[1:5])
+		end := 5 + int(msgLen)
+		if end < 5 || end > len(body) {
+			http.Error(w, "truncated grpc frame", http.StatusBadRequest)
+			return
+		}
+		var echoReq grpctestproto.EchoRequest
+		if err := echoReq.UnmarshalProto(body[5:end]); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		echoResp := grpctestproto.EchoResponse{
+			Text:     echoReq.Text,
+			Sequence: echoReq.Sequence + 1,
+		}
+		msg := echoResp.MarshalProto(nil)
+		frame := make([]byte, 5+len(msg))
+		binary.BigEndian.PutUint32(frame[1:5], uint32(len(msg)))
+		copy(frame[5:], msg)
+
+		w.Header().Set("Content-Type", "application/grpc+proto")
+		w.Header().Set("Trailer", "Grpc-Status")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(frame)
+		w.Header().Set("Grpc-Status", "0")
+	})
+	protocols := new(http.Protocols)
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
+	srv := &http.Server{
+		Handler:   mux,
+		Protocols: protocols,
+	}
+	go srv.Serve(l) //nolint:errcheck
 	return l.Addr().(*net.TCPAddr).Port
 }
 
@@ -800,6 +864,8 @@ type envoyPorts struct {
 	MutableBodyUpstreamPort            int
 	MutableBodyRecorderPort            int
 	AsyncCalloutLocalResponsePort      int
+	GRPCCalloutPort                    int
+	GRPCCalloutUpstreamPort            int
 	LbPolicySelectionPort              int
 	LbPolicyHost0Port                  int
 	LbPolicyHost1Port                  int

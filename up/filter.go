@@ -387,7 +387,8 @@ func (f *filter) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool) sh
 	//
 	// Do NOT use HeadersStatusStopAllAndBuffer: the SDK has no async resume path
 	// for that status and it freezes the filter chain permanently.
-	if !endOfStream && f.bufferBody && f.requestBodyHandler != nil {
+	stopForBufferedBody := !endOfStream && f.bufferBody && f.requestBodyHandler != nil
+	if stopForBufferedBody {
 		f.stripFramingOnResume = true
 	}
 
@@ -427,6 +428,9 @@ func (f *filter) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool) sh
 	f.flushCompletedCallout(w.calloutStarted)
 	f.flush(false)
 	if f.stopped {
+		return shared.HeadersStatusStop
+	}
+	if stopForBufferedBody {
 		return shared.HeadersStatusStop
 	}
 	return shared.HeadersStatusContinue

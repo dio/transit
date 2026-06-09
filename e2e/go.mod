@@ -3,6 +3,7 @@ module github.com/dio/transit/e2e
 go 1.26.2
 
 require (
+	github.com/VictoriaMetrics/easyproto v1.2.0
 	github.com/dio/transit v0.0.0
 	github.com/envoyproxy/envoy/source/extensions/dynamic_modules v0.0.0-20260521055639-0d6e3c60aa55
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0

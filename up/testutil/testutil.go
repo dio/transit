@@ -26,6 +26,9 @@ type FilterHandleOption func(*FakeFilterHandle)
 // HTTPCalloutFunc simulates Envoy HTTP callout initialization.
 type HTTPCalloutFunc func(cluster string, headers [][2]string, body []byte, timeoutMs uint64, cb shared.HttpCalloutCallback) (shared.HttpCalloutInitResult, uint64)
 
+// HTTPStreamFunc simulates Envoy streamable HTTP callout initialization.
+type HTTPStreamFunc func(cluster string, headers [][2]string, body []byte, endOfStream bool, timeoutMs uint64, cb shared.HttpStreamCallback) (shared.HttpCalloutInitResult, uint64)
+
 // WithHeaders sets the request headers on the fake handle.
 func WithHeaders(headers map[string]string) FilterHandleOption {
 	return func(h *FakeFilterHandle) {
@@ -52,6 +55,13 @@ func WithResponseHeaders(headers map[string]string) FilterHandleOption {
 func WithHTTPCalloutFunc(fn HTTPCalloutFunc) FilterHandleOption {
 	return func(h *FakeFilterHandle) {
 		h.httpCallout = fn
+	}
+}
+
+// WithHTTPStreamFunc configures fake streamable HTTP callout behavior.
+func WithHTTPStreamFunc(fn HTTPStreamFunc) FilterHandleOption {
+	return func(h *FakeFilterHandle) {
+		h.httpStream = fn
 	}
 }
 
@@ -95,6 +105,7 @@ type FakeFilterHandle struct {
 	continueOnce     sync.Once
 	localOnce        sync.Once
 	httpCallout      HTTPCalloutFunc
+	httpStream       HTTPStreamFunc
 }
 
 // -- HeaderMap accessors --
@@ -373,7 +384,10 @@ func (h *FakeFilterHandle) HttpCallout(cluster string, headers [][2]string, body
 	}
 	return shared.HttpCalloutInitClusterNotFound, 0
 }
-func (h *FakeFilterHandle) StartHttpStream(_ string, _ [][2]string, _ []byte, _ bool, _ uint64, _ shared.HttpStreamCallback) (shared.HttpCalloutInitResult, uint64) {
+func (h *FakeFilterHandle) StartHttpStream(cluster string, headers [][2]string, body []byte, endOfStream bool, timeoutMs uint64, cb shared.HttpStreamCallback) (shared.HttpCalloutInitResult, uint64) {
+	if h.httpStream != nil {
+		return h.httpStream(cluster, headers, body, endOfStream, timeoutMs, cb)
+	}
 	return shared.HttpCalloutInitClusterNotFound, 0
 }
 func (h *FakeFilterHandle) SendHttpStreamData(_ uint64, _ []byte, _ bool) bool  { return false }
