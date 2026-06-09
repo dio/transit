@@ -24,6 +24,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"sort"
@@ -115,11 +116,11 @@ func (s *serveLocalState) llmDoChat(ctx context.Context, message string, stream 
 }
 
 func llmPrintChat(resp *http.Response, elapsed time.Duration) error {
-	var result map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("decode response: %w", err)
-	}
 	fmt.Fprintf(os.Stderr, "← HTTP %d  %.0fms\n", resp.StatusCode, float64(elapsed.Milliseconds()))
+	result, err := decodeJSONBody(resp.Body, resp.Status)
+	if err != nil {
+		return err
+	}
 	if resp.StatusCode != http.StatusOK {
 		return llmPrintError(result)
 	}
@@ -199,11 +200,11 @@ func (s *serveLocalState) llmDoResponses(ctx context.Context, message string, st
 }
 
 func llmPrintResponses(resp *http.Response, elapsed time.Duration) error {
-	var result map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("decode response: %w", err)
-	}
 	fmt.Fprintf(os.Stderr, "← HTTP %d  %.0fms\n", resp.StatusCode, float64(elapsed.Milliseconds()))
+	result, err := decodeJSONBody(resp.Body, resp.Status)
+	if err != nil {
+		return err
+	}
 	if resp.StatusCode != http.StatusOK {
 		return llmPrintError(result)
 	}
@@ -301,11 +302,11 @@ func (s *serveLocalState) llmDoMessages(ctx context.Context, message string, str
 		return llmStreamMessages(resp)
 	}
 
-	var result map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("decode response: %w", err)
-	}
 	fmt.Fprintf(os.Stderr, "← HTTP %d  %.0fms\n", resp.StatusCode, float64(elapsed.Milliseconds()))
+	result, err := decodeJSONBody(resp.Body, resp.Status)
+	if err != nil {
+		return err
+	}
 	if resp.StatusCode != http.StatusOK {
 		return llmPrintError(result)
 	}
@@ -374,11 +375,11 @@ func (s *serveLocalState) llmDoModels(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 
-	var result map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("decode response: %w", err)
-	}
 	fmt.Fprintf(os.Stderr, "← HTTP %d  %.0fms\n", resp.StatusCode, float64(elapsed.Milliseconds()))
+	result, err := decodeJSONBody(resp.Body, resp.Status)
+	if err != nil {
+		return err
+	}
 	if resp.StatusCode != http.StatusOK {
 		return llmPrintError(result)
 	}
@@ -500,6 +501,23 @@ func (s *serveLocalState) llmRequest(
 }
 
 // ── output helpers ────────────────────────────────────────────────────────────
+
+// decodeJSONBody reads the response body and JSON-decodes it into a map.
+// When the body is not valid JSON (e.g. Envoy's plain-text error pages on 503),
+// it returns a wrapped error that includes the raw body text so the caller can
+// display something meaningful instead of a bare JSON parse error.
+func decodeJSONBody(body io.ReadCloser, status string) (map[string]any, error) {
+	raw, _ := io.ReadAll(body)
+	var result map[string]any
+	if err := json.Unmarshal(raw, &result); err != nil {
+		text := strings.TrimSpace(string(raw))
+		if text == "" {
+			text = status
+		}
+		return nil, fmt.Errorf("%s", text)
+	}
+	return result, nil
+}
 
 func llmPrintError(result map[string]any) error {
 	if errObj, ok := result["error"].(map[string]any); ok {

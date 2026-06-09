@@ -277,6 +277,32 @@ func TestExtractAnthropicMessagesJSON_Invalid(t *testing.T) {
 	assert.Equal(t, uint32(0), u.Output)
 }
 
+func TestExtractGeminiImageGenerationsJSON_WithUsage(t *testing.T) {
+	body := `{"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"image/png","data":"abc123"}}]}}],"usageMetadata":{"promptTokenCount":42,"candidatesTokenCount":0,"totalTokenCount":42}}`
+	r := meter.ExtractGeminiImageGenerationsJSON([]byte(body))
+	assert.Equal(t, uint32(1), r.Count)
+	assert.Equal(t, uint32(42), r.Tokens.Input)
+	assert.Equal(t, uint32(1290), r.Tokens.Output) // fallback: 1 image × 1290
+}
+
+func TestExtractGeminiImageGenerationsJSON_MultipleImages(t *testing.T) {
+	body := `{"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"image/png","data":"a"}},{"inlineData":{"mimeType":"image/png","data":"b"}}]}}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":0}}`
+	r := meter.ExtractGeminiImageGenerationsJSON([]byte(body))
+	assert.Equal(t, uint32(2), r.Count)
+	assert.Equal(t, uint32(10), r.Tokens.Input)
+	assert.Equal(t, uint32(2580), r.Tokens.Output) // 2 × 1290
+}
+
+func TestExtractGeminiImageGenerationsJSON_Empty(t *testing.T) {
+	r := meter.ExtractGeminiImageGenerationsJSON([]byte{})
+	assert.Equal(t, uint32(0), r.Count)
+}
+
+func TestExtractGeminiImageGenerationsJSON_NoCandidates(t *testing.T) {
+	r := meter.ExtractGeminiImageGenerationsJSON([]byte(`{"candidates":[]}`))
+	assert.Equal(t, uint32(0), r.Count)
+}
+
 func TestExtractOpenAIEmbeddingsJSON(t *testing.T) {
 	body := `{"object":"list","data":[{"object":"embedding","embedding":[0.1,0.2],"index":0}],"model":"text-embedding-3-small","usage":{"prompt_tokens":8,"total_tokens":8}}`
 	u := meter.ExtractOpenAIEmbeddingsJSON([]byte(body))

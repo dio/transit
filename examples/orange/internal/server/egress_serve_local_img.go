@@ -6,7 +6,7 @@ package server
 //
 //	img <prompt>         POST /v1/images/generations → PNG saved to imgdir
 //	img models           GET  /v1/models (image-capable models only)
-//	img set model <name> pin image model (empty/auto = dall-e-3)
+//	img set model <name> pin image model (empty/auto = gpt-image-1)
 //	img set dir   <path> output directory for generated images (default: /tmp)
 //	img status           show current settings
 //	img help             this help
@@ -14,8 +14,8 @@ package server
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-const imgDefault = "dall-e-3"
+const imgDefault = "gpt-image-1"
 
 // hasImageTag reports whether a model's metadata.tags slice contains "images".
 func hasImageTag(item map[string]any) bool {
@@ -77,10 +77,9 @@ func (s *serveLocalState) imgDoGenerate(ctx context.Context, prompt string) erro
 		model = imgDefault
 	}
 	payload := map[string]any{
-		"model":           model,
-		"prompt":          prompt,
-		"n":               1,
-		"response_format": "b64_json",
+		"model":  model,
+		"prompt": prompt,
+		"n":      1,
 	}
 	fmt.Fprintf(os.Stderr, "→ POST %s/v1/images/generations  key=%s model=%s\n",
 		s.llmBaseURL, s.llmKey, model)
@@ -90,11 +89,11 @@ func (s *serveLocalState) imgDoGenerate(ctx context.Context, prompt string) erro
 	}
 	defer resp.Body.Close()
 
-	var result map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("decode response: %w", err)
-	}
 	fmt.Fprintf(os.Stderr, "← HTTP %d  %.0fms\n", resp.StatusCode, float64(elapsed.Milliseconds()))
+	result, err := decodeJSONBody(resp.Body, resp.Status)
+	if err != nil {
+		return err
+	}
 	if resp.StatusCode != http.StatusOK {
 		return llmPrintError(result)
 	}
@@ -108,13 +107,22 @@ func (s *serveLocalState) imgDoGenerate(ctx context.Context, prompt string) erro
 		return fmt.Errorf("unexpected image item format")
 	}
 
-	b64, ok := item["b64_json"].(string)
-	if !ok || b64 == "" {
-		return fmt.Errorf("b64_json missing from response")
-	}
-	imgBytes, err := base64.StdEncoding.DecodeString(b64)
-	if err != nil {
-		return fmt.Errorf("decode image: %w", err)
+	b64Str, hasB64 := item["b64_json"].(string)
+	urlStr, hasURL := item["url"].(string)
+	var imgBytes []byte
+	switch {
+	case hasB64 && b64Str != "":
+		imgBytes, err = base64.StdEncoding.DecodeString(b64Str)
+		if err != nil {
+			return fmt.Errorf("decode image: %w", err)
+		}
+	case hasURL && urlStr != "":
+		imgBytes, err = fetchURL(ctx, urlStr)
+		if err != nil {
+			return fmt.Errorf("fetch image url: %w", err)
+		}
+	default:
+		return fmt.Errorf("no image data (b64_json or url) in response")
 	}
 
 	if err := os.MkdirAll(s.imgDir, 0o755); err != nil {
@@ -142,11 +150,11 @@ func (s *serveLocalState) imgDoModels(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 
-	var result map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("decode response: %w", err)
-	}
 	fmt.Fprintf(os.Stderr, "← HTTP %d  %.0fms\n", resp.StatusCode, float64(elapsed.Milliseconds()))
+	result, err := decodeJSONBody(resp.Body, resp.Status)
+	if err != nil {
+		return err
+	}
 	if resp.StatusCode != http.StatusOK {
 		return llmPrintError(result)
 	}
@@ -197,7 +205,7 @@ func (s *serveLocalState) imgSet(args []string) error {
 	case "model":
 		if args[1] == "-" || args[1] == "auto" {
 			s.imgModel = ""
-			fmt.Println("model → auto (dall-e-3)")
+			fmt.Println("model → auto (gpt-image-1)")
 		} else {
 			s.imgModel = args[1]
 			fmt.Printf("model → %s\n", s.imgModel)
@@ -239,6 +247,20 @@ func expandTilde(path string) string {
 	return path
 }
 
+// fetchURL downloads the content at url and returns the raw bytes.
+func fetchURL(ctx context.Context, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	return io.ReadAll(resp.Body)
+}
+
 // ── help ──────────────────────────────────────────────────────────────────────
 
 func printImgHelp() {
@@ -250,7 +272,7 @@ Generate:
   img models                 list image-capable models (dall-e-*, gpt-image-*, ...)
 
 Config:
-  img set model <name>       pin image model; 'auto' or '-' to reset (default: dall-e-3)
+  img set model <name>       pin image model; 'auto' or '-' to reset (default: gpt-image-1)
   img set dir   <path>       output directory for generated images (default: /tmp)
   img status                 show current settings
 

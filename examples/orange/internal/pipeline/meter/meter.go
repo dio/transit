@@ -32,6 +32,7 @@ import (
 	"github.com/dio/transit/examples/orange/internal/pipeline/match"
 	"github.com/dio/transit/up"
 	"github.com/dio/transit/up/buffer"
+	"github.com/dio/transit/up/compress"
 )
 
 // ExtensionName is the Envoy filter name.
@@ -111,12 +112,13 @@ const (
 
 // streamState is per-request state stored in chunk.Context across callbacks.
 type streamState struct {
-	ring      *buffer.HeadTail // non-nil on the streaming path
-	buf       []byte           // accumulator on the non-streaming path
-	kind      providerKind
-	endpoint  string // match.EndpointResponses or "" for chat_completions/messages
-	streaming bool
-	skip      bool
+	ring            *buffer.HeadTail // non-nil on the streaming path
+	buf             []byte           // accumulator on the non-streaming path
+	kind            providerKind
+	endpoint        string // match.EndpointResponses or "" for chat_completions/messages
+	contentEncoding string // e.g. "gzip"; used to decompress non-streaming bodies
+	streaming       bool
+	skip            bool
 }
 
 // meterResponse is the response observer. It is called:
@@ -138,6 +140,7 @@ func meterResponse(w *up.Writer, chunk *up.ResponseChunk) {
 		if !s.skip {
 			s.kind = resolveKind(w)
 			s.endpoint = resolveEndpoint(w)
+			s.contentEncoding = chunk.ContentEncoding
 		}
 		*chunk.Context = s
 		return
@@ -158,6 +161,12 @@ func meterResponse(w *up.Writer, chunk *up.ResponseChunk) {
 
 	if !chunk.EndStream {
 		return
+	}
+
+	if enc := s.contentEncoding; enc != "" && enc != "identity" && !s.streaming {
+		if decoded, err := compress.Decode(enc, s.buf); err == nil {
+			s.buf = decoded
+		}
 	}
 
 	var u TokenUsage
@@ -262,6 +271,13 @@ func resolveEndpoint(w *up.Writer) string {
 // them (DALL-E 2/3), and emits all observable data as counters and metadata.
 func emitImageGeneration(w *up.Writer, body []byte) {
 	r := ExtractOpenAIImageGenerationsJSON(body)
+	// Fall back to native Gemini format when the adapt filter has not yet
+	// translated the response body (meter runs before adapt on the response path).
+	if r.Count == 0 && r.Tokens.Input == 0 && r.Tokens.Output == 0 {
+		if gr := ExtractGeminiImageGenerationsJSON(body); gr.Count > 0 || gr.Tokens.Input > 0 {
+			r = gr
+		}
+	}
 
 	// Fall back to request-side metadata for size/quality (absent on DALL-E responses).
 	if r.Size == "" {
