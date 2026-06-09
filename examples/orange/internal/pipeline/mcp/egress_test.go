@@ -34,7 +34,7 @@ func setupEgressConfig(t *testing.T) {
 	appState := config.NewAppState()
 	require.NoError(t, appState.LoadConfig([]byte(testMCPYAML)))
 
-	resolver := config.NewDefaultResolver(time.Minute)
+	resolver := config.NewDefaultResolver(nil, "", time.Minute)
 	SetAppState(appState, resolver)
 	t.Cleanup(func() {
 		SetAppState(nil, nil)

@@ -556,11 +556,7 @@ func routeFromPath(path string) string {
 		return "s/" + server
 	}
 	segment, _, _ := strings.Cut(rest, "/")
-	route, err := url.PathUnescape(segment)
-	if err != nil {
-		return ""
-	}
-	return route
+	return segment
 }
 
 func (h *handler) subjectForRequest(r *http.Request) string {
@@ -592,10 +588,11 @@ func lookupMCPRoute(snap *config.ConfigSnapshot, routeName string) (mcpRoute, bo
 		}
 		return mcpRoute{Backends: map[string]*config.ServerRecord{serverName: server}}, true
 	}
-	// Profile-based route: look up via Profiles map (new system) or fall back to
-	// Servers-only lookup for test snapshots that set Servers but no Profiles.
-	if snap.Profiles != nil {
-		profile, ok := snap.Profiles[routeName]
+	// Profile-based route: look up via the path-indexed map so that the URL
+	// token (/mcp/<path>) is always an opaque value from the config, never the
+	// internal workspace/user/name key.
+	if snap.ProfilesByPath != nil {
+		profile, ok := snap.ProfilesByPath[routeName]
 		if !ok {
 			return mcpRoute{}, false
 		}
