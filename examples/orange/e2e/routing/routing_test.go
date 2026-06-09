@@ -176,87 +176,73 @@ const routingOrangeTmpl = `llm:
         type: bearer
         secret_ref: literal://test-key
   models: {}
+mcp:
+  servers: {}
 
 keys:
   # Flat split: 50/50 between live_a and live_b. No chain, no retry needed.
   test/user/sk-flat-split:
-    workspace: test
-    user: user
-    llm:
-      models:
-        my-model:
-          routing:
-            split:
-              children:
-                - weight: 50
-                  target: { provider: live_a }
-                - weight: 50
-                  target: { provider: live_b }
+    routing_overrides:
+      my-model:
+        split:
+          children:
+            - weight: 50
+              target: { provider: live_a }
+            - weight: 50
+              target: { provider: live_b }
 
   # Split-of-chains: both arms chain from dead (503) to a live fallback.
   # Every request must retry to the fallback to succeed.
   test/user/sk-split-chain:
-    workspace: test
-    user: user
-    llm:
-      models:
-        my-model:
-          routing:
-            split:
-              children:
-                - weight: 50
-                  chain:
-                    retry:
-                      retry_on: "5xx,connect-failure,reset"
-                      per_try_timeout_ms: 4000
-                    children:
-                      - target: { provider: dead }
-                      - target: { provider: live_a }
-                - weight: 50
-                  chain:
-                    retry:
-                      retry_on: "5xx,connect-failure,reset"
-                      per_try_timeout_ms: 4000
-                    children:
-                      - target: { provider: dead }
-                      - target: { provider: live_b }
+    routing_overrides:
+      my-model:
+        split:
+          children:
+            - weight: 50
+              chain:
+                retry:
+                  retry_on: "5xx,connect-failure,reset"
+                  per_try_timeout_ms: 4000
+                children:
+                  - target: { provider: dead }
+                  - target: { provider: live_a }
+            - weight: 50
+              chain:
+                retry:
+                  retry_on: "5xx,connect-failure,reset"
+                  per_try_timeout_ms: 4000
+                children:
+                  - target: { provider: dead }
+                  - target: { provider: live_b }
 
   # Chain-of-splits: position 0 is a split (live_a or live_b), position 1 is live_c.
   # All requests succeed on the first attempt; the chain fallback is never needed.
   test/user/sk-chain-split:
-    workspace: test
-    user: user
-    llm:
-      models:
-        my-model:
-          routing:
-            chain:
-              children:
-                - split:
-                    children:
-                      - weight: 50
-                        target: { provider: live_a }
-                      - weight: 50
-                        target: { provider: live_b }
-                - target: { provider: live_c }
+    routing_overrides:
+      my-model:
+        chain:
+          children:
+            - split:
+                children:
+                  - weight: 50
+                    target: { provider: live_a }
+                  - weight: 50
+                    target: { provider: live_b }
+            - target: { provider: live_c }
 
   # Chain-of-chain: passes config.Load but resolveRouting returns an error at
   # runtime because chain.children[0] is itself a chain. Expected: HTTP 404
   # with code orange.model_not_found.
   test/user/sk-chain-chain:
-    workspace: test
-    user: user
-    llm:
-      models:
-        my-model:
-          routing:
-            chain:
-              children:
-                - chain:
-                    children:
-                      - target: { provider: live_a }
-                      - target: { provider: live_b }
-                - target: { provider: live_c }
+    routing_overrides:
+      my-model:
+        chain:
+          children:
+            - chain:
+                children:
+                  - target: { provider: live_a }
+                  - target: { provider: live_b }
+            - target: { provider: live_c }
 `
 
 // fakeChatResponse is a minimal valid OpenAI chat completion JSON.

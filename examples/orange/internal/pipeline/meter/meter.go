@@ -26,7 +26,6 @@
 package meter
 
 import (
-	"strconv"
 	"strings"
 
 	"github.com/dio/transit/examples/orange/internal/pipeline/match"
@@ -219,22 +218,22 @@ func EmitUsage(w *up.Writer, u TokenUsage) {
 			w.IncrementCounter(inc.id, uint64(inc.val))
 		}
 	}
-	w.SetMetadata("orange_meter", "input_tokens", strconv.FormatUint(uint64(u.Input), 10))
-	w.SetMetadata("orange_meter", "output_tokens", strconv.FormatUint(uint64(u.Output), 10))
+	w.SetMetadata("orange_meter", "input_tokens", u.Input)
+	w.SetMetadata("orange_meter", "output_tokens", u.Output)
 	if u.CachedInput > 0 {
-		w.SetMetadata("orange_meter", "cached_input_tokens", strconv.FormatUint(uint64(u.CachedInput), 10))
+		w.SetMetadata("orange_meter", "cached_input_tokens", u.CachedInput)
 	}
 	if u.ImageInput > 0 {
-		w.SetMetadata("orange_meter", "image_input_tokens", strconv.FormatUint(uint64(u.ImageInput), 10))
+		w.SetMetadata("orange_meter", "image_input_tokens", u.ImageInput)
 	}
 	if u.ReasoningOutput > 0 {
-		w.SetMetadata("orange_meter", "reasoning_output_tokens", strconv.FormatUint(uint64(u.ReasoningOutput), 10))
+		w.SetMetadata("orange_meter", "reasoning_output_tokens", u.ReasoningOutput)
 	}
 	if u.CacheCreationInput > 0 {
-		w.SetMetadata("orange_meter", "cache_creation_input_tokens", strconv.FormatUint(uint64(u.CacheCreationInput), 10))
+		w.SetMetadata("orange_meter", "cache_creation_input_tokens", u.CacheCreationInput)
 	}
 	if u.CacheReadInput > 0 {
-		w.SetMetadata("orange_meter", "cache_read_input_tokens", strconv.FormatUint(uint64(u.CacheReadInput), 10))
+		w.SetMetadata("orange_meter", "cache_read_input_tokens", u.CacheReadInput)
 	}
 }
 
@@ -294,7 +293,7 @@ func emitImageGeneration(w *up.Writer, body []byte) {
 	if r.Count > 0 {
 		w.IncrementCounter(imageCountID, uint64(r.Count))
 		w.SetMetadata("orange_meter", "response_modalities", "image")
-		w.SetMetadata("orange_meter", "image_count", strconv.FormatUint(uint64(r.Count), 10))
+		w.SetMetadata("orange_meter", "image_count", r.Count)
 	}
 	if r.Size != "" {
 		w.SetMetadata("orange_meter", "image_size", r.Size)
