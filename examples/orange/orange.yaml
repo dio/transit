@@ -5,8 +5,18 @@ llm:
       name: claude-haiku-4-5-20251001
       endpoint_overrides:
         chat_completions: anthropic_openai_compat
+      pricing:
+        input_mtok: 0.80
+        output_mtok: 4.00
+        cache_read_mtok: 0.08
+        cache_write_mtok: 1.00
     claude-haiku-4-5-20251001:
       provider: anthropic
+      pricing:
+        input_mtok: 0.80
+        output_mtok: 4.00
+        cache_read_mtok: 0.08
+        cache_write_mtok: 1.00
     text-embedding-3-small:
       provider: openai
       metadata:
@@ -239,6 +249,7 @@ keys:
 
 profiles:
   demo/dio/default:
+    path: default
     tools:
       kiwi:
         include: ["search-flight"]
@@ -246,15 +257,25 @@ profiles:
         include: ["read_documentation", "search_documentation"]
         optional: true  # session succeeds even if aws-knowledge is unreachable
       github:
-        include: ["search_repositories"]
+        include: ["get_me", "search_repositories", "get_file_contents"]
         optional: true  # session succeeds even if github is unreachable
     auth:
       github:
         type: bearer
         secret_ref: env://GITHUB_TOKEN
   demo/dio/kiwi-only:
+    path: kiwi-only
     tools:
       kiwi: {}
+  demo/dio/github:
+    path: github
+    tools:
+      github:
+        include: ["get_me", "search_repositories", "get_file_contents"]
+    auth:
+      github:
+        type: bearer
+        secret_ref: env://GITHUB_TOKEN
 
 mcp:
   servers:
@@ -272,4 +293,70 @@ mcp:
       auth:
         type: bearer
         secret_ref: env://GITHUB_TOKEN # This to be used as default, but profile's secret_ref can override it.
-      tools_include: ["search_repositories", "get_file_contents"]
+      tools_include: ["get_me", "search_repositories", "get_file_contents"]
+
+rate_limit:
+  # Named tiers — reusable limit sets referenced from policies via rule:.
+  # Inline fields in a policy entry override the tier's value for that entry.
+  rules:
+    workspace-standard:
+      usd_per_day: 500.00
+      rpm: 300
+      on_exceed: reject
+
+    user-standard:
+      usd_per_day: 100.00
+      rpm: 60
+      on_exceed: reject
+
+    key-basic:
+      usd_per_hour: 10.00
+      usd_per_day: 50.00
+      rpm: 20
+      on_exceed: reject
+
+    key-token-knobs:
+      input_tokens_per_hour: 1_000_000
+      output_tokens_per_hour: 250_000
+      cache_read_tokens_per_hour: 2_000_000
+      cache_write_tokens_per_hour: 200_000
+      on_exceed: reject
+
+  policies:
+    # Workspace ceiling: every key under "demo" is subject to these limits.
+    # Changing this entry alone adjusts the cap for the entire workspace.
+    demo:
+      - rule: workspace-standard
+        models: [claude-haiku-4-5, claude-haiku-4-5-20251001]
+      - models: ["*"]
+        rpm: 400
+        on_exceed: reject
+
+    # User ceiling: dio's total spend across all keys is bounded here.
+    # Both the workspace rule above and this rule apply simultaneously.
+    demo/dio:
+      - rule: user-standard
+        models: [claude-haiku-4-5, claude-haiku-4-5-20251001]
+      - models: ["*"]
+        rpm: 80
+        on_exceed: reject
+
+    # Key-level policies: stacked on top of workspace and user rules.
+    demo/dio/sk-default:
+      - rule: key-basic
+        models: [claude-haiku-4-5, claude-haiku-4-5-20251001]
+      - rule: key-token-knobs
+        models: [claude-haiku-4-5, claude-haiku-4-5-20251001]
+      - models: ["*"]
+        rpm: 10
+        on_exceed: log_only
+
+    demo/dio/sk-fallback:
+      - rule: key-basic
+        models: [claude-haiku-4-5]
+        usd_per_hour: 20.00  # override tier: higher budget for fallback key
+
+    demo/dio/sk-split:
+      - rule: key-basic
+        models: [claude-haiku-4-5, claude-haiku-4-5-20251001]
+        rpm: 30  # override tier: slightly more headroom for split key

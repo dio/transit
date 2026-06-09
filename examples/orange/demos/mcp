@@ -35,7 +35,10 @@ Examples:
   ./mcp server=github initialize
   ORANGE_MCP_SESSION_ID=<printed-session> ./mcp profile=default list
   ORANGE_MCP_SESSION_ID=<printed-session> ./mcp server=github list
-  ORANGE_MCP_SESSION_ID=<printed-session> ./mcp profile=default call kiwi__search-flight '{"origin":"SFO","destination":"JFK"}'
+  ORANGE_MCP_SESSION_ID=<printed-session> ./mcp profile=default call kiwi__search-flight '{"flyFrom":"SFO","flyTo":"JFK","departureDate":"15/07/2025"}'
+  ORANGE_MCP_SESSION_ID=<printed-session> ./mcp server=github call github__get_me '{}'
+  ORANGE_MCP_SESSION_ID=<printed-session> ./mcp server=github call github__search_repositories '{"query":"envoy dynamic modules"}'
+  ORANGE_MCP_SESSION_ID=<printed-session> ./mcp server=github call github__get_file_contents '{"owner":"envoyproxy","repo":"envoy","path":"README.md"}'
   ORANGE_MCP_SESSION_ID=<printed-session> ./mcp profile=default stream
   ORANGE_MCP_SESSION_ID=<printed-session> ./mcp profile=default delete
 
@@ -279,7 +282,12 @@ case "$cmd" in
     echo
     echo "Run the printed export command, then:"
     echo "  ./mcp list"
-    echo "  ./mcp call kiwi__search-flight '{\"origin\":\"SFO\",\"destination\":\"JFK\"}'"
+    echo "  ./mcp call kiwi__search-flight '{\"flyFrom\":\"SFO\",\"flyTo\":\"JFK\",\"departureDate\":\"15/07/2025\"}'"
+    echo
+    echo "GitHub examples (server=github, requires GITHUB_TOKEN):"
+    echo "  ./mcp server=github call github__get_me '{}'"
+    echo "  ./mcp server=github call github__search_repositories '{\"query\":\"envoy dynamic modules\"}'"
+    echo "  ./mcp server=github call github__get_file_contents '{\"owner\":\"envoyproxy\",\"repo\":\"envoy\",\"path\":\"README.md\"}'"
     ;;
   -h|--help|help) usage ;;
   *)
