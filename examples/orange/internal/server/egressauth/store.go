@@ -58,3 +58,16 @@ LIMIT 1
 	}
 	return projID, orgID, err
 }
+
+// WorkspaceName returns the human-readable name of a workspace by its UUID.
+// The lookup is a primary-key scan (workspace_id TEXT PRIMARY KEY) so it is O(1).
+// Returns ErrNotFound when the workspace does not exist.
+func (s *Store) WorkspaceName(ctx context.Context, workspaceID string) (string, error) {
+	const q = `SELECT name FROM workspaces WHERE workspace_id = $1 LIMIT 1`
+	var name string
+	err := s.pool.QueryRow(ctx, q, workspaceID).Scan(&name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", fmt.Errorf("workspace %q: %w", workspaceID, ErrNotFound)
+	}
+	return name, err
+}

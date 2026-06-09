@@ -297,29 +297,51 @@ func (s *Store) Revoke(ctx context.Context, keyID string) error {
 
 // BindWorkspace atomically updates all active keys for userID: each key is
 // revoked and superseded by a new key with the same key material (key_hash)
-// and the workspace member scopes for wsID appended.
+// and the workspace member scopes for wsID appended. If the key has no
+// workspace_id set yet, it is set to wsID so that workspace-scoped RPCs
+// (e.g. IssueNamedToken) can derive the workspace from the key record.
 //
 // All changes execute in a single transaction. On failure the whole operation
 // rolls back — no partial updates are left behind.
 func (s *Store) BindWorkspace(ctx context.Context, orgID, userID, wsID string) error {
-	return s.updateKeyScopes(ctx, orgID, userID, func(current []string) []string {
-		return scopes.AppendWorkspaceScopesForUser(current, wsID, userID)
-	})
+	return s.updateKeyScopes(ctx, orgID, userID,
+		func(current []string) []string {
+			return scopes.AppendWorkspaceScopesForUser(current, wsID, userID)
+		},
+		func(currentWsID string) string {
+			if currentWsID == "" {
+				return wsID
+			}
+			return currentWsID
+		},
+	)
 }
 
 // UnbindWorkspace atomically removes all workspace-context scopes for wsID
 // from every active key belonging to userID. Same atomicity guarantee as
 // BindWorkspace.
 func (s *Store) UnbindWorkspace(ctx context.Context, orgID, userID, wsID string) error {
-	return s.updateKeyScopes(ctx, orgID, userID, func(current []string) []string {
-		return scopes.RemoveWorkspaceScopes(current, wsID)
-	})
+	return s.updateKeyScopes(ctx, orgID, userID,
+		func(current []string) []string {
+			return scopes.RemoveWorkspaceScopes(current, wsID)
+		},
+		func(currentWsID string) string {
+			if currentWsID == wsID {
+				return ""
+			}
+			return currentWsID
+		},
+	)
 }
 
 // updateKeyScopes is the shared transaction skeleton for Bind/UnbindWorkspace.
-// It locks all active keys for userID, applies transform to their scope list,
-// then revokes the old row and inserts a superseding row with the new scopes.
-func (s *Store) updateKeyScopes(ctx context.Context, orgID, userID string, transform func([]string) []string) error {
+// It locks all active keys for userID, applies transformScopes to the scope
+// list and transformWsID to the workspace_id column, then revokes the old row
+// and inserts a superseding row with the updated values.
+func (s *Store) updateKeyScopes(ctx context.Context, orgID, userID string,
+	transformScopes func([]string) []string,
+	transformWsID func(string) string,
+) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -327,7 +349,7 @@ func (s *Store) updateKeyScopes(ctx context.Context, orgID, userID string, trans
 	defer tx.Rollback(ctx) //nolint:errcheck
 
 	const selectQ = `
-SELECT key_id, key_hash, key_prefix, scopes, COALESCE(description,'')
+SELECT key_id, key_hash, key_prefix, scopes, COALESCE(description,''), COALESCE(workspace_id,'')
 FROM api_keys
 WHERE user_id = $1 AND active = TRUE
 ORDER BY created_at
@@ -339,13 +361,13 @@ FOR UPDATE`
 	}
 
 	type keyRow struct {
-		keyID, keyHash, keyPrefix, description string
-		currentScopes                          []string
+		keyID, keyHash, keyPrefix, description, workspaceID string
+		currentScopes                                       []string
 	}
 	var keys []keyRow
 	for rows.Next() {
 		var k keyRow
-		if err := rows.Scan(&k.keyID, &k.keyHash, &k.keyPrefix, &k.currentScopes, &k.description); err != nil {
+		if err := rows.Scan(&k.keyID, &k.keyHash, &k.keyPrefix, &k.currentScopes, &k.description, &k.workspaceID); err != nil {
 			rows.Close()
 			return err
 		}
@@ -358,7 +380,8 @@ FOR UPDATE`
 
 	now := time.Now().UTC()
 	for _, k := range keys {
-		newScopes := transform(k.currentScopes)
+		newScopes := transformScopes(k.currentScopes)
+		newWsID := transformWsID(k.workspaceID)
 
 		// Revoke old key.
 		if _, err := tx.Exec(ctx,
@@ -372,10 +395,10 @@ FOR UPDATE`
 		newKeyID := uuid.Must(uuid.NewV7()).String()
 		const insertQ = `
 INSERT INTO api_keys
-  (key_id, key_hash, key_prefix, org_id, user_id, scopes, description, supersedes_key_id)
-VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7,''), $8)`
+  (key_id, key_hash, key_prefix, org_id, user_id, workspace_id, scopes, description, supersedes_key_id)
+VALUES ($1, $2, $3, $4, $5, NULLIF($6,''), $7, NULLIF($8,''), $9)`
 		if _, err := tx.Exec(ctx, insertQ,
-			newKeyID, k.keyHash, k.keyPrefix, orgID, userID,
+			newKeyID, k.keyHash, k.keyPrefix, orgID, userID, newWsID,
 			newScopes, k.description, k.keyID,
 		); err != nil {
 			return err
