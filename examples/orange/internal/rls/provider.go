@@ -64,6 +64,19 @@ func (p *PollProvider) Start(ctx context.Context) {
 	}
 }
 
+// Reload performs one immediate synchronous load outside of the normal poll
+// interval. Useful when a file watcher detects a change and wants to apply it
+// without waiting for the next tick.
+func (p *PollProvider) Reload(ctx context.Context) {
+	cfg, err := p.loader(ctx)
+	if err != nil {
+		slog.Error("rls: reload failed", "err", err)
+		return
+	}
+	p.current.Store(&cfg)
+	slog.Info("rls: config reloaded")
+}
+
 // Current returns the most recently loaded config, or nil before LoadOnce.
 func (p *PollProvider) Current() rlsconfig.RateLimitConfig {
 	ptr := p.current.Load()

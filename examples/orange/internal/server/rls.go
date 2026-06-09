@@ -7,8 +7,9 @@ package server
 // service authenticates to orange CP exactly the same way as the egress proxy.
 //
 // Subcommands:
-//   orange rls serve    — run the Envoy RateLimitService v3 gRPC server
-//   orange rls emulate  — poll CP and print translated rate-limit config (debug)
+//   orange rls serve          — run the Envoy RateLimitService v3 gRPC server
+//   orange rls serve --local  — same, but with embedded miniredis + local YAML config
+//   orange rls emulate        — poll CP and print translated rate-limit config (debug)
 
 import (
 	"context"
@@ -17,15 +18,18 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
 	"time"
 
+	miniredis "github.com/alicebob/miniredis/v2"
 	pb "github.com/envoyproxy/go-control-plane/envoy/service/ratelimit/v3"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
+	"gopkg.in/yaml.v3"
 
 	orangeconfig "github.com/dio/transit/examples/orange/internal/config"
 	"github.com/dio/transit/examples/orange/internal/client"
@@ -50,56 +54,112 @@ func newRLSServeCmd() *cobra.Command {
 		redisAddr  string
 		listenAddr string
 		interval   time.Duration
+		localMode  bool
+		configPath string
 	)
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Run the Envoy RateLimitService v3 gRPC server",
-		Long: `Serve starts a gRPC RateLimitService (Envoy RLS v3) that:
+		Long: `Serve starts a gRPC RateLimitService (Envoy RLS v3) that enforces
+rate limits against Redis using pipelined INCRBY + EXPIRE.
 
-  1. Loads an egress bundle for CP authentication.
-  2. Polls orange CP for rate-limit policy config (same client path as egress).
-  3. Enforces limits against Redis using pipelined INCRBY + EXPIRE.
+Normal mode (requires an egress bundle):
+  1. Loads a bundle for CP authentication.
+  2. Polls orange CP for rate-limit policy config.
+  3. Enforces limits against an external Redis.
 
-The bundle is produced by "orange admin egress bundle" — RLS reuses the egress
-bundle format since both authenticate to the same management plane.
+Local mode (--local, no bundle needed):
+  1. Reads config from --config (or ORANGE_CONFIG).
+  2. Starts an embedded miniredis on a random port.
+  3. Prints the redis-cli command so you can inspect counters live.
+  4. Watches the config file with fsnotify; reloads instantly on save.
 
-Use "orange rls emulate" to inspect the translated rate-limit config without
-starting a gRPC server.`,
+Use "orange rls emulate" to inspect translated config without a gRPC server.`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if bundlePath == "" {
-				bundlePath = os.Getenv("ORANGE_EGRESS_BUNDLE")
-			}
-			if bundlePath == "" {
-				bundlePath = "."
-			}
-			bundle, err := client.LoadBundle(bundlePath)
-			if err != nil {
-				return fmt.Errorf("load bundle: %w", err)
-			}
-
 			ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer cancel()
 
-			c, err := client.NewClient(bundle)
-			if err != nil {
-				return err
+			var (
+				snapshotFn rls.SnapshotFunc
+				redisOpts  *goredis.Options
+				absConfig  string // non-empty in local mode; used to start file watcher
+			)
+
+			if localMode {
+				// ── local mode: embedded miniredis + YAML config file ─────────
+				if configPath == "" {
+					configPath = os.Getenv("ORANGE_CONFIG")
+				}
+				if configPath == "" {
+					configPath = "orange.yaml"
+				}
+				if _, err := os.Stat(configPath); err != nil {
+					return fmt.Errorf("config file not found: %s (use --config or set ORANGE_CONFIG)", configPath)
+				}
+				var err error
+				absConfig, err = filepath.Abs(configPath)
+				if err != nil {
+					return fmt.Errorf("resolve config path: %w", err)
+				}
+
+				mr, err := miniredis.Run()
+				if err != nil {
+					return fmt.Errorf("start miniredis: %w", err)
+				}
+				defer mr.Close()
+
+				fmt.Fprintf(os.Stderr, "rls:local  config=%s\n", absConfig)
+				fmt.Fprintf(os.Stderr, "rls:local  miniredis addr=%s\n", mr.Addr())
+				fmt.Fprintf(os.Stderr, "rls:local  inspect:  echo 'KEYS *' | redis-cli -p %s\n\n", mr.Port())
+
+				redisOpts = &goredis.Options{Addr: mr.Addr()}
+				snapshotFn = localRLSSnapshotFn(absConfig)
+			} else {
+				// ── normal mode: bundle + external Redis ──────────────────────
+				if bundlePath == "" {
+					bundlePath = os.Getenv("ORANGE_EGRESS_BUNDLE")
+				}
+				if bundlePath == "" {
+					bundlePath = "."
+				}
+				bundle, err := client.LoadBundle(bundlePath)
+				if err != nil {
+					return fmt.Errorf("load bundle: %w", err)
+				}
+				c, err := client.NewClient(bundle)
+				if err != nil {
+					return err
+				}
+				redisOpts = &goredis.Options{Addr: redisAddr}
+				snapshotFn = rlsSnapshotFn(ctx, c)
 			}
 
-			// Cache the last good snapshot so reloads survive transient fetch failures.
-			loader := rls.OrangeLoader(rlsSnapshotFn(ctx, c))
+			loader := rls.OrangeLoader(snapshotFn)
 			provider := rls.NewPollProvider(loader, interval)
 			if err := provider.LoadOnce(ctx); err != nil {
 				return fmt.Errorf("initial rls load: %w", err)
 			}
-			slog.Info("rls: initial config loaded")
+			raw, _ := snapshotFn()
+			if raw != nil && len(raw.RateLimit.Policies) > 0 {
+				fmt.Fprintf(os.Stderr, "rls: initial config loaded  scopes=%d tiers=%d\n", len(raw.RateLimit.Policies), len(raw.RateLimit.Tiers))
+				printRLSPolicies("rls:config", raw)
+			} else {
+				slog.Info("rls: initial config loaded")
+			}
 
-			redisClient := goredis.NewClient(&goredis.Options{Addr: redisAddr})
+			if absConfig != "" {
+				// Watch the config file for writes; reload immediately on change rather
+				// than waiting for the next --interval tick.
+				go orangeconfig.WatchFile(ctx, absConfig, func() { provider.Reload(ctx) })
+			}
+
+			redisClient := goredis.NewClient(redisOpts)
 			defer func() { _ = redisClient.Close() }()
 			if err := redisClient.Ping(ctx).Err(); err != nil {
-				return fmt.Errorf("redis ping %s: %w", redisAddr, err)
+				return fmt.Errorf("redis ping %s: %w", redisOpts.Addr, err)
 			}
-			slog.Info("rls: redis connected", "addr", redisAddr)
+			slog.Info("rls: redis connected", "addr", redisOpts.Addr)
 
 			svc := rls.NewService(provider, rls.NewRateLimiter(redisClient, rls.NewNoopStatsManager()))
 
@@ -128,10 +188,29 @@ starting a gRPC server.`,
 		},
 	}
 	cmd.Flags().StringVar(&bundlePath, "bundle", "", "bundle dir or .tar.gz (env: ORANGE_EGRESS_BUNDLE)")
-	cmd.Flags().StringVar(&redisAddr, "redis-addr", "localhost:6379", "Redis address")
+	cmd.Flags().StringVar(&redisAddr, "redis-addr", "localhost:6379", "Redis address (ignored in --local mode)")
 	cmd.Flags().StringVar(&listenAddr, "listen", ":8081", "gRPC listen address")
 	cmd.Flags().DurationVar(&interval, "interval", 30*time.Second, "config poll interval")
+	cmd.Flags().BoolVar(&localMode, "local", false, "embedded miniredis + YAML config file (no bundle or external Redis needed)")
+	cmd.Flags().StringVar(&configPath, "config", "", "orange config file for --local mode (env: ORANGE_CONFIG)")
 	return cmd
+}
+
+// localRLSSnapshotFn returns a SnapshotFunc that reads and parses an orange YAML
+// config file on each call. It is invoked on initial load, on each poll tick,
+// and on demand by the file watcher via provider.Reload.
+func localRLSSnapshotFn(path string) rls.SnapshotFunc {
+	return func() (*orangeconfig.RawConfig, error) {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read config %s: %w", path, err)
+		}
+		var raw orangeconfig.RawConfig
+		if err := yaml.Unmarshal(data, &raw); err != nil {
+			return nil, fmt.Errorf("parse config %s: %w", path, err)
+		}
+		return &raw, nil
+	}
 }
 
 func newRLSEmulateCmd() *cobra.Command {
