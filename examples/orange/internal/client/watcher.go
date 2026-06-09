@@ -1,14 +1,15 @@
 package client
 
-// watcher.go — shared poll state for the egress emulator REPL.
+// watcher.go — shared poll state for CP-connected components.
 //
 // Watcher holds the latest config snapshot, poll lifecycle state, and a
 // short change-history ring buffer. A single background goroutine calls tick()
-// on every interval tick; REPL commands read state under the read lock.
+// on every interval tick; callers read state under the read lock.
 //
-// The design separates transport (Client) from state (Watcher) so that rls
-// can use Client.Fetch directly without the REPL overhead, while the REPL
-// uses a full Watcher that tracks history, poll status, and prompt state.
+// The design separates transport (Client) from state (Watcher): the loader
+// package uses Watcher.StartPoll to keep liborange.so live-updated from the
+// CP, while the egress emulator REPL uses it for interactive introspection.
+// Components that need only raw Fetch semantics use Client directly.
 
 import (
 	"context"

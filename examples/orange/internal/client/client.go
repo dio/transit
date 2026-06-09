@@ -33,25 +33,37 @@ type Client struct {
 
 // NewClient builds a Client from a loaded bundle. Returns an error if the
 // private key in the bundle cannot be parsed.
-func NewClient(bundle *BundleData) (*Client, error) {
+// NewHTTPClient builds an assertion-authenticated *http.Client from bundle
+// credentials. The returned client injects X-Egress-Assertion on every request.
+// Use this when you need only the HTTP client (e.g. to construct a secret
+// resolver) without the full RPC client surface.
+func NewHTTPClient(bundle *BundleData) (*http.Client, error) {
 	privKey, err := ParseEd25519PrivateKey(bundle.EgressKey)
 	if err != nil {
 		return nil, fmt.Errorf("parse egress.key: %w", err)
 	}
+	return &http.Client{
+		Timeout: 15 * time.Second,
+		Transport: &AssertionTransport{
+			Base:        http.DefaultTransport,
+			PrivKey:     privKey,
+			EgressID:    bundle.EgressID,
+			WorkspaceID: bundle.WorkspaceID,
+		},
+	}, nil
+}
 
-	transport := &AssertionTransport{
-		Base:        http.DefaultTransport,
-		PrivKey:     privKey,
-		EgressID:    bundle.EgressID,
-		WorkspaceID: bundle.WorkspaceID,
+func NewClient(bundle *BundleData) (*Client, error) {
+	httpClient, err := NewHTTPClient(bundle)
+	if err != nil {
+		return nil, err
 	}
-	httpClient := &http.Client{Timeout: 15 * time.Second, Transport: transport}
 	opts := []connect.ClientOption{connect.WithCodec(vtprotocodec.Codec{})}
 
 	return &Client{
 		heartbeatClient: egressv1connect.NewEgressServiceClient(httpClient, bundle.ServerURL, opts...),
 		snapshotClient:  configv1connect.NewSnapshotServiceClient(httpClient, bundle.ServerURL, opts...),
-		Resolver:        config.NewDefaultResolver(5 * time.Minute),
+		Resolver:        config.NewDefaultResolver(httpClient, bundle.ServerURL, 5*time.Minute),
 	}, nil
 }
 
