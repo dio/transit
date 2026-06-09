@@ -3,6 +3,7 @@
 package testutil
 
 import (
+	"strconv"
 	"sync"
 
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
@@ -241,6 +242,12 @@ func metadataNumber(v any) (float64, bool) {
 		return float64(n), true
 	case float64:
 		return n, true
+	case string:
+		f, err := strconv.ParseFloat(n, 64)
+		if err != nil {
+			return 0, false
+		}
+		return f, true
 	default:
 		return 0, false
 	}
