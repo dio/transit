@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -33,6 +34,7 @@ import (
 	profileconnect "github.com/dio/transit/examples/orange/api/orange/profile/admin/v1/adminv1connect"
 	projectconnect "github.com/dio/transit/examples/orange/api/orange/project/admin/v1/adminv1connect"
 	secretconnect "github.com/dio/transit/examples/orange/api/orange/secret/admin/v1/adminv1connect"
+	secretv1connect "github.com/dio/transit/examples/orange/api/orange/secret/v1/secretv1connect"
 	userconnect "github.com/dio/transit/examples/orange/api/orange/user/admin/v1/adminv1connect"
 	workspaceconnect "github.com/dio/transit/examples/orange/api/orange/workspace/admin/v1/adminv1connect"
 	"github.com/dio/transit/examples/orange/internal/config"
@@ -49,9 +51,15 @@ import (
 
 func newServerCmd() *cobra.Command {
 	var (
-		localMode bool
-		port      string
-		publicURL string
+		localMode  bool
+		purge      bool
+		noSeed     bool
+		configPath string
+		org        string
+		project    string
+		user       string
+		port       string
+		publicURL  string
 	)
 
 	cmd := &cobra.Command{
@@ -59,38 +67,62 @@ func newServerCmd() *cobra.Command {
 		Short: "Run the orange management plane server",
 		Long: `Starts the orange management plane HTTP/2 server.
 
-Bootstrap a fresh database first:
+In --local mode the server bootstraps itself from orange.yaml on first start,
+enters an admin REPL, and shuts down when the REPL exits:
 
-  orange bootstrap --local --org=acme
+  orange server --local            # start / re-attach to existing data
+  orange server --local --purge    # wipe ~/.orange/ and re-bootstrap
+  orange server --local --purge --no-seed  # wipe and start with empty DB
+
+For production or manual bootstrap, use:
+
   orange bootstrap --local --org=acme --include=proj,ws
-
-Then start the server:
-
   orange server --local`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+			if purge && !localMode {
+				return fmt.Errorf("--purge is only valid with --local")
+			}
 			return runServer(cmd.Context(), serverCfg{
-				local:     localMode,
-				port:      port,
-				publicURL: publicURL,
-				logger:    logger,
+				local:      localMode,
+				purge:      purge,
+				noSeed:     noSeed,
+				configPath: configPath,
+				org:        org,
+				project:    project,
+				user:       user,
+				port:       port,
+				publicURL:  publicURL,
+				logger:     logger,
 			})
 		},
 	}
 
 	cmd.Flags().BoolVar(&localMode, "local", false, "use embedded Postgres and auto-generate KEK in ~/.orange/")
-	cmd.Flags().StringVar(&port, "port", envOr("PORT", "8080"), "listen port")
+	cmd.Flags().BoolVar(&purge, "purge", false, "purge ~/.orange/data and KEK before starting (requires --local)")
+	cmd.Flags().BoolVar(&noSeed, "no-seed", false, "skip auto-bootstrap after --purge (start with empty DB)")
+	cmd.Flags().StringVar(&configPath, "config", envOr("ORANGE_CONFIG", "orange.yaml"), "bootstrap config file read for workspace/key names (--local mode; env: ORANGE_CONFIG)")
+	cmd.Flags().StringVar(&org, "org", "orange.io", "org name for local bootstrap")
+	cmd.Flags().StringVar(&project, "project", "proj1", "project name for local bootstrap")
+	cmd.Flags().StringVar(&user, "user", "dio", "initial user name for local bootstrap")
+	cmd.Flags().StringVar(&port, "port", envOr("PORT", "3000"), "listen port")
 	cmd.Flags().StringVar(&publicURL, "public-url", envOr("ORANGE_PUBLIC_URL", ""), "public URL written into egress bundles (env: ORANGE_PUBLIC_URL; default: http://localhost:<port>)")
 
 	return cmd
 }
 
 type serverCfg struct {
-	local     bool
-	port      string
-	publicURL string
-	logger    *slog.Logger
+	local  bool
+	purge  bool
+	noSeed bool
+	configPath string
+	org        string
+	project    string
+	user       string
+	port       string
+	publicURL  string
+	logger     *slog.Logger
 }
 
 func runServer(parent context.Context, cfg serverCfg) error {
@@ -100,6 +132,21 @@ func runServer(parent context.Context, cfg serverCfg) error {
 	listenAddr := cfg.port
 	if listenAddr[0] != ':' {
 		listenAddr = ":" + listenAddr
+	}
+
+	// Bind the listen socket before any setup work. This gives an immediate
+	// "address already in use" error when a stale server still holds the port,
+	// preventing silent fall-through to waitForServer on the stale process.
+	ln, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", listenAddr, err)
+	}
+
+	// ── Local mode: purge before starting embedded PG ─────────────────────────
+	if cfg.local && cfg.purge {
+		if err := purgeLocalData(cfg.logger); err != nil {
+			return fmt.Errorf("purge: %w", err)
+		}
 	}
 
 	// ── KEK resolution ────────────────────────────────────────────────────────
@@ -216,6 +263,7 @@ func runServer(parent context.Context, cfg serverCfg) error {
 	codecOpt := connect.WithCodec(vtprotocodec.Codec{})
 	authOpt := connect.WithInterceptors(apikeys.Interceptor(keyStore))
 	egressAuthStore := egressauth.NewStore(pool)
+	configSvc.SetWorkspaceNameLookup(egressAuthStore.WorkspaceName)
 	egressAuthOpt := connect.WithInterceptors(egressauth.Interceptor(egressAuthStore, egressAuthStore))
 	opts := []connect.HandlerOption{codecOpt, authOpt}
 
@@ -234,6 +282,8 @@ func runServer(parent context.Context, cfg serverCfg) error {
 	mux.Handle(configadminconnect.NewConfigAdminServiceHandler(configSvc, opts...))
 	// Snapshot fetch: data-plane facing, requires egress assertion auth.
 	mux.Handle(configv1connect.NewSnapshotServiceHandler(configSvc, codecOpt, egressAuthOpt))
+	// Secret resolver: data-plane facing, resolves orange:// secret refs at runtime.
+	mux.Handle(secretv1connect.NewSecretResolverServiceHandler(secretSvc, codecOpt, egressAuthOpt))
 	// Heartbeat is egress-facing: requires egress assertion auth.
 	mux.Handle(egressv1connect.NewEgressServiceHandler(
 		resources.NewHeartbeatService(heartbeatRegistry),
@@ -264,11 +314,88 @@ func runServer(parent context.Context, cfg serverCfg) error {
 
 	heartbeatRegistry.Start()
 
+	// ── Local mode: bootstrap from yaml, start server goroutine, enter REPL ───
+	if cfg.local {
+		cfg.logger.Info("server starting (local+REPL mode)", "addr", listenAddr)
+		serverErrCh := make(chan error, 1)
+		go func() {
+			ready.Store(true)
+			serverErrCh <- srv.Serve(ln)
+		}()
+
+		if err := waitForServer(ctx, serverURL); err != nil {
+			return fmt.Errorf("server not ready: %w", err)
+		}
+
+		// Bootstrap if no orgs exist yet (first run or after --purge),
+		// unless --no-seed was requested.
+		has, err := apikeys.HasOrgs(ctx, pool)
+		if err != nil {
+			return err
+		}
+		if !has && !cfg.noSeed {
+			svc := localBootstrapSvc{
+				pool:         pool,
+				keyStore:     keyStore,
+				projectSvc:   projectSvc,
+				workspaceSvc: workspaceSvc,
+				userSvc:      userSvc,
+				secretSvc:    secretSvc,
+				configSvc:    configSvc,
+			}
+			result, err := bootstrapFromYAML(ctx, cfg, svc)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stdout, "# local dev server ready\n")
+			fmt.Fprintf(os.Stdout, "# admin: %s\n", result.adminEmail)
+			fmt.Fprintf(os.Stdout, "export ORANGE_API_KEY=%s\n", result.adminKey)
+			if result.userKey != "" {
+				fmt.Fprintf(os.Stdout, "# user:  %s\n", result.userEmail)
+				fmt.Fprintf(os.Stdout, "export ORANGE_USER_API_KEY=%s\n", result.userKey)
+			}
+			rc := makeAdminRunCtx(serverURL, result.adminKey)
+			_ = runREPL(rc, []string{"org=" + result.orgID, "proj=" + result.projID})
+		} else if has {
+			rc, err := resolveRunCtx()
+			if err != nil {
+				return fmt.Errorf("org data exists but no credentials found (set ORANGE_API_KEY or run 'orange auth login'): %w", err)
+			}
+			_ = runREPL(rc, nil)
+		} else {
+			// --no-seed with empty DB: server runs until SIGINT/SIGTERM.
+			cfg.logger.Info("seeding skipped (--no-seed); server running, use 'orange bootstrap' to initialise")
+			select {
+			case <-ctx.Done():
+			case err := <-serverErrCh:
+				if err != nil && !errors.Is(err, http.ErrServerClosed) {
+					return fmt.Errorf("http server: %w", err)
+				}
+				return nil
+			}
+		}
+
+		// REPL exited: shut down server.
+		stop()
+		ready.Store(false)
+		heartbeatRegistry.Stop()
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			cfg.logger.Error("graceful shutdown failed", "err", err)
+		}
+		if err := <-serverErrCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("http server: %w", err)
+		}
+		return nil
+	}
+
+	// ── Normal mode: blocking until signal ────────────────────────────────────
 	cfg.logger.Info("server starting", "addr", listenAddr)
 	errCh := make(chan error, 1)
 	go func() {
 		ready.Store(true)
-		errCh <- srv.ListenAndServe()
+		errCh <- srv.Serve(ln)
 	}()
 
 	select {

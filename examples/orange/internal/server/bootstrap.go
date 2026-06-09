@@ -107,7 +107,7 @@ Use --actions to run post-bootstrap operations on created resources:
 	cmd.Flags().StringVar(&assign, "assign", "", "extra user:workspace assignments, e.g. dio:ws1,kai:ws1")
 	cmd.Flags().StringVar(&entries, "entries", "", "compact resource spec, e.g. dio@proj1/ws1,kai@,proj2/ws2,proj3")
 	cmd.Flags().StringVar(&actions, "actions", "", "post-bootstrap actions, e.g. download:egress-bundle@ws1,download:egress-bundle@ws2")
-	cmd.Flags().StringVar(&port, "port", envOr("PORT", "8080"), "server port used as fallback for egress server_url")
+	cmd.Flags().StringVar(&port, "port", envOr("PORT", "3000"), "server port used as fallback for egress server_url")
 	cmd.Flags().StringVar(&publicURL, "public-url", envOr("ORANGE_PUBLIC_URL", ""), "public URL written into egress bundles (env: ORANGE_PUBLIC_URL; default: http://localhost:<port>)")
 
 	return cmd

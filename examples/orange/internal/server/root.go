@@ -68,7 +68,7 @@ Run 'orange <command> --help' for command-specific help.`,
 
 	// Persistent flags available on every subcommand.
 	pf := root.PersistentFlags()
-	pf.StringVar(&gf.server, "server", "http://localhost:8080", "management plane server URL (env: ORANGE_SERVER)")
+	pf.StringVar(&gf.server, "server", "http://localhost:3000", "management plane server URL (env: ORANGE_SERVER)")
 	pf.StringVar(&gf.org, "org", "", "active org slug (env: ORANGE_ORG)")
 	pf.StringVar(&gf.user, "user", "", "active user within the org (env: ORANGE_USER)")
 	pf.StringVar(&gf.apiKey, "api-key", "", "API key (env: ORANGE_API_KEY)")
@@ -100,7 +100,7 @@ func resolveRunCtx() (*RunCtx, error) {
 		apiKey = os.Getenv("ORANGE_API_KEY")
 	}
 	serverURL := gf.server
-	if serverURL == "http://localhost:8080" {
+	if serverURL == "http://localhost:3000" {
 		if v := os.Getenv("ORANGE_SERVER"); v != "" {
 			serverURL = v
 		}
@@ -134,7 +134,7 @@ func resolveRunCtx() (*RunCtx, error) {
 			return nil, err
 		}
 		apiKey = userEntry.APIKey
-		if serverURL == "http://localhost:8080" && orgEntry.Server != "" {
+		if serverURL == "http://localhost:3000" && orgEntry.Server != "" {
 			serverURL = orgEntry.Server
 		}
 	}
