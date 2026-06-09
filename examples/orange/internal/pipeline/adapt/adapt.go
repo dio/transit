@@ -83,11 +83,12 @@ func init() {
 
 // streamContext holds per-request state shared across all four filter phases.
 type streamContext struct {
-	translator      translator.Translator
-	auth            backendAuthHandler
-	upstreamHost    string
-	rawQuery        string // query string from the original client path (e.g. "beta=true")
-	passthroughMode bool   // true when x-orange-api-key was present; client credentials forwarded
+	translator       translator.Translator
+	auth             backendAuthHandler
+	upstreamHost     string
+	rawQuery         string // query string from the original client path (e.g. "beta=true")
+	passthroughMode  bool   // true when x-orange-api-key was present; client credentials forwarded
+	requestMutations *config.RequestMutations
 }
 
 func handler(w *up.Writer, r *up.Request) {
@@ -183,14 +184,24 @@ func handler(w *up.Writer, r *up.Request) {
 			w.Slog().Info("Auth handler error", "provider", upstream, "err", err)
 			authHandler = noAuth{}
 		}
+		// Look up request mutations from the model record (client-facing model ID
+		// is written into metadata by the match filter).
+		var reqMut *config.RequestMutations
+		if mv, ok := w.GetMetadataString(up.MetadataSourceDynamic, match.MetadataNamespace, match.MetadataKeyModel); ok {
+			if modelRec, found := cfgSnap.Global.Models[mv.String()]; found {
+				reqMut = modelRec.RequestMutations
+			}
+		}
+
 		passthroughMode := r.Header(orangeAPIKeyHeader) != ""
 		_, rawQuery, _ := strings.Cut(r.Path, "?")
 		sc := &streamContext{
-			translator:      t,
-			auth:            authHandler,
-			upstreamHost:    host,
-			rawQuery:        rawQuery,
-			passthroughMode: passthroughMode,
+			translator:       t,
+			auth:             authHandler,
+			upstreamHost:     host,
+			rawQuery:         rawQuery,
+			passthroughMode:  passthroughMode,
+			requestMutations: reqMut,
 		}
 		if r.Context != nil {
 			*r.Context = sc
@@ -213,6 +224,12 @@ func handler(w *up.Writer, r *up.Request) {
 		applyRequestHeaders(w, hdrs)
 		if !passthroughMode {
 			authHandler.InjectAuth(w)
+		}
+		// Apply header mutations after auth so they can override or extend auth-set headers.
+		if reqMut != nil && len(reqMut.Headers) > 0 {
+			for k, v := range resolveExtra(adaptSecResolver, reqMut.Headers) {
+				w.SetRequestHeader(k, v)
+			}
 		}
 	}
 }
@@ -253,8 +270,19 @@ func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 	applyRequestHeaders(w, newHdrs)
 
 	effectiveBody := chunk.Data
+	bodyModified := false
 	if mutated != nil {
 		effectiveBody = mutated
+		bodyModified = true
+	}
+	// Apply body mutations after translation so the translator cannot overwrite them.
+	if sc.requestMutations != nil && len(sc.requestMutations.Body) > 0 {
+		resolved := resolveExtra(adaptSecResolver, sc.requestMutations.Body)
+		if mb := applyBodyMutations(effectiveBody, resolved); mb != nil {
+			effectiveBody = mb
+			bodyModified = true
+			w.SetRequestHeader("content-length", strconv.Itoa(len(effectiveBody)))
+		}
 	}
 	if !sc.passthroughMode {
 		if baw, ok := sc.auth.(BodyAwareAuthHandler); ok {
@@ -270,8 +298,8 @@ func bodyHandler(w *up.Writer, chunk *up.BodyChunk) {
 		}
 	}
 
-	if mutated != nil {
-		w.SetRequestBody(mutated)
+	if bodyModified {
+		w.SetRequestBody(effectiveBody)
 	}
 }
 
@@ -400,4 +428,39 @@ func resolveExtra(resolver config.SecretResolver, extra map[string]string) map[s
 		}
 	}
 	return out
+}
+
+// applyBodyMutations merges mutations into the JSON body. Keys support
+// dot-path notation (e.g. "modelInfo.id") to address nested fields;
+// intermediate objects are created as needed. Returns nil on parse failure so
+// callers can fall back to the original body.
+func applyBodyMutations(body []byte, mutations map[string]string) []byte {
+	var obj map[string]any
+	if err := json.Unmarshal(body, &obj); err != nil {
+		return nil
+	}
+	for path, value := range mutations {
+		setDotPath(obj, path, value)
+	}
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return nil
+	}
+	return out
+}
+
+// setDotPath sets the value at a dot-separated path inside m, creating
+// intermediate map[string]any nodes as needed.
+func setDotPath(m map[string]any, path, value string) {
+	key, rest, hasDot := strings.Cut(path, ".")
+	if !hasDot {
+		m[key] = value
+		return
+	}
+	sub, _ := m[key].(map[string]any)
+	if sub == nil {
+		sub = make(map[string]any)
+	}
+	setDotPath(sub, rest, value)
+	m[key] = sub
 }

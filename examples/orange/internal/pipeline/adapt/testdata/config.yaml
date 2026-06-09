@@ -21,3 +21,11 @@ llm:
       provider: openai_direct
     claude-3-5-sonnet-20241022:
       provider: anthropic_direct
+    model-with-mutations:
+      provider: anthropic_direct
+      request_mutations:
+        headers:
+          x-model-id: some-uuid
+        body:
+          modelId: some-uuid
+          modelInfo.nested.value: deep-uuid

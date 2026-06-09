@@ -2,6 +2,7 @@ package adapt
 
 import (
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -29,7 +30,7 @@ func loadTestConfig(t *testing.T) {
 	if err := appState.LoadConfig(yamlBytes); err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	resolver := config.NewDefaultResolver(time.Minute)
+	resolver := config.NewDefaultResolver(nil, "", time.Minute)
 	SetAppState(appState, resolver)
 	clearAuthHandlerCache()
 	t.Cleanup(func() {
@@ -266,4 +267,107 @@ func TestResponseHandler_noContext_noOp(t *testing.T) {
 	h := testutil.NewFilterHandle()
 	w := up.NewWriter(h)
 	responseHandler(w, &up.ResponseChunk{StatusCode: 200, Context: nil})
+}
+
+// --- Request mutations unit tests ---
+
+func TestApplyBodyMutations_flatKey(t *testing.T) {
+	body := []byte(`{"model":"x","messages":[]}`)
+	out := applyBodyMutations(body, map[string]string{"modelId": "uuid-1"})
+	require.NotNil(t, out)
+	require.Contains(t, string(out), `"modelId":"uuid-1"`)
+	require.Contains(t, string(out), `"model":"x"`) // existing fields preserved
+}
+
+func TestApplyBodyMutations_dotPath(t *testing.T) {
+	body := []byte(`{"model":"x"}`)
+	out := applyBodyMutations(body, map[string]string{"a.b.c": "deep"})
+	require.NotNil(t, out)
+	require.Contains(t, string(out), `"deep"`)
+}
+
+func TestApplyBodyMutations_dotPath_preservesExistingNested(t *testing.T) {
+	body := []byte(`{"meta":{"other":"val"}}`)
+	out := applyBodyMutations(body, map[string]string{"meta.id": "x"})
+	require.NotNil(t, out)
+	require.Contains(t, string(out), `"other":"val"`)
+	require.Contains(t, string(out), `"id":"x"`)
+}
+
+func TestApplyBodyMutations_invalidJSON_returnsNil(t *testing.T) {
+	out := applyBodyMutations([]byte(`not json`), map[string]string{"k": "v"})
+	require.Nil(t, out)
+}
+
+func TestSetDotPath_flat(t *testing.T) {
+	m := map[string]any{}
+	setDotPath(m, "key", "val")
+	require.Equal(t, "val", m["key"])
+}
+
+func TestSetDotPath_nested(t *testing.T) {
+	m := map[string]any{}
+	setDotPath(m, "a.b.c", "deep")
+	a, _ := m["a"].(map[string]any)
+	b, _ := a["b"].(map[string]any)
+	require.Equal(t, "deep", b["c"])
+}
+
+func TestSetDotPath_mergesExisting(t *testing.T) {
+	m := map[string]any{"a": map[string]any{"x": "1"}}
+	setDotPath(m, "a.y", "2")
+	a, _ := m["a"].(map[string]any)
+	require.Equal(t, "1", a["x"])
+	require.Equal(t, "2", a["y"])
+}
+
+func TestHandler_requestMutations_injectsHeaders(t *testing.T) {
+	loadTestConfig(t)
+	h := testutil.NewFilterHandle(testutil.WithHeaders(map[string]string{
+		":method":       "POST",
+		":path":         "/v1/messages",
+		"authorization": "Bearer client-key",
+		"x-api-key":     "client-key",
+	}))
+	h.SetMetadata(match.MetadataNamespace, match.MetadataKeyUpstream, "anthropic_direct")
+	h.SetMetadata(match.MetadataNamespace, match.MetadataKeyModel, "model-with-mutations")
+	w := up.NewWriter(h)
+	r := up.NewRequest(h.RequestHeaders(), FilterName)
+	handler(w, r)
+
+	require.Equal(t, "some-uuid", headerValue(h, "x-model-id"))
+}
+
+func TestBodyHandler_requestMutations_updatesContentLength(t *testing.T) {
+	tr, err := translator.New("anthropic", translator.ProviderConfig{
+		BackendSchema: "anthropic",
+		PathPrefix:    "/v1",
+	})
+	require.NoError(t, err)
+
+	originalBody := []byte(`{"model":"claude-3-5-sonnet-20241022","messages":[{"role":"user","content":"hi"}]}`)
+	mut := &config.RequestMutations{
+		Body: map[string]string{
+			"modelId":             "uuid-flat",
+			"modelInfo.sub.value": "uuid-nested",
+		},
+	}
+	var ctx any = &streamContext{translator: tr, auth: noAuth{}, requestMutations: mut}
+	h := testutil.NewFilterHandle(testutil.WithHeaders(map[string]string{
+		":method": "POST",
+		":path":   "/v1/messages",
+	}))
+	w := up.NewWriter(h)
+	bodyHandler(w, &up.BodyChunk{
+		Data:      originalBody,
+		EndStream: true,
+		Context:   &ctx,
+	})
+
+	// Body mutations add fields, so content-length must exceed the original body size.
+	cl := headerVal(h, "content-length")
+	require.NotEmpty(t, cl, "content-length should be set after body mutations")
+	clInt, err := strconv.Atoi(cl)
+	require.NoError(t, err)
+	require.Greater(t, clInt, len(originalBody), "content-length should be larger after adding mutation fields")
 }

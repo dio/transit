@@ -187,6 +187,15 @@ type ModelMetadata struct {
 	Tags          []string
 }
 
+// RequestMutations carries header and body field injections applied to every
+// upstream request for a model, after the translator has run.
+// Values may use env://, file://, or literal:// references resolved at request time.
+// Body keys support dot-path notation to address nested JSON fields.
+type RequestMutations struct {
+	Headers map[string]string // injected into upstream request headers
+	Body    map[string]string // merged into upstream request body; dot-path keys create nested objects
+}
+
 // ModelRecord is the compiled, immutable form of one catalog entry.
 // Provider is a resolved pointer; EndpointOverrides maps operation names
 // (e.g. "chat_completions") to alternate providers for that operation only.
@@ -197,8 +206,9 @@ type ModelRecord struct {
 	APIName           string // backend model name; defaults to the catalog key
 	Binding           string
 	EndpointOverrides map[string]*ProviderRecord
-	Pricing           *ModelPricing  // nil when not configured
-	Metadata          *ModelMetadata // nil when not configured
+	RequestMutations  *RequestMutations // nil when not configured
+	Pricing           *ModelPricing     // nil when not configured
+	Metadata          *ModelMetadata    // nil when not configured
 }
 
 // ── MCP Server ────────────────────────────────────────────────────────────────
@@ -556,10 +566,13 @@ type KeyRecord struct {
 
 // ProfileRecord is the minimal L2 representation of a user-owned MCP profile.
 // Shape keys reference entries in the snapshot's ToolFilterPool and AuthPool.
+// Path is the opaque URL token from the config (e.g. "github") used to route
+// /mcp/<path> requests; empty when no path is configured.
 type ProfileRecord struct {
 	Workspace          uint32
 	User               uint32
 	Name               uint32
+	Path               string
 	ToolFilterShapeKey string
 	AuthShapeKey       string
 }
@@ -574,6 +587,7 @@ type ConfigSnapshot struct {
 	Generation uint64
 	Global     *GlobalConfig
 	Pools      *Pools
-	Keys       map[string]*KeyRecord     // compiled from snapshot payload; nil if absent
-	Profiles   map[string]*ProfileRecord // compiled from snapshot payload; nil if absent
+	Keys            map[string]*KeyRecord     // compiled from snapshot payload; nil if absent
+	Profiles        map[string]*ProfileRecord // keyed by workspace/user/name; nil if absent
+	ProfilesByPath  map[string]*ProfileRecord // keyed by profile.path opaque token; nil if absent
 }

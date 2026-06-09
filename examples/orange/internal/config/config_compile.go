@@ -89,6 +89,7 @@ func compile(raw *RawConfig, interns *InternPool, generation uint64) (*ConfigSna
 			APIName:           apiName,
 			Binding:           r.Binding,
 			EndpointOverrides: overrides,
+			RequestMutations:  compileRequestMutations(r.RequestMutations),
 			Pricing:           compilePricing(r.Pricing),
 			Metadata:          compileMetadata(r.Metadata),
 		}
@@ -172,33 +173,47 @@ func compile(raw *RawConfig, interns *InternPool, generation uint64) (*ConfigSna
 	}
 
 	var compiledProfiles map[string]*ProfileRecord
+	var profilesByPath map[string]*ProfileRecord
 	if raw.Profiles != nil {
 		compiledProfiles = make(map[string]*ProfileRecord, len(raw.Profiles))
+		profilesByPath = make(map[string]*ProfileRecord, len(raw.Profiles))
 		for id, rawProfile := range raw.Profiles {
 			pid, err := parseID(id, interns)
 			if err != nil {
 				return nil, fmt.Errorf("profiles[%q]: %w", id, err)
 			}
+			if rawProfile.Path != "" && strings.Contains(rawProfile.Path, "/") {
+				return nil, fmt.Errorf("profiles[%q]: path %q must not contain slashes", id, rawProfile.Path)
+			}
 			toolShapeKey, authShapeKey, err := compileProfileShapes(rawProfile, servers, pools)
 			if err != nil {
 				return nil, fmt.Errorf("profiles[%q]: %w", id, err)
 			}
-			compiledProfiles[id] = &ProfileRecord{
+			rec := &ProfileRecord{
 				Workspace:          pid.Workspace,
 				User:               pid.User,
 				Name:               pid.Name,
+				Path:               rawProfile.Path,
 				ToolFilterShapeKey: toolShapeKey,
 				AuthShapeKey:       authShapeKey,
+			}
+			compiledProfiles[id] = rec
+			if rawProfile.Path != "" {
+				if existing, dup := profilesByPath[rawProfile.Path]; dup {
+					return nil, fmt.Errorf("profiles[%q]: path %q already used by another profile", id, existing.Path)
+				}
+				profilesByPath[rawProfile.Path] = rec
 			}
 		}
 	}
 
 	return &ConfigSnapshot{
-		Generation: generation,
-		Global:     global,
-		Pools:      pools,
-		Keys:       compiledKeys,
-		Profiles:   compiledProfiles,
+		Generation:     generation,
+		Global:         global,
+		Pools:          pools,
+		Keys:           compiledKeys,
+		Profiles:       compiledProfiles,
+		ProfilesByPath: profilesByPath,
 	}, nil
 }
 
@@ -593,6 +608,18 @@ func compileRateLimitRule(r RawRateLimitPolicyEntry) (RateLimitRule, error) {
 }
 
 // ── Scalar helpers ────────────────────────────────────────────────────────────
+
+// compileRequestMutations converts a raw request-mutations block to its domain form.
+// Returns nil when r is nil so ModelRecord.RequestMutations is nil for unmodified models.
+func compileRequestMutations(r *RawRequestMutations) *RequestMutations {
+	if r == nil {
+		return nil
+	}
+	return &RequestMutations{
+		Headers: cloneStringMap(r.Headers),
+		Body:    cloneStringMap(r.Body),
+	}
+}
 
 // compilePricing converts a raw pricing block to its domain form.
 // Returns nil when r is nil so ModelRecord.Pricing is nil for unpriced models.

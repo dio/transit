@@ -54,16 +54,28 @@ type RawProvider struct {
 	Bindings      []RawBinding      `yaml:"bindings,omitempty"       json:"bindings,omitempty"`
 }
 
+// RawRequestMutations specifies header and body field injections applied to
+// every upstream request for a model, after the translator has run.
+// Values support the same env://, file://, and literal:// reference schemes
+// used by provider auth and extra fields; references are resolved at request time.
+// Body keys support dot-path notation (e.g. "modelInfo.modelId.value") to set
+// nested JSON fields; intermediate objects are created as needed.
+type RawRequestMutations struct {
+	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+	Body    map[string]string `yaml:"body,omitempty"    json:"body,omitempty"`
+}
+
 // RawModel is the serde form of one client-facing model catalog entry.
 // Provider is required; Name defaults to the map key when absent.
 // Binding names a provider binding (alternate endpoint) to use for this model.
 type RawModel struct {
-	Provider          string            `yaml:"provider"                     json:"provider"`
-	Name              string            `yaml:"name,omitempty"               json:"name,omitempty"`
-	Binding           string            `yaml:"binding,omitempty"            json:"binding,omitempty"`
-	EndpointOverrides map[string]string `yaml:"endpoint_overrides,omitempty" json:"endpoint_overrides,omitempty"`
-	Pricing           *RawModelPricing  `yaml:"pricing,omitempty"            json:"pricing,omitempty"`
-	Metadata          *RawMetadata      `yaml:"metadata,omitempty"           json:"metadata,omitempty"`
+	Provider          string               `yaml:"provider"                      json:"provider"`
+	Name              string               `yaml:"name,omitempty"                json:"name,omitempty"`
+	Binding           string               `yaml:"binding,omitempty"             json:"binding,omitempty"`
+	EndpointOverrides map[string]string    `yaml:"endpoint_overrides,omitempty"  json:"endpoint_overrides,omitempty"`
+	RequestMutations  *RawRequestMutations `yaml:"request_mutations,omitempty"   json:"request_mutations,omitempty"`
+	Pricing           *RawModelPricing     `yaml:"pricing,omitempty"             json:"pricing,omitempty"`
+	Metadata          *RawMetadata         `yaml:"metadata,omitempty"            json:"metadata,omitempty"`
 }
 
 // RawModelPricing holds per-model token prices in USD per million tokens.
@@ -94,7 +106,7 @@ type RawServer struct {
 }
 
 // RawAuth is the serde form of an auth configuration block.
-// SecretRef uses env://, file://, or literal:// schemes.
+// SecretRef schemes: env://, file://, literal://, or orange://<ws-id>/<realm>/<secret-name>.
 type RawAuth struct {
 	Type      string `yaml:"type"       json:"type"`
 	SecretRef string `yaml:"secret_ref" json:"secret_ref"`
@@ -102,7 +114,11 @@ type RawAuth struct {
 
 // RawProfile is the serde form of a user-owned MCP profile.
 // The map key in Profiles is the workspace/user/name identity.
+// Path is the opaque URL token used to address the profile at /mcp/<path>.
+// It must be a single path segment (no slashes) and must be unique across all
+// profiles. If omitted the profile is not reachable via the MCP HTTP route.
 type RawProfile struct {
+	Path  string                   `yaml:"path,omitempty"  json:"path,omitempty"`
 	Tools map[string]RawToolFilter `yaml:"tools"           json:"tools"`
 	Auth  map[string]RawAuth       `yaml:"auth,omitempty"  json:"auth,omitempty"`
 }
