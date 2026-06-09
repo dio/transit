@@ -106,4 +106,3 @@ func bundleHTTPClient() *http.Client {
 	log.Info("orange:// resolver enabled", "server", bundle.ServerURL)
 	return hc
 }
-

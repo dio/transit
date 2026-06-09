@@ -9,6 +9,7 @@ package main
 
 import (
 	_ "github.com/dio/transit/down/abi_impl"
+	_ "github.com/dio/transit/examples/orange/internal/config/loader"
 	_ "github.com/dio/transit/examples/orange/internal/debug"
 	_ "github.com/dio/transit/examples/orange/internal/pipeline/adapt"
 	_ "github.com/dio/transit/examples/orange/internal/pipeline/match"
@@ -21,7 +22,6 @@ import (
 	_ "github.com/dio/transit/examples/orange/internal/pipeline/responsesws/loopback"
 	_ "github.com/dio/transit/examples/orange/internal/pipeline/tracer"
 	_ "github.com/dio/transit/examples/orange/internal/translator"
-	_ "github.com/dio/transit/examples/orange/internal/config/loader"
 )
 
 func main() {}

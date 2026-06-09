@@ -17,8 +17,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	orangeconfig "github.com/dio/transit/examples/orange/internal/config"
 	"github.com/dio/transit/examples/orange/internal/client"
+	orangeconfig "github.com/dio/transit/examples/orange/internal/config"
 )
 
 // setupRemoteSnapshot loads the egress bundle, fetches the initial config

@@ -113,9 +113,9 @@ For production or manual bootstrap, use:
 }
 
 type serverCfg struct {
-	local  bool
-	purge  bool
-	noSeed bool
+	local      bool
+	purge      bool
+	noSeed     bool
 	configPath string
 	org        string
 	project    string

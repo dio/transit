@@ -5,13 +5,12 @@ import (
 	"math/rand"
 	"time"
 
-	goredis "github.com/redis/go-redis/v9"
-
 	pb "github.com/envoyproxy/go-control-plane/envoy/service/ratelimit/v3"
 	rlsconfig "github.com/envoyproxy/ratelimit/src/config"
 	rllimiter "github.com/envoyproxy/ratelimit/src/limiter"
 	rlsstats "github.com/envoyproxy/ratelimit/src/stats"
 	rlsutils "github.com/envoyproxy/ratelimit/src/utils"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 // RateLimiter checks rate limits against Redis using pipelined INCRBY + EXPIRE.

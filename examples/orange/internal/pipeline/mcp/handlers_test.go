@@ -308,7 +308,6 @@ func testMCPSnapshot(servers ...string) *config.ConfigSnapshot {
 	}
 }
 
-
 func writeBackendRPC(t *testing.T, w http.ResponseWriter, id, result string) {
 	t.Helper()
 	w.Header().Set("content-type", "application/json")

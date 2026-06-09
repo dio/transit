@@ -53,9 +53,9 @@ type localServeOpts struct {
 type serveLocalState struct {
 	configPath string
 	snapshotFn rls.SnapshotFunc
-	provider   *rls.PollProvider            // nil when --no-rls
+	provider   *rls.PollProvider // nil when --no-rls
 	resolver   *orangeconfig.CachedResolver
-	redisPort  string                       // empty when --no-rls
+	redisPort  string // empty when --no-rls
 	envoyCmd   *exec.Cmd
 	cancel     context.CancelFunc
 	rl         *readline.Instance

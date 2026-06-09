@@ -10,10 +10,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	gostats "github.com/lyft/gostats"
-
 	rlsconfig "github.com/envoyproxy/ratelimit/src/config"
 	rlsstats "github.com/envoyproxy/ratelimit/src/stats"
+	gostats "github.com/lyft/gostats"
 )
 
 // Loader fetches the current rate limit config from any source.

@@ -1,6 +1,6 @@
 module github.com/dio/transit/examples
 
-go 1.26.2
+go 1.26.4
 
 require (
 	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.11-20260415201107-50325440f8f2.1
@@ -12,11 +12,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.11
 	github.com/aws/aws-sdk-go-v2/config v1.32.21
 	github.com/chzyer/readline v1.5.1
-	github.com/dio/transit v0.0.0
+	github.com/dio/transit v0.0.0-20260609142809-c8f591ca64a5
 	github.com/envoyproxy/envoy/source/extensions/dynamic_modules v0.0.0-20260521055639-0d6e3c60aa55
-	github.com/envoyproxy/go-control-plane v0.14.0
-	github.com/envoyproxy/go-control-plane/envoy v1.36.0
-	github.com/envoyproxy/go-control-plane/ratelimit v0.1.1-0.20260131204543-4ca8b9cded3e
+	github.com/envoyproxy/go-control-plane/envoy v1.37.0
 	github.com/fergusstrange/embedded-postgres v1.34.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/google/go-cmp v0.7.0
@@ -24,11 +22,11 @@ require (
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/klauspost/compress v1.18.6
+	github.com/lyft/gostats v0.4.14
 	github.com/miekg/dns v1.1.72
 	github.com/openai/openai-go v1.12.0
 	github.com/openai/openai-go/v3 v3.38.0
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10
-	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
 	github.com/shopspring/decimal v1.4.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
@@ -47,9 +45,17 @@ require (
 	golang.org/x/crypto v0.51.0
 	golang.org/x/net v0.55.0
 	google.golang.org/genai v1.58.0
-	google.golang.org/grpc v1.81.0-dev
+	google.golang.org/grpc v1.81.1
 	google.golang.org/protobuf v1.36.11
 	k8s.io/utils v0.0.0-20260507154919-ff6756f316d2
+)
+
+require (
+	github.com/coocood/freecache v1.2.4 // indirect
+	github.com/envoyproxy/go-control-plane/ratelimit v0.1.1-0.20260131204543-4ca8b9cded3e // indirect
+	github.com/kelseyhightower/envconfig v1.4.0 // indirect
+	github.com/sirupsen/logrus v1.9.3 // indirect
+	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
 
 require (
@@ -77,9 +83,9 @@ require (
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/cncf/xds/go v0.0.0-20251210132809-ee656c7534f5 // indirect
-	github.com/envoyproxy/protoc-gen-validate v1.3.0 // indirect
-	github.com/envoyproxy/ratelimit v1.4.0 // indirect
+	github.com/cncf/xds/go v0.0.0-20260202195803-dba9d589def2 // indirect
+	github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect
+	github.com/envoyproxy/ratelimit v1.4.1-0.20260605174656-1e50889bb343
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
@@ -99,7 +105,7 @@ require (
 	github.com/prometheus/common v0.67.5 // indirect
 	github.com/prometheus/otlptranslator v1.0.0 // indirect
 	github.com/prometheus/procfs v0.20.1 // indirect
-	github.com/redis/go-redis/v9 v9.20.0 // indirect
+	github.com/redis/go-redis/v9 v9.20.0
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
 	github.com/tidwall/match v1.1.1 // indirect

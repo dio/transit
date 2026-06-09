@@ -536,23 +536,57 @@ func expandPolicyEntries(entries []RawRateLimitPolicyEntry, tiers map[string]Raw
 // applyTier returns a copy of entry with any zero/empty field filled from tier.
 // Non-zero entry fields take precedence (entry overrides tier).
 func applyTier(entry RawRateLimitPolicyEntry, tier RawRateLimitTier) RawRateLimitPolicyEntry {
-	if entry.USDPerMinute.IsZero() { entry.USDPerMinute = tier.USDPerMinute }
-	if entry.USDPerHour.IsZero()   { entry.USDPerHour = tier.USDPerHour }
-	if entry.USDPerDay.IsZero()    { entry.USDPerDay = tier.USDPerDay }
-	if entry.RPM == 0 { entry.RPM = tier.RPM }
-	if entry.RPH == 0 { entry.RPH = tier.RPH }
-	if entry.RPD == 0 { entry.RPD = tier.RPD }
-	if entry.InputTokensPerMinute == 0  { entry.InputTokensPerMinute = tier.InputTokensPerMinute }
-	if entry.InputTokensPerHour == 0    { entry.InputTokensPerHour = tier.InputTokensPerHour }
-	if entry.InputTokensPerDay == 0     { entry.InputTokensPerDay = tier.InputTokensPerDay }
-	if entry.OutputTokensPerMinute == 0 { entry.OutputTokensPerMinute = tier.OutputTokensPerMinute }
-	if entry.OutputTokensPerHour == 0   { entry.OutputTokensPerHour = tier.OutputTokensPerHour }
-	if entry.OutputTokensPerDay == 0    { entry.OutputTokensPerDay = tier.OutputTokensPerDay }
-	if entry.CacheReadTokensPerHour == 0  { entry.CacheReadTokensPerHour = tier.CacheReadTokensPerHour }
-	if entry.CacheReadTokensPerDay == 0   { entry.CacheReadTokensPerDay = tier.CacheReadTokensPerDay }
-	if entry.CacheWriteTokensPerHour == 0 { entry.CacheWriteTokensPerHour = tier.CacheWriteTokensPerHour }
-	if entry.CacheWriteTokensPerDay == 0  { entry.CacheWriteTokensPerDay = tier.CacheWriteTokensPerDay }
-	if entry.OnExceed == "" { entry.OnExceed = tier.OnExceed }
+	if entry.USDPerMinute.IsZero() {
+		entry.USDPerMinute = tier.USDPerMinute
+	}
+	if entry.USDPerHour.IsZero() {
+		entry.USDPerHour = tier.USDPerHour
+	}
+	if entry.USDPerDay.IsZero() {
+		entry.USDPerDay = tier.USDPerDay
+	}
+	if entry.RPM == 0 {
+		entry.RPM = tier.RPM
+	}
+	if entry.RPH == 0 {
+		entry.RPH = tier.RPH
+	}
+	if entry.RPD == 0 {
+		entry.RPD = tier.RPD
+	}
+	if entry.InputTokensPerMinute == 0 {
+		entry.InputTokensPerMinute = tier.InputTokensPerMinute
+	}
+	if entry.InputTokensPerHour == 0 {
+		entry.InputTokensPerHour = tier.InputTokensPerHour
+	}
+	if entry.InputTokensPerDay == 0 {
+		entry.InputTokensPerDay = tier.InputTokensPerDay
+	}
+	if entry.OutputTokensPerMinute == 0 {
+		entry.OutputTokensPerMinute = tier.OutputTokensPerMinute
+	}
+	if entry.OutputTokensPerHour == 0 {
+		entry.OutputTokensPerHour = tier.OutputTokensPerHour
+	}
+	if entry.OutputTokensPerDay == 0 {
+		entry.OutputTokensPerDay = tier.OutputTokensPerDay
+	}
+	if entry.CacheReadTokensPerHour == 0 {
+		entry.CacheReadTokensPerHour = tier.CacheReadTokensPerHour
+	}
+	if entry.CacheReadTokensPerDay == 0 {
+		entry.CacheReadTokensPerDay = tier.CacheReadTokensPerDay
+	}
+	if entry.CacheWriteTokensPerHour == 0 {
+		entry.CacheWriteTokensPerHour = tier.CacheWriteTokensPerHour
+	}
+	if entry.CacheWriteTokensPerDay == 0 {
+		entry.CacheWriteTokensPerDay = tier.CacheWriteTokensPerDay
+	}
+	if entry.OnExceed == "" {
+		entry.OnExceed = tier.OnExceed
+	}
 	return entry
 }
 

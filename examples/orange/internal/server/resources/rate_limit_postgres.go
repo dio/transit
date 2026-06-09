@@ -130,18 +130,18 @@ func nullableOnExceedFromString(s *string) adminv1.OnExceed {
 // ── tier row scanning ─────────────────────────────────────────────────────────
 
 type tierRow struct {
-	name                    string
-	usdPerMinute            float64
-	usdPerHour              float64
-	usdPerDay               float64
-	rpm, rph, rpd           int32
-	inputTPM, inputTPH, inputTPD   int32
+	name                            string
+	usdPerMinute                    float64
+	usdPerHour                      float64
+	usdPerDay                       float64
+	rpm, rph, rpd                   int32
+	inputTPM, inputTPH, inputTPD    int32
 	outputTPM, outputTPH, outputTPD int32
-	cacheReadTPH, cacheReadTPD     int32
-	cacheWriteTPH, cacheWriteTPD   int32
-	onExceed                string
-	createdAt               time.Time
-	updatedAt               time.Time
+	cacheReadTPH, cacheReadTPD      int32
+	cacheWriteTPH, cacheWriteTPD    int32
+	onExceed                        string
+	createdAt                       time.Time
+	updatedAt                       time.Time
 }
 
 func (r tierRow) toProto() *adminv1.RateLimitTier {
@@ -484,17 +484,17 @@ func scopeKey(workspaceID string, user *string) string {
 
 // policyEntryRow mirrors one rate_limit_policies row.
 type policyEntryRow struct {
-	models                  []string
-	tierName                *string
-	usdPerMinute            float64
-	usdPerHour              float64
-	usdPerDay               float64
-	rpm, rph, rpd           int32
-	inputTPM, inputTPH, inputTPD   int32
+	models                          []string
+	tierName                        *string
+	usdPerMinute                    float64
+	usdPerHour                      float64
+	usdPerDay                       float64
+	rpm, rph, rpd                   int32
+	inputTPM, inputTPH, inputTPD    int32
 	outputTPM, outputTPH, outputTPD int32
-	cacheReadTPH, cacheReadTPD     int32
-	cacheWriteTPH, cacheWriteTPD   int32
-	onExceed                *string
+	cacheReadTPH, cacheReadTPD      int32
+	cacheWriteTPH, cacheWriteTPD    int32
+	onExceed                        *string
 }
 
 func (r policyEntryRow) toProto() *adminv1.RateLimitPolicyEntry {

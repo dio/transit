@@ -6,8 +6,8 @@ import (
 	"os"
 
 	"connectrpc.com/connect"
-	"github.com/spf13/cobra"
 	"github.com/chzyer/readline"
+	"github.com/spf13/cobra"
 
 	keyentryv1 "github.com/dio/transit/examples/orange/api/orange/keyentry/admin/v1"
 	keyentryconnect "github.com/dio/transit/examples/orange/api/orange/keyentry/admin/v1/adminv1connect"
@@ -373,9 +373,9 @@ func newKeyEntrySecretCreateCmd() *cobra.Command {
 				return err
 			}
 			req := &keyentryv1.CreateKeySecretRequest{
-				KeyEntryId:      args[0],
-				UpstreamTarget:  target,
-				Value:           string(value),
+				KeyEntryId:     args[0],
+				UpstreamTarget: target,
+				Value:          string(value),
 			}
 			if description != "" {
 				req.Description = &description

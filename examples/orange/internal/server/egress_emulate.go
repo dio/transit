@@ -18,8 +18,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dio/transit/examples/orange/internal/config"
 	"github.com/dio/transit/examples/orange/internal/client"
+	"github.com/dio/transit/examples/orange/internal/config"
 )
 
 // newEgressProxyCmd is the root for proxy-facing egress subcommands. It lives

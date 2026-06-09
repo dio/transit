@@ -43,7 +43,6 @@ const llmDefaultResponses = "gpt-4o-mini"
 // llmDefaultMessages is the default model for /v1/messages.
 const llmDefaultMessages = "claude-haiku-4-5"
 
-
 // cmdLLM routes "llm ..." subcommands.
 func (s *serveLocalState) cmdLLM(ctx context.Context, args []string) error {
 	if len(args) == 0 {
@@ -544,8 +543,8 @@ func llmPrintUsage(result map[string]any) {
 	}
 	var parts []string
 	for _, k := range []string{
-		"input_tokens", "output_tokens",        // Anthropic
-		"prompt_tokens", "completion_tokens",    // OpenAI
+		"input_tokens", "output_tokens", // Anthropic
+		"prompt_tokens", "completion_tokens", // OpenAI
 		"total_tokens",
 	} {
 		if v, ok := usage[k]; ok {

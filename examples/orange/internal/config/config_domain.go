@@ -584,10 +584,10 @@ type ProfileRecord struct {
 // pointers into GlobalConfig. Keys and Profiles are nil when the snapshot
 // payload did not include user records.
 type ConfigSnapshot struct {
-	Generation uint64
-	Global     *GlobalConfig
-	Pools      *Pools
-	Keys            map[string]*KeyRecord     // compiled from snapshot payload; nil if absent
-	Profiles        map[string]*ProfileRecord // keyed by workspace/user/name; nil if absent
-	ProfilesByPath  map[string]*ProfileRecord // keyed by profile.path opaque token; nil if absent
+	Generation     uint64
+	Global         *GlobalConfig
+	Pools          *Pools
+	Keys           map[string]*KeyRecord     // compiled from snapshot payload; nil if absent
+	Profiles       map[string]*ProfileRecord // keyed by workspace/user/name; nil if absent
+	ProfilesByPath map[string]*ProfileRecord // keyed by profile.path opaque token; nil if absent
 }

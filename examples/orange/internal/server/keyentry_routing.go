@@ -79,11 +79,11 @@ type routingOverrideDoc struct {
 }
 
 type routingRuleDoc struct {
-	Model        string          `yaml:"model" json:"model"`
-	Target       string          `yaml:"target" json:"target"`
-	BackendModel string          `yaml:"backend_model" json:"backend_model"`
-	Chain        []chainItemDoc  `yaml:"chain" json:"chain"`
-	Split        []splitItemDoc  `yaml:"split" json:"split"`
+	Model        string         `yaml:"model" json:"model"`
+	Target       string         `yaml:"target" json:"target"`
+	BackendModel string         `yaml:"backend_model" json:"backend_model"`
+	Chain        []chainItemDoc `yaml:"chain" json:"chain"`
+	Split        []splitItemDoc `yaml:"split" json:"split"`
 }
 
 type chainItemDoc struct {
@@ -426,8 +426,8 @@ func newKeyEntryRoutingSetCmd() *cobra.Command {
 				return err
 			}
 			req := &keyentryv1.UpdateKeyRequest{
-				KeyEntryId:      args[0],
-				Description:     existing.Msg.GetKey().Description,
+				KeyEntryId:       args[0],
+				Description:      existing.Msg.GetKey().Description,
 				RoutingOverrides: overrides,
 			}
 			if err := validateRoutingRequest(req); err != nil {
@@ -462,8 +462,8 @@ func newKeyEntryRoutingDeleteCmd() *cobra.Command {
 				return err
 			}
 			req := &keyentryv1.UpdateKeyRequest{
-				KeyEntryId:      args[0],
-				Description:     existing.Msg.GetKey().Description,
+				KeyEntryId:       args[0],
+				Description:      existing.Msg.GetKey().Description,
 				RoutingOverrides: []*routingv1.RoutingOverride{},
 			}
 			if err := validateRoutingRequest(req); err != nil {
@@ -793,8 +793,8 @@ func (s *replState) cmdKeyEntryRouting(args []string) error {
 			return err
 		}
 		req := &keyentryv1.UpdateKeyRequest{
-			KeyEntryId:      keID,
-			Description:     existing.Msg.GetKey().Description,
+			KeyEntryId:       keID,
+			Description:      existing.Msg.GetKey().Description,
 			RoutingOverrides: overrides,
 		}
 		if err := validateRoutingRequest(req); err != nil {
@@ -815,8 +815,8 @@ func (s *replState) cmdKeyEntryRouting(args []string) error {
 			return err
 		}
 		req := &keyentryv1.UpdateKeyRequest{
-			KeyEntryId:      args[1],
-			Description:     existing.Msg.GetKey().Description,
+			KeyEntryId:       args[1],
+			Description:      existing.Msg.GetKey().Description,
 			RoutingOverrides: []*routingv1.RoutingOverride{},
 		}
 		if err := validateRoutingRequest(req); err != nil {
@@ -929,8 +929,8 @@ func (s *userReplState) cmdUserKeyEntryRouting(args []string) error {
 			return err
 		}
 		req := &keyentryv1.UpdateKeyRequest{
-			KeyEntryId:      keID,
-			Description:     existing.Msg.GetKey().Description,
+			KeyEntryId:       keID,
+			Description:      existing.Msg.GetKey().Description,
 			RoutingOverrides: overrides,
 		}
 		if err := validateRoutingRequest(req); err != nil {
@@ -951,8 +951,8 @@ func (s *userReplState) cmdUserKeyEntryRouting(args []string) error {
 			return err
 		}
 		req := &keyentryv1.UpdateKeyRequest{
-			KeyEntryId:      args[1],
-			Description:     existing.Msg.GetKey().Description,
+			KeyEntryId:       args[1],
+			Description:      existing.Msg.GetKey().Description,
 			RoutingOverrides: []*routingv1.RoutingOverride{},
 		}
 		if err := validateRoutingRequest(req); err != nil {

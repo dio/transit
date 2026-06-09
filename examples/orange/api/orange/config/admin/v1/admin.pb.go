@@ -4116,7 +4116,7 @@ const file_orange_config_admin_v1_admin_proto_rawDesc = "" +
 	"\x15ON_EXCEED_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10ON_EXCEED_REJECT\x10\x01\x12\x16\n" +
 	"\x12ON_EXCEED_THROTTLE\x10\x02\x12\x16\n" +
-	"\x12ON_EXCEED_LOG_ONLY\x10\x032\xd1\x17\n" +
+	"\x12ON_EXCEED_LOG_ONLY\x10\x032\x8d\x18\n" +
 	"\x12ConfigAdminService\x12\x82\x01\n" +
 	"\x0fPublishSnapshot\x12..orange.config.admin.v1.PublishSnapshotRequest\x1a/.orange.config.admin.v1.PublishSnapshotResponse\"\x0e\xc2\xf3\x18\n" +
 	"\n" +
@@ -4163,31 +4163,25 @@ const file_orange_config_admin_v1_admin_proto_rawDesc = "" +
 	"\x01\x01\x12\x05admin\x12\x8e\x01\n" +
 	"\x13CreateRateLimitTier\x122.orange.config.admin.v1.CreateRateLimitTierRequest\x1a3.orange.config.admin.v1.CreateRateLimitTierResponse\"\x0e\xc2\xf3\x18\n" +
 	"\n" +
-	"\x01\x01\x12\x05admin\x12\x88\x01\n" +
-	"\x10GetRateLimitTier\x12/.orange.config.admin.v1.GetRateLimitTierRequest\x1a0.orange.config.admin.v1.GetRateLimitTierResponse\"\x11\xc2\xf3\x18\n" +
-	"\n" +
-	"\x01\x01\x12\x05admin\x90\x02\x01\x12\x8e\x01\n" +
+	"\x01\x01\x12\x05admin\x12\x92\x01\n" +
+	"\x10GetRateLimitTier\x12/.orange.config.admin.v1.GetRateLimitTierRequest\x1a0.orange.config.admin.v1.GetRateLimitTierResponse\"\x1b\xc2\xf3\x18\x14\n" +
+	"\x01\x01\x12\x0frl-policy:write\x90\x02\x01\x12\x8e\x01\n" +
 	"\x13UpdateRateLimitTier\x122.orange.config.admin.v1.UpdateRateLimitTierRequest\x1a3.orange.config.admin.v1.UpdateRateLimitTierResponse\"\x0e\xc2\xf3\x18\n" +
 	"\n" +
 	"\x01\x01\x12\x05admin\x12\x8e\x01\n" +
 	"\x13DeleteRateLimitTier\x122.orange.config.admin.v1.DeleteRateLimitTierRequest\x1a3.orange.config.admin.v1.DeleteRateLimitTierResponse\"\x0e\xc2\xf3\x18\n" +
 	"\n" +
-	"\x01\x01\x12\x05admin\x12\x8e\x01\n" +
-	"\x12ListRateLimitTiers\x121.orange.config.admin.v1.ListRateLimitTiersRequest\x1a2.orange.config.admin.v1.ListRateLimitTiersResponse\"\x11\xc2\xf3\x18\n" +
-	"\n" +
-	"\x01\x01\x12\x05admin\x90\x02\x01\x12\x88\x01\n" +
-	"\x11SetRateLimitScope\x120.orange.config.admin.v1.SetRateLimitScopeRequest\x1a1.orange.config.admin.v1.SetRateLimitScopeResponse\"\x0e\xc2\xf3\x18\n" +
-	"\n" +
-	"\x01\x01\x12\x05admin\x12\x8b\x01\n" +
-	"\x11GetRateLimitScope\x120.orange.config.admin.v1.GetRateLimitScopeRequest\x1a1.orange.config.admin.v1.GetRateLimitScopeResponse\"\x11\xc2\xf3\x18\n" +
-	"\n" +
-	"\x01\x01\x12\x05admin\x90\x02\x01\x12\x91\x01\n" +
-	"\x13ListRateLimitScopes\x122.orange.config.admin.v1.ListRateLimitScopesRequest\x1a3.orange.config.admin.v1.ListRateLimitScopesResponse\"\x11\xc2\xf3\x18\n" +
-	"\n" +
-	"\x01\x01\x12\x05admin\x90\x02\x01\x12\x91\x01\n" +
-	"\x14DeleteRateLimitScope\x123.orange.config.admin.v1.DeleteRateLimitScopeRequest\x1a4.orange.config.admin.v1.DeleteRateLimitScopeResponse\"\x0e\xc2\xf3\x18\n" +
-	"\n" +
-	"\x01\x01\x12\x05adminB\xee\x01\n" +
+	"\x01\x01\x12\x05admin\x12\x98\x01\n" +
+	"\x12ListRateLimitTiers\x121.orange.config.admin.v1.ListRateLimitTiersRequest\x1a2.orange.config.admin.v1.ListRateLimitTiersResponse\"\x1b\xc2\xf3\x18\x14\n" +
+	"\x01\x01\x12\x0frl-policy:write\x90\x02\x01\x12\x92\x01\n" +
+	"\x11SetRateLimitScope\x120.orange.config.admin.v1.SetRateLimitScopeRequest\x1a1.orange.config.admin.v1.SetRateLimitScopeResponse\"\x18\xc2\xf3\x18\x14\n" +
+	"\x01\x01\x12\x0frl-policy:write\x12\x95\x01\n" +
+	"\x11GetRateLimitScope\x120.orange.config.admin.v1.GetRateLimitScopeRequest\x1a1.orange.config.admin.v1.GetRateLimitScopeResponse\"\x1b\xc2\xf3\x18\x14\n" +
+	"\x01\x01\x12\x0frl-policy:write\x90\x02\x01\x12\x9b\x01\n" +
+	"\x13ListRateLimitScopes\x122.orange.config.admin.v1.ListRateLimitScopesRequest\x1a3.orange.config.admin.v1.ListRateLimitScopesResponse\"\x1b\xc2\xf3\x18\x14\n" +
+	"\x01\x01\x12\x0frl-policy:write\x90\x02\x01\x12\x9b\x01\n" +
+	"\x14DeleteRateLimitScope\x123.orange.config.admin.v1.DeleteRateLimitScopeRequest\x1a4.orange.config.admin.v1.DeleteRateLimitScopeResponse\"\x18\xc2\xf3\x18\x14\n" +
+	"\x01\x01\x12\x0frl-policy:writeB\xee\x01\n" +
 	"\x1acom.orange.config.admin.v1B\n" +
 	"AdminProtoP\x01ZIgithub.com/dio/transit/examples/orange/api/orange/config/admin/v1;adminv1\xa2\x02\x03OCA\xaa\x02\x16Orange.Config.Admin.V1\xca\x02\x16Orange\\Config\\Admin\\V1\xe2\x02\"Orange\\Config\\Admin\\V1\\GPBMetadata\xea\x02\x19Orange::Config::Admin::V1b\x06proto3"
 

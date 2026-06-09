@@ -361,10 +361,10 @@ func protoToRaw(p *configv1.ConfigPayload) (*RawConfig, error) {
 	}
 
 	return &RawConfig{
-		LLM:      RawLLM{Providers: providers, Models: models},
-		MCP:      RawMCP{Servers: servers},
-		Profiles: profiles,
-		Keys:     keys,
+		LLM:       RawLLM{Providers: providers, Models: models},
+		MCP:       RawMCP{Servers: servers},
+		Profiles:  profiles,
+		Keys:      keys,
 		RateLimit: RawRateLimit{Policies: rateLimits},
 	}, nil
 }

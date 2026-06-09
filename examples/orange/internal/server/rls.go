@@ -31,8 +31,8 @@ import (
 	"google.golang.org/grpc"
 	"gopkg.in/yaml.v3"
 
-	orangeconfig "github.com/dio/transit/examples/orange/internal/config"
 	"github.com/dio/transit/examples/orange/internal/client"
+	orangeconfig "github.com/dio/transit/examples/orange/internal/config"
 	"github.com/dio/transit/examples/orange/internal/rls"
 )
 

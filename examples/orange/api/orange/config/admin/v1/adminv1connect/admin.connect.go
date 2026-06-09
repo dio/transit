@@ -155,6 +155,8 @@ type ConfigAdminServiceClient interface {
 	// CreateRateLimitTier creates a new named tier within a workspace.
 	CreateRateLimitTier(context.Context, *connect.Request[v1.CreateRateLimitTierRequest]) (*connect.Response[v1.CreateRateLimitTierResponse], error)
 	// GetRateLimitTier returns a named tier by workspace and name.
+	// Accessible to any caller with rl-policy:write[ctx] so they can discover
+	// available tiers when authoring policy entries.
 	GetRateLimitTier(context.Context, *connect.Request[v1.GetRateLimitTierRequest]) (*connect.Response[v1.GetRateLimitTierResponse], error)
 	// UpdateRateLimitTier replaces all limit fields on an existing tier.
 	UpdateRateLimitTier(context.Context, *connect.Request[v1.UpdateRateLimitTierRequest]) (*connect.Response[v1.UpdateRateLimitTierResponse], error)
@@ -162,13 +164,16 @@ type ConfigAdminServiceClient interface {
 	// still referenced by an active policy entry.
 	DeleteRateLimitTier(context.Context, *connect.Request[v1.DeleteRateLimitTierRequest]) (*connect.Response[v1.DeleteRateLimitTierResponse], error)
 	// ListRateLimitTiers returns all active tiers for a workspace.
+	// Accessible to any caller with rl-policy:write[ctx] so they can discover
+	// available tiers when authoring policy entries.
 	ListRateLimitTiers(context.Context, *connect.Request[v1.ListRateLimitTiersRequest]) (*connect.Response[v1.ListRateLimitTiersResponse], error)
 	// SetRateLimitScope creates or replaces the policy entries for a workspace
 	// or user scope within a workspace. Takes effect on next publish.
 	SetRateLimitScope(context.Context, *connect.Request[v1.SetRateLimitScopeRequest]) (*connect.Response[v1.SetRateLimitScopeResponse], error)
 	// GetRateLimitScope returns the current policy entries for a scope.
 	GetRateLimitScope(context.Context, *connect.Request[v1.GetRateLimitScopeRequest]) (*connect.Response[v1.GetRateLimitScopeResponse], error)
-	// ListRateLimitScopes returns all rate-limit scopes for a workspace.
+	// ListRateLimitScopes returns rate-limit scopes for a workspace. Non-admin
+	// callers see only the scopes their rl-policy:write[ctx] tokens authorize.
 	ListRateLimitScopes(context.Context, *connect.Request[v1.ListRateLimitScopesRequest]) (*connect.Response[v1.ListRateLimitScopesResponse], error)
 	// DeleteRateLimitScope removes all policy entries for a scope.
 	DeleteRateLimitScope(context.Context, *connect.Request[v1.DeleteRateLimitScopeRequest]) (*connect.Response[v1.DeleteRateLimitScopeResponse], error)
@@ -515,6 +520,8 @@ type ConfigAdminServiceHandler interface {
 	// CreateRateLimitTier creates a new named tier within a workspace.
 	CreateRateLimitTier(context.Context, *connect.Request[v1.CreateRateLimitTierRequest]) (*connect.Response[v1.CreateRateLimitTierResponse], error)
 	// GetRateLimitTier returns a named tier by workspace and name.
+	// Accessible to any caller with rl-policy:write[ctx] so they can discover
+	// available tiers when authoring policy entries.
 	GetRateLimitTier(context.Context, *connect.Request[v1.GetRateLimitTierRequest]) (*connect.Response[v1.GetRateLimitTierResponse], error)
 	// UpdateRateLimitTier replaces all limit fields on an existing tier.
 	UpdateRateLimitTier(context.Context, *connect.Request[v1.UpdateRateLimitTierRequest]) (*connect.Response[v1.UpdateRateLimitTierResponse], error)
@@ -522,13 +529,16 @@ type ConfigAdminServiceHandler interface {
 	// still referenced by an active policy entry.
 	DeleteRateLimitTier(context.Context, *connect.Request[v1.DeleteRateLimitTierRequest]) (*connect.Response[v1.DeleteRateLimitTierResponse], error)
 	// ListRateLimitTiers returns all active tiers for a workspace.
+	// Accessible to any caller with rl-policy:write[ctx] so they can discover
+	// available tiers when authoring policy entries.
 	ListRateLimitTiers(context.Context, *connect.Request[v1.ListRateLimitTiersRequest]) (*connect.Response[v1.ListRateLimitTiersResponse], error)
 	// SetRateLimitScope creates or replaces the policy entries for a workspace
 	// or user scope within a workspace. Takes effect on next publish.
 	SetRateLimitScope(context.Context, *connect.Request[v1.SetRateLimitScopeRequest]) (*connect.Response[v1.SetRateLimitScopeResponse], error)
 	// GetRateLimitScope returns the current policy entries for a scope.
 	GetRateLimitScope(context.Context, *connect.Request[v1.GetRateLimitScopeRequest]) (*connect.Response[v1.GetRateLimitScopeResponse], error)
-	// ListRateLimitScopes returns all rate-limit scopes for a workspace.
+	// ListRateLimitScopes returns rate-limit scopes for a workspace. Non-admin
+	// callers see only the scopes their rl-policy:write[ctx] tokens authorize.
 	ListRateLimitScopes(context.Context, *connect.Request[v1.ListRateLimitScopesRequest]) (*connect.Response[v1.ListRateLimitScopesResponse], error)
 	// DeleteRateLimitScope removes all policy entries for a scope.
 	DeleteRateLimitScope(context.Context, *connect.Request[v1.DeleteRateLimitScopeRequest]) (*connect.Response[v1.DeleteRateLimitScopeResponse], error)
