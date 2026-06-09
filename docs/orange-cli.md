@@ -38,7 +38,7 @@ Also two scope:
 2. (Emulated) API client as an Egress Proxy (Config API client)
 
 ```bash
-# Runs orange client as Admin API client. ORANGE_SERVER_URL defaults to http://localhost:8080
+# Runs orange client as Admin API client. ORANGE_SERVER_URL defaults to http://localhost:3000
 orange admin --server=<ORANGE_SERVER_URL> --repl # or --interactive? or -r or -i? For interactive
 orange admin --server=<ORANGE_SERVER_URL> <resource> # for on-off single command
 ```
