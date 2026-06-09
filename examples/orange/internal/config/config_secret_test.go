@@ -306,14 +306,14 @@ func TestCachedResolver_Concurrent(t *testing.T) {
 
 func TestNewDefaultResolver_Env(t *testing.T) {
 	t.Setenv("DEFAULT_RESOLVER_TEST", "env-val")
-	r := NewDefaultResolver(time.Hour)
+	r := NewDefaultResolver(nil, "", time.Hour)
 	got, err := r.Resolve(bg, "env://DEFAULT_RESOLVER_TEST")
 	require.NoError(t, err)
 	assert.Equal(t, "env-val", got)
 }
 
 func TestNewDefaultResolver_Literal(t *testing.T) {
-	r := NewDefaultResolver(time.Hour)
+	r := NewDefaultResolver(nil, "", time.Hour)
 	got, err := r.Resolve(bg, "literal://plain-text")
 	require.NoError(t, err)
 	assert.Equal(t, "plain-text", got)
@@ -321,14 +321,14 @@ func TestNewDefaultResolver_Literal(t *testing.T) {
 
 func TestNewDefaultResolver_File(t *testing.T) {
 	path := writeSecretFile(t, "file-secret")
-	r := NewDefaultResolver(time.Hour)
+	r := NewDefaultResolver(nil, "", time.Hour)
 	got, err := r.Resolve(bg, "file://"+path)
 	require.NoError(t, err)
 	assert.Equal(t, "file-secret", got)
 }
 
 func TestNewDefaultResolver_UnknownScheme(t *testing.T) {
-	r := NewDefaultResolver(time.Hour)
+	r := NewDefaultResolver(nil, "", time.Hour)
 	_, err := r.Resolve(bg, "vault://secret/path")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no resolver registered for scheme")
@@ -336,7 +336,7 @@ func TestNewDefaultResolver_UnknownScheme(t *testing.T) {
 
 func TestNewDefaultResolver_Cached(t *testing.T) {
 	t.Setenv("CACHED_RESOLVER_VAR", "cached")
-	r := NewDefaultResolver(time.Hour)
+	r := NewDefaultResolver(nil, "", time.Hour)
 
 	v1, err := r.Resolve(bg, "env://CACHED_RESOLVER_VAR")
 	require.NoError(t, err)
@@ -350,7 +350,7 @@ func TestNewDefaultResolver_Cached(t *testing.T) {
 
 func TestNewDefaultResolver_Invalidate(t *testing.T) {
 	t.Setenv("INVALIDATE_TEST_VAR", "original")
-	r := NewDefaultResolver(time.Hour)
+	r := NewDefaultResolver(nil, "", time.Hour)
 
 	_, err := r.Resolve(bg, "env://INVALIDATE_TEST_VAR")
 	require.NoError(t, err)
@@ -363,23 +363,27 @@ func TestNewDefaultResolver_Invalidate(t *testing.T) {
 	assert.Equal(t, "rotated", got, "post-invalidate Resolve must pick up the new value")
 }
 
-// ── NewDefaultResolverWithOrange ──────────────────────────────────────────────
+// ── NewDefaultResolver with orange:// ────────────────────────────────────────
 
-func TestNewDefaultResolverWithOrange(t *testing.T) {
-	// Test that a custom resolver can be created with orange:// support.
-	// We pass a nil HTTP client here since we're not testing the actual service call.
-	r := NewDefaultResolverWithOrange(nil, "http://localhost:8080", time.Hour)
+func TestNewDefaultResolver_OrangeSchemeIncluded(t *testing.T) {
+	// orange:// is always registered; nil httpClient causes a "not configured"
+	// error at resolution time (not at construction time).
+	r := NewDefaultResolver(nil, "http://localhost:8080", time.Hour)
 
-	// Verify that literal:// still works.
+	// Built-in schemes still work.
 	got, err := r.Resolve(bg, "literal://test-value")
 	require.NoError(t, err)
 	assert.Equal(t, "test-value", got)
 
-	// Verify that env:// still works.
 	t.Setenv("ORANGE_RESOLVER_TEST_VAR", "env-value")
 	got, err = r.Resolve(bg, "env://ORANGE_RESOLVER_TEST_VAR")
 	require.NoError(t, err)
 	assert.Equal(t, "env-value", got)
+
+	// orange:// with nil httpClient fails with "not configured".
+	_, err = r.Resolve(bg, "orange://ws-123/api-keys/mykey")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not configured")
 }
 
 // ── OrangeResolver ───────────────────────────────────────────────────────────

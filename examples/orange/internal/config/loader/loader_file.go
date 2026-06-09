@@ -19,13 +19,13 @@
 package loader
 
 import (
+	"context"
 	"log/slog"
+	"net/http"
 	"os"
-	"path/filepath"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
-
+	"github.com/dio/transit/examples/orange/internal/client"
 	"github.com/dio/transit/examples/orange/internal/config"
 	"github.com/dio/transit/examples/orange/internal/observability"
 	"github.com/dio/transit/examples/orange/internal/pipeline/adapt"
@@ -44,7 +44,7 @@ func init() {
 	}
 
 	state := config.NewAppState()
-	resolver := config.NewDefaultResolver(5 * time.Minute)
+	resolver := config.NewDefaultResolver(bundleHTTPClient(), os.Getenv("ORANGE_SERVER_URL"), 5*time.Minute)
 
 	if err := loadFile(state, path); err != nil {
 		log.Error("failed to load ORANGE_CONFIG", "path", path, "err", err)
@@ -54,7 +54,14 @@ func init() {
 	distribute(state, resolver)
 	log.Info("config loaded and distributed to all packages", "path", path)
 
-	go watchFile(path, state, resolver)
+	go config.WatchFile(context.Background(), path, func() {
+		if err := loadFile(state, path); err != nil {
+			log.Warn("reload failed", "path", path, "err", err)
+			return
+		}
+		distribute(state, resolver)
+		log.Info("config reloaded", "path", path)
+	})
 }
 
 // distribute pushes state+resolver to every pipeline package.
@@ -75,97 +82,28 @@ func loadFile(state *config.AppState, path string) error {
 	return state.LoadConfig(data)
 }
 
-// watchFile watches path for changes and reloads state on each change.
-// Uses fsnotify with a 5-second fallback to polling if fsnotify fails.
-func watchFile(path string, state *config.AppState, resolver config.SecretResolver) {
-	watcher, err := fsnotify.NewWatcher()
+// bundleHTTPClient loads the egress bundle from ORANGE_EGRESS_BUNDLE and
+// returns an assertion-authenticated HTTP client for the orange:// resolver.
+// Returns nil when the env var is unset or the bundle cannot be loaded.
+func bundleHTTPClient() *http.Client {
+	bundlePath := os.Getenv("ORANGE_EGRESS_BUNDLE")
+	if bundlePath == "" {
+		return nil
+	}
+	bundle, err := client.LoadBundle(bundlePath)
 	if err != nil {
-		log.Warn("fsnotify init failed, falling back to polling", "err", err)
-		watchFilePolling(path, state, resolver)
-		return
+		log.Warn("orange:// resolver disabled: cannot load bundle", "path", bundlePath, "err", err)
+		return nil
 	}
-	defer watcher.Close()
-
-	dir := filepath.Dir(path)
-	if err := watcher.Add(dir); err != nil {
-		log.Warn("fsnotify add dir failed, falling back to polling", "dir", dir, "err", err)
-		watchFilePolling(path, state, resolver)
-		return
+	if serverURL := os.Getenv("ORANGE_SERVER_URL"); serverURL != "" {
+		bundle.ServerURL = serverURL
 	}
-
-	var lastMod time.Time
-	if fi, err := os.Stat(path); err == nil {
-		lastMod = fi.ModTime()
-	}
-
-	log.Debug("watching config file with fsnotify", "path", path)
-
-	// Fallback ticker in case fsnotify stops working
-	fallbackTicker := time.NewTicker(5 * time.Second)
-	defer fallbackTicker.Stop()
-
-	for {
-		select {
-		case event, ok := <-watcher.Events:
-			if !ok {
-				log.Warn("fsnotify events closed, switching to polling")
-				watchFilePolling(path, state, resolver)
-				return
-			}
-			// Only care about the config file itself
-			if event.Name != path {
-				continue
-			}
-			if event.Op&fsnotify.Write == 0 && event.Op&fsnotify.Create == 0 {
-				continue
-			}
-			reloadIfModified(path, &lastMod, state, resolver)
-
-		case err, ok := <-watcher.Errors:
-			if !ok {
-				log.Warn("fsnotify errors closed, switching to polling")
-				watchFilePolling(path, state, resolver)
-				return
-			}
-			log.Warn("fsnotify error, continuing", "err", err)
-
-		case <-fallbackTicker.C:
-			// Periodically check if file was modified (catch changes fsnotify might miss)
-			reloadIfModified(path, &lastMod, state, resolver)
-		}
-	}
-}
-
-// watchFilePolling polls path for mtime changes and reloads state on each change.
-func watchFilePolling(path string, state *config.AppState, resolver config.SecretResolver) {
-	var lastMod time.Time
-	if fi, err := os.Stat(path); err == nil {
-		lastMod = fi.ModTime()
-	}
-
-	log.Debug("watching config file with polling", "path", path, "interval", "5s")
-
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-	for range ticker.C {
-		reloadIfModified(path, &lastMod, state, resolver)
-	}
-}
-
-// reloadIfModified checks if the file was modified and reloads if necessary.
-func reloadIfModified(path string, lastMod *time.Time, state *config.AppState, resolver config.SecretResolver) {
-	fi, err := os.Stat(path)
+	hc, err := client.NewHTTPClient(bundle)
 	if err != nil {
-		return
+		log.Warn("orange:// resolver disabled: cannot build HTTP client", "err", err)
+		return nil
 	}
-	if !fi.ModTime().After(*lastMod) {
-		return
-	}
-	*lastMod = fi.ModTime()
-	if err := loadFile(state, path); err != nil {
-		log.Warn("reload failed", "path", path, "err", err)
-		return
-	}
-	distribute(state, resolver)
-	log.Info("config reloaded", "path", path)
+	log.Info("orange:// resolver enabled", "server", bundle.ServerURL)
+	return hc
 }
+

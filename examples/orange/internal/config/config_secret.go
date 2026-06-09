@@ -223,7 +223,7 @@ type OrangeResolver struct {
 
 // NewOrangeResolver returns an OrangeResolver backed by the given HTTP client
 // and server URL. The server URL should be the base URL of the orange service
-// (e.g., "http://localhost:8080").
+// (e.g., "http://localhost:3000").
 func NewOrangeResolver(httpClient connect.HTTPClient, serverURL string) *OrangeResolver {
 	return &OrangeResolver{
 		httpClient: httpClient,
@@ -249,6 +249,10 @@ func (o *OrangeResolver) Resolve(ctx context.Context, ref string) (string, error
 
 	workspaceID, realm, secretID := parts[0], parts[1], parts[2]
 
+	if o.httpClient == nil || o.serverURL == "" {
+		return "", fmt.Errorf("orange:// resolver not configured (no egress bundle / server URL): %s/%s/%s", workspaceID, realm, secretID)
+	}
+
 	client := secretv1connect.NewSecretResolverServiceClient(o.httpClient, o.serverURL)
 	req := &secretv1.ResolveRequest{
 		Realm:    realm,
@@ -272,29 +276,13 @@ func (o *OrangeResolver) Invalidate(_ string) {}
 
 // ── Default resolver ──────────────────────────────────────────────────────────
 
-// NewDefaultResolver returns a CachedResolver that dispatches across the three
-// built-in schemes — env://, file://, and literal:// — with the given TTL.
+// NewDefaultResolver returns a CachedResolver that handles all supported
+// secret_ref schemes: env://, file://, literal://, and orange://.
 //
-// For production deployments that use a secret-management service, build a
-// custom DispatchResolver that adds a service-specific backend and wrap it with
-// NewCachedResolver so that Invalidate calls from rotation webhooks are
-// handled centrally.
-func NewDefaultResolver(ttl time.Duration) *CachedResolver {
-	return NewCachedResolver(
-		NewDispatchResolver(map[string]SecretResolver{
-			"env":     &EnvResolver{},
-			"file":    &FileResolver{},
-			"literal": &LiteralResolver{},
-		}),
-		ttl,
-	)
-}
-
-// NewDefaultResolverWithOrange returns a CachedResolver that dispatches across
-// the built-in schemes (env://, file://, literal://) plus the orange:// scheme
-// backed by the SecretResolverService. Useful for config publication where secrets
-// may be referenced from the orange secret store.
-func NewDefaultResolverWithOrange(httpClient connect.HTTPClient, serverURL string, ttl time.Duration) *CachedResolver {
+// httpClient and serverURL back the orange:// scheme. When either is nil/"",
+// orange:// references resolve to an error at use time (not at construction).
+// Pass nil/"" in standalone mode where no egress bundle is available.
+func NewDefaultResolver(httpClient connect.HTTPClient, serverURL string, ttl time.Duration) *CachedResolver {
 	return NewCachedResolver(
 		NewDispatchResolver(map[string]SecretResolver{
 			"env":     &EnvResolver{},
