@@ -27,10 +27,11 @@ import (
 // All unimplemented admin RPCs delegate to the embedded stub.
 type ConfigService struct {
 	adminv1connect.UnimplementedConfigAdminServiceHandler
-	store    config.SnapshotStore
-	resolver config.HierarchyResolver // optional; enables three-level hierarchy merge
-	rl       *rateLimitDB             // nil until InitRateLimit is called
-	logger   *slog.Logger
+	store        config.SnapshotStore
+	resolver     config.HierarchyResolver // optional; enables three-level hierarchy merge
+	rl           *rateLimitDB             // nil until InitRateLimit is called
+	logger       *slog.Logger
+	wsNameLookup func(ctx context.Context, workspaceID string) (string, error) // optional
 }
 
 // InitRateLimit creates the rate-limit DB tables if they do not exist and
@@ -59,6 +60,15 @@ func NewConfigService(store config.SnapshotStore, logger *slog.Logger) *ConfigSe
 // merging at Fetch time. Call once during server setup, before serving traffic.
 func (s *ConfigService) SetHierarchyResolver(r config.HierarchyResolver) {
 	s.resolver = r
+}
+
+// SetWorkspaceNameLookup registers a function that resolves a workspace UUID to
+// its human-readable name. When set, Fetch uses the name (not the UUID) as the
+// workspaceID argument to ProjectForWorkspace, so that config files authored
+// with name-based key prefixes (e.g. "demo/dio/sk-default") are projected
+// correctly.
+func (s *ConfigService) SetWorkspaceNameLookup(fn func(ctx context.Context, workspaceID string) (string, error)) {
+	s.wsNameLookup = fn
 }
 
 // ── ConfigAdminService ────────────────────────────────────────────────────────
@@ -308,7 +318,17 @@ func (s *ConfigService) Fetch(ctx context.Context, req *connect.Request[configv1
 		}), nil
 	}
 
+	// Project the merged config down to records belonging to this workspace.
+	// Config files authored with human-readable workspace names (local dev with
+	// orange.yaml) use name-based key prefixes like "demo/dio/sk-default" rather
+	// than UUID-based ones. We try the UUID first; if no user records survive the
+	// projection we fall back to the workspace name so both authoring styles work.
 	projected := config.ProjectForWorkspace(merged, wsID)
+	if s.wsNameLookup != nil && !projectedHasUserRecords(projected) {
+		if wsName, err := s.wsNameLookup(ctx, wsID); err == nil && wsName != wsID {
+			projected = config.ProjectForWorkspace(merged, wsName)
+		}
+	}
 	payload, err := config.MarshalRawYAML(projected)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("encode projected snapshot: %w", err))
@@ -389,6 +409,13 @@ func (s *ConfigService) buildMergedRaw(ctx context.Context, wsID string, wsEnv *
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
+
+// projectedHasUserRecords returns true when the projected config contains at
+// least one user-owned record (key, profile, or rate-limit policy). It is used
+// as the heuristic for the UUID → name fallback in Fetch.
+func projectedHasUserRecords(p *config.RawConfig) bool {
+	return len(p.Keys) > 0 || len(p.Profiles) > 0 || len(p.RateLimit.Policies) > 0
+}
 
 func entryToMeta(workspaceID string, e *config.SnapshotListEntry) *adminv1.SnapshotMeta {
 	m := &adminv1.SnapshotMeta{
