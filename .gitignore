@@ -11,3 +11,4 @@ examples/*/lib*.h
 .claude
 .hermes/
 .DS_Store
+*.rdb
