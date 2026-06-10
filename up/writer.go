@@ -428,11 +428,17 @@ func (w *Writer) SetResponseBody(data []byte) {
 
 // IncrementCounter queues (or immediately applies) a counter increment.
 func (w *Writer) IncrementCounter(id MetricID, delta uint64) {
+	w.IncrementCounterLabels(id, delta)
+}
+
+// IncrementCounterLabels queues (or immediately applies) a counter increment
+// with label values matching the tag keys used when the counter was defined.
+func (w *Writer) IncrementCounterLabels(id MetricID, delta uint64, labelValues ...string) {
 	if w.queued() {
-		w.f.counters = append(w.f.counters, counterMutation{id: id, delta: delta})
+		w.f.counters = append(w.f.counters, counterMutation{id: id, delta: delta, labels: cloneLabels(labelValues)})
 		return
 	}
-	w.f.handle.IncrementCounterValue(shared.MetricID(id), delta)
+	w.f.handle.IncrementCounterValue(shared.MetricID(id), delta, labelValues...)
 }
 
 // IncrementGauge queues (or immediately applies) a gauge increment.
@@ -464,11 +470,25 @@ func (w *Writer) SetGauge(id MetricID, value uint64) {
 
 // RecordHistogram queues (or immediately applies) a histogram observation.
 func (w *Writer) RecordHistogram(id MetricID, value uint64) {
+	w.RecordHistogramLabels(id, value)
+}
+
+// RecordHistogramLabels queues (or immediately applies) a histogram
+// observation with label values matching the tag keys used when the histogram
+// was defined.
+func (w *Writer) RecordHistogramLabels(id MetricID, value uint64, labelValues ...string) {
 	if w.queued() {
-		w.f.histograms = append(w.f.histograms, histogramMutation{id: id, value: value})
+		w.f.histograms = append(w.f.histograms, histogramMutation{id: id, value: value, labels: cloneLabels(labelValues)})
 		return
 	}
-	w.f.handle.RecordHistogramValue(shared.MetricID(id), value)
+	w.f.handle.RecordHistogramValue(shared.MetricID(id), value, labelValues...)
+}
+
+func cloneLabels(labels []string) []string {
+	if len(labels) == 0 {
+		return nil
+	}
+	return append([]string(nil), labels...)
 }
 
 // Go upgrades this request to asynchronous mode. fn runs in a new goroutine

@@ -74,6 +74,37 @@ func onResponse(w *up.Writer, chunk *up.ResponseChunk) {
 }
 ```
 
+For labeled metrics, define tag keys at config time and pass values in the
+same order when recording:
+
+```go
+var tokenUsage up.MetricID
+
+func init() {
+    up.RegisterWithConfig("my-filter",
+        func(h up.ConfigHandle) error {
+            var err error
+            tokenUsage, err = h.DefineHistogram("gen_ai.client.token.usage",
+                "gen_ai.operation.name",
+                "gen_ai.provider.name",
+                "gen_ai.token.type",
+            )
+            return err
+        },
+        onRequest, onResponse,
+    )
+}
+
+func onResponse(w *up.Writer, chunk *up.ResponseChunk) {
+    if chunk.EndStream {
+        w.RecordHistogramLabels(tokenUsage, 42, "chat", "openai", "input")
+    }
+}
+```
+
+The label values must match the metric's tag-key order and count. Keep labels
+low-cardinality; do not use request IDs, user IDs, raw paths, or API keys.
+
 **Counter** — monotonically increasing, never decreases, reset on Envoy restart.
 Good for total requests, errors, retries.
 

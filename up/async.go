@@ -168,8 +168,9 @@ type filterStateMutation struct {
 // Multiple increments to the same MetricID are applied in order; they are
 // not coalesced.
 type counterMutation struct {
-	id    MetricID
-	delta uint64
+	id     MetricID
+	delta  uint64
+	labels []string
 }
 
 // gaugeMutation is a deferred gauge operation (set, increment, or decrement).
@@ -189,8 +190,9 @@ const (
 
 // histogramMutation is a deferred RecordHistogram operation.
 type histogramMutation struct {
-	id    MetricID
-	value uint64
+	id     MetricID
+	value  uint64
+	labels []string
 }
 
 // upstreamOverrideMutation is a deferred SetUpstreamOverrideHost operation.

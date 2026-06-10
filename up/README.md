@@ -72,10 +72,12 @@ and individual headers via `r.Header(name)` or all headers via `r.AllHeaders()`.
 - `w.SetUpstreamOverrideHost(host)` — override the upstream host for this request
 - `w.AddSpanTag(key, value)` — annotate the active tracing span
 - `w.IncrementCounter(id, delta)` — increment an Envoy counter defined at config time
+- `w.IncrementCounterLabels(id, delta, labels...)` — increment a labeled Envoy counter
 - `w.IncrementGauge(id, delta)` — increment an Envoy gauge defined at config time
 - `w.DecrementGauge(id, delta)` — decrement an Envoy gauge defined at config time
 - `w.SetGauge(id, value)` — set an Envoy gauge to an absolute value
 - `w.RecordHistogram(id, value)` — record a histogram observation
+- `w.RecordHistogramLabels(id, value, labels...)` — record a labeled histogram observation
 - `w.GetBufferedBody()` — read the buffered request body (requires `RegisterWithMutableBody`)
 - `w.SetBufferedBody(body)` — replace the buffered request body
 - `w.HTTPCallout(req, callback)` — make an async HTTP callout to an Envoy cluster

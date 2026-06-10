@@ -20,6 +20,13 @@ type LocalResponse struct {
 	Detail  string
 }
 
+// MetricRecord records a metric mutation emitted by a fake filter handle.
+type MetricRecord struct {
+	ID     shared.MetricID
+	Value  uint64
+	Labels []string
+}
+
 // FilterHandleOption configures a FakeFilterHandle.
 type FilterHandleOption func(*FakeFilterHandle)
 
@@ -99,6 +106,8 @@ type FakeFilterHandle struct {
 
 	// LocalResponses records every SendLocalResponse call.
 	LocalResponses   []LocalResponse
+	Counters         []MetricRecord
+	Histograms       []MetricRecord
 	ContinuedReq     int
 	ContinueRequestC chan struct{}
 	LocalResponseC   chan struct{}
@@ -399,9 +408,12 @@ func (h *FakeFilterHandle) ResetHttpStream(_ uint64)                            
 func (h *FakeFilterHandle) SetDownstreamWatermarkCallbacks(_ shared.DownstreamWatermarkCallbacks) {}
 func (h *FakeFilterHandle) ClearDownstreamWatermarkCallbacks()                                    {}
 
-// -- Metrics (no-ops) --
+// -- Metrics --
 
-func (h *FakeFilterHandle) RecordHistogramValue(_ shared.MetricID, _ uint64, _ ...string) shared.MetricsResult {
+func (h *FakeFilterHandle) RecordHistogramValue(id shared.MetricID, value uint64, labels ...string) shared.MetricsResult {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.Histograms = append(h.Histograms, MetricRecord{ID: id, Value: value, Labels: append([]string(nil), labels...)})
 	return shared.MetricsSuccess
 }
 func (h *FakeFilterHandle) SetGaugeValue(_ shared.MetricID, _ uint64, _ ...string) shared.MetricsResult {
@@ -413,7 +425,10 @@ func (h *FakeFilterHandle) IncrementGaugeValue(_ shared.MetricID, _ uint64, _ ..
 func (h *FakeFilterHandle) DecrementGaugeValue(_ shared.MetricID, _ uint64, _ ...string) shared.MetricsResult {
 	return shared.MetricsSuccess
 }
-func (h *FakeFilterHandle) IncrementCounterValue(_ shared.MetricID, _ uint64, _ ...string) shared.MetricsResult {
+func (h *FakeFilterHandle) IncrementCounterValue(id shared.MetricID, value uint64, labels ...string) shared.MetricsResult {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.Counters = append(h.Counters, MetricRecord{ID: id, Value: value, Labels: append([]string(nil), labels...)})
 	return shared.MetricsSuccess
 }
 

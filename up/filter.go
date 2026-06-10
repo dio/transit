@@ -312,7 +312,7 @@ func (f *filter) flush(continueReq bool) {
 	}
 	f.filterState = f.filterState[:0]
 	for _, m := range f.counters {
-		f.handle.IncrementCounterValue(shared.MetricID(m.id), m.delta)
+		f.handle.IncrementCounterValue(shared.MetricID(m.id), m.delta, m.labels...)
 	}
 	f.counters = f.counters[:0]
 	for _, m := range f.gauges {
@@ -327,7 +327,7 @@ func (f *filter) flush(continueReq bool) {
 	}
 	f.gauges = f.gauges[:0]
 	for _, m := range f.histograms {
-		f.handle.RecordHistogramValue(shared.MetricID(m.id), m.value)
+		f.handle.RecordHistogramValue(shared.MetricID(m.id), m.value, m.labels...)
 	}
 	f.histograms = f.histograms[:0]
 	for _, m := range f.dynamicMetadata {
