@@ -25,7 +25,10 @@ type configFactory struct {
 }
 
 // configHandleImpl wraps shared.HttpFilterConfigHandle to implement ConfigHandle.
-type configHandleImpl struct{ h shared.HttpFilterConfigHandle }
+type configHandleImpl struct {
+	h   shared.HttpFilterConfigHandle
+	raw []byte
+}
 
 func (c *configHandleImpl) DefineCounter(name string, tagKeys ...string) (MetricID, error) {
 	id, res := c.h.DefineCounter(name, tagKeys...)
@@ -51,9 +54,11 @@ func (c *configHandleImpl) DefineHistogram(name string, tagKeys ...string) (Metr
 	return MetricID(id), nil
 }
 
-func (f *configFactory) Create(h shared.HttpFilterConfigHandle, _ []byte) (shared.HttpFilterFactory, error) {
+func (c *configHandleImpl) FilterConfigBytes() []byte { return c.raw }
+
+func (f *configFactory) Create(h shared.HttpFilterConfigHandle, raw []byte) (shared.HttpFilterFactory, error) {
 	if f.configFn != nil {
-		if err := f.configFn(&configHandleImpl{h: h}); err != nil {
+		if err := f.configFn(&configHandleImpl{h: h, raw: raw}); err != nil {
 			return nil, err
 		}
 	}

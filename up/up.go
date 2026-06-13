@@ -23,6 +23,9 @@ type ConfigHandle interface {
 	DefineGauge(name string, tagKeys ...string) (MetricID, error)
 	// DefineHistogram defines an Envoy histogram metric. tagKeys are optional dimension names.
 	DefineHistogram(name string, tagKeys ...string) (MetricID, error)
+	// FilterConfigBytes returns the raw bytes of the filter_config StringValue
+	// passed in the Envoy YAML. Returns nil when no config was provided.
+	FilterConfigBytes() []byte
 }
 
 // ConfigFunc is called once at filter config creation time on the main thread.
