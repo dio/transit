@@ -536,3 +536,77 @@ func (c *FakeClusterLBContext) ShouldSelectAnotherHost(_ down.ClusterLBHandle, _
 	return false
 }
 func (c *FakeClusterLBContext) NewCompletion() *down.ClusterLBCompletion { return nil }
+
+// =============================================================================
+// FakeClusterMetricsHandle — implements down.ClusterMetricsHandle for unit tests
+// =============================================================================
+
+// FakeClusterMetricsHandle records metric operations for test assertions.
+// Define methods always succeed and return sequentially assigned IDs.
+type FakeClusterMetricsHandle struct {
+	mu         sync.Mutex
+	nextID     shared.MetricID
+	Counters   []MetricRecord
+	Gauges     []MetricRecord
+	Histograms []MetricRecord
+}
+
+var _ down.ClusterMetricsHandle = (*FakeClusterMetricsHandle)(nil)
+
+func (h *FakeClusterMetricsHandle) allocID() shared.MetricID {
+	h.nextID++
+	return h.nextID
+}
+
+func (h *FakeClusterMetricsHandle) DefineCounter(_ string, _ ...string) (shared.MetricID, shared.MetricsResult) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.allocID(), shared.MetricsSuccess
+}
+
+func (h *FakeClusterMetricsHandle) DefineGauge(_ string, _ ...string) (shared.MetricID, shared.MetricsResult) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.allocID(), shared.MetricsSuccess
+}
+
+func (h *FakeClusterMetricsHandle) DefineHistogram(_ string, _ ...string) (shared.MetricID, shared.MetricsResult) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.allocID(), shared.MetricsSuccess
+}
+
+func (h *FakeClusterMetricsHandle) IncrementCounterValue(id shared.MetricID, value uint64, labels ...string) shared.MetricsResult {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.Counters = append(h.Counters, MetricRecord{ID: id, Value: value, Labels: append([]string(nil), labels...)})
+	return shared.MetricsSuccess
+}
+
+func (h *FakeClusterMetricsHandle) SetGaugeValue(id shared.MetricID, value uint64, labels ...string) shared.MetricsResult {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.Gauges = append(h.Gauges, MetricRecord{ID: id, Value: value, Labels: append([]string(nil), labels...)})
+	return shared.MetricsSuccess
+}
+
+func (h *FakeClusterMetricsHandle) IncrementGaugeValue(id shared.MetricID, value uint64, labels ...string) shared.MetricsResult {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.Gauges = append(h.Gauges, MetricRecord{ID: id, Value: value, Labels: append([]string(nil), labels...)})
+	return shared.MetricsSuccess
+}
+
+func (h *FakeClusterMetricsHandle) DecrementGaugeValue(id shared.MetricID, value uint64, labels ...string) shared.MetricsResult {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.Gauges = append(h.Gauges, MetricRecord{ID: id, Value: value, Labels: append([]string(nil), labels...)})
+	return shared.MetricsSuccess
+}
+
+func (h *FakeClusterMetricsHandle) RecordHistogramValue(id shared.MetricID, value uint64, labels ...string) shared.MetricsResult {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.Histograms = append(h.Histograms, MetricRecord{ID: id, Value: value, Labels: append([]string(nil), labels...)})
+	return shared.MetricsSuccess
+}

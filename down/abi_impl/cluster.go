@@ -16,6 +16,8 @@ import (
 	"sync"
 	"unsafe"
 
+	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
+
 	"github.com/dio/transit/down"
 )
 
@@ -48,6 +50,131 @@ var (
 	clusterLBManager     = newManager[clusterLBWrapper]()
 	clusterAsyncManager  = newManager[asyncHandleWrapper]()
 )
+
+// =============================================================================
+// dymClusterMetricsHandle — implements down.ClusterMetricsHandle
+// =============================================================================
+
+type dymClusterMetricsHandle struct {
+	configPtr C.envoy_dynamic_module_type_cluster_config_envoy_ptr
+}
+
+var _ down.ClusterMetricsHandle = (*dymClusterMetricsHandle)(nil)
+
+// stringsToLabelBuffers converts []string to a slice of module buffers and
+// returns a pointer to the first element (nil for empty slices).
+func stringsToLabelBuffers(ss []string) ([]C.envoy_dynamic_module_type_module_buffer, *C.envoy_dynamic_module_type_module_buffer) {
+	if len(ss) == 0 {
+		return nil, nil
+	}
+	bufs := make([]C.envoy_dynamic_module_type_module_buffer, len(ss))
+	for i, s := range ss {
+		bufs[i] = stringToModuleBuffer(s)
+	}
+	return bufs, &bufs[0]
+}
+
+func (h *dymClusterMetricsHandle) DefineCounter(name string, tagKeys ...string) (shared.MetricID, shared.MetricsResult) {
+	labelBufs, labelPtr := stringsToLabelBuffers(tagKeys)
+	var id C.size_t
+	result := C.envoy_dynamic_module_callback_cluster_config_define_counter(
+		h.configPtr, stringToModuleBuffer(name),
+		labelPtr, C.size_t(len(tagKeys)),
+		&id,
+	)
+	runtime.KeepAlive(name)
+	runtime.KeepAlive(tagKeys)
+	runtime.KeepAlive(labelBufs)
+	return shared.MetricID(id), shared.MetricsResult(result)
+}
+
+func (h *dymClusterMetricsHandle) DefineGauge(name string, tagKeys ...string) (shared.MetricID, shared.MetricsResult) {
+	labelBufs, labelPtr := stringsToLabelBuffers(tagKeys)
+	var id C.size_t
+	result := C.envoy_dynamic_module_callback_cluster_config_define_gauge(
+		h.configPtr, stringToModuleBuffer(name),
+		labelPtr, C.size_t(len(tagKeys)),
+		&id,
+	)
+	runtime.KeepAlive(name)
+	runtime.KeepAlive(tagKeys)
+	runtime.KeepAlive(labelBufs)
+	return shared.MetricID(id), shared.MetricsResult(result)
+}
+
+func (h *dymClusterMetricsHandle) DefineHistogram(name string, tagKeys ...string) (shared.MetricID, shared.MetricsResult) {
+	labelBufs, labelPtr := stringsToLabelBuffers(tagKeys)
+	var id C.size_t
+	result := C.envoy_dynamic_module_callback_cluster_config_define_histogram(
+		h.configPtr, stringToModuleBuffer(name),
+		labelPtr, C.size_t(len(tagKeys)),
+		&id,
+	)
+	runtime.KeepAlive(name)
+	runtime.KeepAlive(tagKeys)
+	runtime.KeepAlive(labelBufs)
+	return shared.MetricID(id), shared.MetricsResult(result)
+}
+
+func (h *dymClusterMetricsHandle) IncrementCounterValue(id shared.MetricID, value uint64, labelValues ...string) shared.MetricsResult {
+	labelBufs, labelPtr := stringsToLabelBuffers(labelValues)
+	result := C.envoy_dynamic_module_callback_cluster_config_increment_counter(
+		h.configPtr, C.size_t(id),
+		labelPtr, C.size_t(len(labelValues)),
+		C.uint64_t(value),
+	)
+	runtime.KeepAlive(labelValues)
+	runtime.KeepAlive(labelBufs)
+	return shared.MetricsResult(result)
+}
+
+func (h *dymClusterMetricsHandle) SetGaugeValue(id shared.MetricID, value uint64, labelValues ...string) shared.MetricsResult {
+	labelBufs, labelPtr := stringsToLabelBuffers(labelValues)
+	result := C.envoy_dynamic_module_callback_cluster_config_set_gauge(
+		h.configPtr, C.size_t(id),
+		labelPtr, C.size_t(len(labelValues)),
+		C.uint64_t(value),
+	)
+	runtime.KeepAlive(labelValues)
+	runtime.KeepAlive(labelBufs)
+	return shared.MetricsResult(result)
+}
+
+func (h *dymClusterMetricsHandle) IncrementGaugeValue(id shared.MetricID, value uint64, labelValues ...string) shared.MetricsResult {
+	labelBufs, labelPtr := stringsToLabelBuffers(labelValues)
+	result := C.envoy_dynamic_module_callback_cluster_config_increment_gauge(
+		h.configPtr, C.size_t(id),
+		labelPtr, C.size_t(len(labelValues)),
+		C.uint64_t(value),
+	)
+	runtime.KeepAlive(labelValues)
+	runtime.KeepAlive(labelBufs)
+	return shared.MetricsResult(result)
+}
+
+func (h *dymClusterMetricsHandle) DecrementGaugeValue(id shared.MetricID, value uint64, labelValues ...string) shared.MetricsResult {
+	labelBufs, labelPtr := stringsToLabelBuffers(labelValues)
+	result := C.envoy_dynamic_module_callback_cluster_config_decrement_gauge(
+		h.configPtr, C.size_t(id),
+		labelPtr, C.size_t(len(labelValues)),
+		C.uint64_t(value),
+	)
+	runtime.KeepAlive(labelValues)
+	runtime.KeepAlive(labelBufs)
+	return shared.MetricsResult(result)
+}
+
+func (h *dymClusterMetricsHandle) RecordHistogramValue(id shared.MetricID, value uint64, labelValues ...string) shared.MetricsResult {
+	labelBufs, labelPtr := stringsToLabelBuffers(labelValues)
+	result := C.envoy_dynamic_module_callback_cluster_config_record_histogram_value(
+		h.configPtr, C.size_t(id),
+		labelPtr, C.size_t(len(labelValues)),
+		C.uint64_t(value),
+	)
+	runtime.KeepAlive(labelValues)
+	runtime.KeepAlive(labelBufs)
+	return shared.MetricsResult(result)
+}
 
 // =============================================================================
 // clusterHandleImpl — implements down.ClusterHandle
@@ -550,7 +677,15 @@ func envoy_dynamic_module_on_cluster_config_new(
 		fmt.Fprintf(os.Stderr, "[transit] cluster %q: no factory registered\n", nameStr)
 		return nil
 	}
-	configFactory, err := factory.Create(envoyBufferToBytesUnsafe(config))
+	cfgBytes := envoyBufferToBytesUnsafe(config)
+	metrics := &dymClusterMetricsHandle{configPtr: configEnvoyPtr}
+	var configFactory down.ClusterConfigFactory
+	var err error
+	if f, ok := factory.(down.ClusterFactoryWithMetrics); ok {
+		configFactory, err = f.CreateWithMetrics(metrics, cfgBytes)
+	} else {
+		configFactory, err = factory.Create(cfgBytes)
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[transit] cluster %q: Create failed: %v\n", nameStr, err)
 		return nil

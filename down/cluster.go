@@ -3,6 +3,8 @@ package down
 import (
 	"sync"
 	"unsafe"
+
+	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
 )
 
 // HostPtr is an opaque handle to an Envoy upstream host. Obtained from
@@ -344,11 +346,34 @@ type ClusterConfigFactory interface {
 	Close()
 }
 
+// ClusterMetricsHandle provides access to Envoy cluster metrics.
+// Define operations must be called during cluster config creation
+// (from ClusterFactoryWithMetrics.CreateWithMetrics on the main thread).
+// Record operations may be called at any time during the cluster's lifetime.
+type ClusterMetricsHandle interface {
+	DefineCounter(name string, tagKeys ...string) (shared.MetricID, shared.MetricsResult)
+	DefineGauge(name string, tagKeys ...string) (shared.MetricID, shared.MetricsResult)
+	DefineHistogram(name string, tagKeys ...string) (shared.MetricID, shared.MetricsResult)
+
+	IncrementCounterValue(id shared.MetricID, value uint64, labelValues ...string) shared.MetricsResult
+	SetGaugeValue(id shared.MetricID, value uint64, labelValues ...string) shared.MetricsResult
+	IncrementGaugeValue(id shared.MetricID, value uint64, labelValues ...string) shared.MetricsResult
+	DecrementGaugeValue(id shared.MetricID, value uint64, labelValues ...string) shared.MetricsResult
+	RecordHistogramValue(id shared.MetricID, value uint64, labelValues ...string) shared.MetricsResult
+}
+
 // ClusterFactory parses config bytes and produces ClusterConfigFactory instances.
 // Register via RegisterCluster in an init() function.
 type ClusterFactory interface {
 	// Create is called on the main thread when the cluster config is loaded.
 	Create(config []byte) (ClusterConfigFactory, error)
+}
+
+// ClusterFactoryWithMetrics is an optional extension of ClusterFactory.
+// When implemented, CreateWithMetrics is called instead of Create, providing
+// a ClusterMetricsHandle for defining Envoy metrics at config-load time.
+type ClusterFactoryWithMetrics interface {
+	CreateWithMetrics(metrics ClusterMetricsHandle, config []byte) (ClusterConfigFactory, error)
 }
 
 // EmptyClusterLB embeds into ClusterLB implementations to no-op optional methods.
