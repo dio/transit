@@ -1,6 +1,6 @@
 module github.com/dio/transit/e2e
 
-go 1.26.2
+go 1.26.4
 
 require (
 	github.com/VictoriaMetrics/easyproto v1.2.0

@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/dio/transit/up"
 )
 
 func TestExtractTarget(t *testing.T) {
@@ -41,4 +43,33 @@ func TestPendingRegistry(t *testing.T) {
 	require.Same(t, p1, Lookup("tok-1"))
 	Delete("tok-1")
 	require.Nil(t, Lookup("tok-1"))
+}
+
+func TestBodyHandlerKeepsPendingUntilHostSelectionConsumesIt(t *testing.T) {
+	token := "tok-body-lifetime"
+	p := Register(token)
+	t.Cleanup(func() { Delete(token) })
+
+	ctx := any(&streamState{token: token, p: p})
+	bodyHandler(nil, &up.BodyChunk{
+		Context:   &ctx,
+		Data:      []byte(`{"target":"plain"}`),
+		EndStream: true,
+	})
+
+	require.Same(t, p, Lookup(token))
+	res, ok := p.Result()
+	require.True(t, ok)
+	require.Equal(t, "plain", res.Upstream)
+}
+
+func TestWaitAndCompleteDeletesPendingAfterResolve(t *testing.T) {
+	token := "tok-complete-lifetime"
+	p := Register(token)
+	p.Resolve(Result{Err: "stop"})
+
+	l := &lb{waiters: make(map[*up.ClusterLBCompletion]struct{})}
+	l.waitAndComplete(token, p, nil)
+
+	require.Nil(t, Lookup(token))
 }

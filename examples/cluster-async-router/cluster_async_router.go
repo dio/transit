@@ -83,8 +83,6 @@ func bodyHandler(_ *up.Writer, chunk *up.BodyChunk) {
 	if !ok || st == nil {
 		return
 	}
-	defer Delete(st.token)
-
 	target, err := ExtractTarget(chunk.Data)
 	if err != nil {
 		st.p.Resolve(Result{Err: err.Error()})
@@ -306,12 +304,13 @@ func (l *lb) ChooseHost(_ up.ClusterLBHandle, ctx up.ClusterLBContext) (up.HostP
 	l.waiters[completion] = struct{}{}
 	l.mu.Unlock()
 
-	go l.waitAndComplete(p, completion)
+	go l.waitAndComplete(token, p, completion)
 	return nil, completion
 }
 
-func (l *lb) waitAndComplete(p *Pending, completion *up.ClusterLBCompletion) {
+func (l *lb) waitAndComplete(token string, p *Pending, completion *up.ClusterLBCompletion) {
 	<-p.Done()
+	Delete(token)
 
 	l.mu.Lock()
 	_, alive := l.waiters[completion]

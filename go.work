@@ -2,7 +2,6 @@ go 1.26.4
 
 use (
 	.
-	../ratelimit
 	./e2e
 	./examples
 	./integrations

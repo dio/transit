@@ -1,6 +1,6 @@
 module github.com/dio/transit/integrations
 
-go 1.26.2
+go 1.26.4
 
 require (
 	github.com/dio/gateway-pairs v0.2.1
