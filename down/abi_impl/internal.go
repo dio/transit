@@ -21,8 +21,8 @@ import (
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
 )
 
-// manager pins Go objects so their addresses can be round-tripped through C as
-// opaque pointers. Sharded to reduce lock contention across worker threads.
+// manager keeps Go objects reachable while C round-trips an opaque C-allocated
+// token. Exported Go callbacks must not return Go pointers to C.
 const numManagerShards = 32
 
 type manager[T any] struct {
@@ -31,7 +31,7 @@ type manager[T any] struct {
 }
 
 func (m *manager[T]) record(item *T) unsafe.Pointer {
-	ptr := unsafe.Pointer(item)
+	ptr := C.malloc(1)
 	idx := uintptr(ptr) % numManagerShards
 	m.mutex[idx].Lock()
 	defer m.mutex[idx].Unlock()
@@ -40,6 +40,9 @@ func (m *manager[T]) record(item *T) unsafe.Pointer {
 }
 
 func (m *manager[T]) unwrap(ptr unsafe.Pointer) *T {
+	if ptr == nil {
+		return nil
+	}
 	idx := uintptr(ptr) % numManagerShards
 	m.mutex[idx].Lock()
 	defer m.mutex[idx].Unlock()
@@ -47,10 +50,14 @@ func (m *manager[T]) unwrap(ptr unsafe.Pointer) *T {
 }
 
 func (m *manager[T]) remove(ptr unsafe.Pointer) {
+	if ptr == nil {
+		return
+	}
 	idx := uintptr(ptr) % numManagerShards
 	m.mutex[idx].Lock()
 	defer m.mutex[idx].Unlock()
 	delete(m.data[idx], uintptr(ptr))
+	C.free(ptr)
 }
 
 func newManager[T any]() *manager[T] {

@@ -2,6 +2,7 @@ package abi_impl
 
 import (
 	"testing"
+	"unsafe"
 
 	"github.com/stretchr/testify/require"
 )
@@ -14,6 +15,7 @@ func TestManager_recordUnwrapRemove(t *testing.T) {
 
 	ptr := m.record(&value)
 	require.NotNil(t, ptr)
+	require.NotEqual(t, unsafe.Pointer(&value), ptr)
 	require.Same(t, &value, m.unwrap(ptr))
 
 	shard := uintptr(ptr) % numManagerShards
