@@ -377,7 +377,11 @@ func (w *Writer) SetStreamObject(key string, v any) {
 // no nonce is minted.
 func (w *Writer) GetStreamObject(key string) (any, bool) {
 	if w.f.streamObjectNonce == "" {
-		return nil, false
+		nonce, ok := w.GetFilterState(streamObjectIDKey)
+		if !ok || nonce == "" {
+			return nil, false
+		}
+		w.f.streamObjectNonce = nonce
 	}
 	bag, ok := lookupBag(w.f.streamObjectNonce)
 	if !ok {

@@ -75,6 +75,19 @@ func TestStreamKey_getFromCtx(t *testing.T) {
 	require.Equal(t, "sess-abc", got)
 }
 
+func TestStreamKey_getFromLaterWriterUsingFilterStateNonce(t *testing.T) {
+	first, h := newTestWriter(t)
+	defer func() { dropBag(first.f.streamObjectNonce) }()
+
+	k := NewStreamKey[string]("plum.target")
+	k.Set(first, "selected-target")
+
+	second := NewWriter(h)
+	got, ok := k.Get(second)
+	require.True(t, ok, "later writer could not read stream object using nonce from filter state")
+	require.Equal(t, "selected-target", got)
+}
+
 // TestStreamKey_getFromCtxNoValue: GetFromCtx returns (zero, false) when no
 // bag exists (Writer never called SetStreamObject).
 func TestStreamKey_getFromCtxNoValue(t *testing.T) {
