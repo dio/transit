@@ -92,6 +92,34 @@ func (s *UpstreamFilterSuite) TestGet_authHeaderInjected() {
 		"upstream echo should reflect the injected Authorization header")
 }
 
+// TestGet_authHeaderInjectedH2C verifies the same upstream request header
+// mutation works when Envoy speaks HTTP/2 to the upstream.
+func (s *UpstreamFilterSuite) TestGet_authHeaderInjectedH2C() {
+	req, _ := http.NewRequest(http.MethodGet, upstreamAuthH2CAddr+"/", nil)
+	resp := mustDo(s.T(), req)
+	resp.Body.Close()
+
+	s.Require().Equal(http.StatusOK, resp.StatusCode)
+	s.Require().Equal("HTTP/2.0", resp.Header.Get("x-upstream-proto"),
+		"upstream should receive the request over HTTP/2")
+	s.Require().Equal("Bearer test-token", resp.Header.Get("x-received-authorization"),
+		"upstream echo should reflect the injected Authorization header")
+}
+
+// TestGet_authHeaderInjectedH2TLS verifies the upstream request header mutation
+// works when Envoy speaks HTTP/2 over TLS to the upstream.
+func (s *UpstreamFilterSuite) TestGet_authHeaderInjectedH2TLS() {
+	req, _ := http.NewRequest(http.MethodGet, upstreamAuthH2TLSAddr+"/", nil)
+	resp := mustDo(s.T(), req)
+	resp.Body.Close()
+
+	s.Require().Equal(http.StatusOK, resp.StatusCode)
+	s.Require().Equal("HTTP/2.0", resp.Header.Get("x-upstream-proto"),
+		"upstream should receive the request over HTTP/2")
+	s.Require().Equal("Bearer test-token", resp.Header.Get("x-received-authorization"),
+		"upstream echo should reflect the injected Authorization header")
+}
+
 // TestGet_clientAuthNotForwarded verifies that without the auth-injecting
 // upstream filter the upstream server does NOT see an Authorization header —
 // confirming the header comes from the filter, not from the client.

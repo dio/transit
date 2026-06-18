@@ -67,10 +67,13 @@ var (
 	alsAddr                       string
 	upstreamFilterAddr            string
 	upstreamAuthAddr              string
+	upstreamAuthH2CAddr           string
+	upstreamAuthH2TLSAddr         string
 	upstreamAuthGroupAddr         string
 	lbPolicyAddr                  string
 	clusterExtensionAddr          string
 	clusterExtensionTLSAddr       string
+	clusterExtensionH2TLSAuthAddr string
 	clusterExtensionMTLSAddr      string
 	clusterSchedulerAddr          string
 	asyncCalloutAddr              string
@@ -126,17 +129,23 @@ func TestMain(m *testing.M) {
 	alsPort := freePort()
 	upstreamFilterPort := freePort()
 	upstreamAuthPort := freePort()
+	upstreamAuthH2CPort := freePort()
+	upstreamAuthH2TLSPort := freePort()
 	upstreamAuthGroupPort := freePort()
 	upstreamFilterUpstreamPort := startPlainUpstream()
+	upstreamAuthH2CUpstreamPort := startH2CAuthEchoUpstream()
+	upstreamAuthH2TLSUpstream, cleanupAuthH2TLS := startTLSUpstream(upstreamAuthH2TLSServerName, false)
 	lbPolicyPort := freePort()
 	clusterExtensionPort := freePort()
 	clusterExtensionTLSPort := freePort()
+	clusterExtensionH2TLSAuthPort := freePort()
 	clusterExtensionTLSUpstream, cleanupTLS := startTLSUpstream(clusterExtensionTLSServerName, false)
 	clusterExtensionMTLSPort := freePort()
 	clusterExtensionMTLSUpstream, cleanupMTLS := startTLSUpstream(clusterExtensionMTLSServerName, true)
 	cleanupTLSUpstreams := func() {
 		cleanupTLS()
 		cleanupMTLS()
+		cleanupAuthH2TLS()
 	}
 	clusterSchedulerPort := freePort()
 	asyncCalloutPort := freePort()
@@ -179,10 +188,13 @@ func TestMain(m *testing.M) {
 	alsAddr = fmt.Sprintf("http://localhost:%d", alsPort)
 	upstreamFilterAddr = fmt.Sprintf("http://localhost:%d", upstreamFilterPort)
 	upstreamAuthAddr = fmt.Sprintf("http://localhost:%d", upstreamAuthPort)
+	upstreamAuthH2CAddr = fmt.Sprintf("http://localhost:%d", upstreamAuthH2CPort)
+	upstreamAuthH2TLSAddr = fmt.Sprintf("http://localhost:%d", upstreamAuthH2TLSPort)
 	upstreamAuthGroupAddr = fmt.Sprintf("http://localhost:%d", upstreamAuthGroupPort)
 	lbPolicyAddr = fmt.Sprintf("http://localhost:%d", lbPolicyPort)
 	clusterExtensionAddr = fmt.Sprintf("http://localhost:%d", clusterExtensionPort)
 	clusterExtensionTLSAddr = fmt.Sprintf("http://localhost:%d", clusterExtensionTLSPort)
+	clusterExtensionH2TLSAuthAddr = fmt.Sprintf("http://localhost:%d", clusterExtensionH2TLSAuthPort)
 	clusterExtensionMTLSAddr = fmt.Sprintf("http://localhost:%d", clusterExtensionMTLSPort)
 	clusterSchedulerAddr = fmt.Sprintf("http://localhost:%d", clusterSchedulerPort)
 	asyncCalloutAddr = fmt.Sprintf("http://localhost:%d", asyncCalloutPort)
@@ -256,13 +268,19 @@ func TestMain(m *testing.M) {
 		AlsSinkPort:                        alsSinkPort,
 		UpstreamFilterPort:                 upstreamFilterPort,
 		UpstreamAuthPort:                   upstreamAuthPort,
+		UpstreamAuthH2CPort:                upstreamAuthH2CPort,
+		UpstreamAuthH2TLSPort:              upstreamAuthH2TLSPort,
 		UpstreamAuthGroupPort:              upstreamAuthGroupPort,
 		UpstreamFilterUpstreamPort:         upstreamFilterUpstreamPort,
+		UpstreamAuthH2CUpstreamPort:        upstreamAuthH2CUpstreamPort,
+		UpstreamAuthH2TLSUpstreamPort:      upstreamAuthH2TLSUpstream.port,
+		UpstreamAuthH2TLSCAPath:            upstreamAuthH2TLSUpstream.caPath,
 		LbPolicyPort:                       lbPolicyPort,
 		LbPolicyUpstreamPort:               upstreamFilterUpstreamPort,
 		ClusterExtensionPort:               clusterExtensionPort,
 		ClusterExtensionUpstreamPort:       upstreamFilterUpstreamPort,
 		ClusterExtensionTLSPort:            clusterExtensionTLSPort,
+		ClusterExtensionH2TLSAuthPort:      clusterExtensionH2TLSAuthPort,
 		ClusterExtensionTLSUpstreamPort:    clusterExtensionTLSUpstream.port,
 		ClusterExtensionTLSCAPath:          clusterExtensionTLSUpstream.caPath,
 		ClusterExtensionMTLSPort:           clusterExtensionMTLSPort,
@@ -405,6 +423,33 @@ func startPlainUpstream() int {
 		w.Write([]byte("upstream ok"))
 	})
 	go http.Serve(l, mux)
+	return l.Addr().(*net.TCPAddr).Port
+}
+
+// startH2CAuthEchoUpstream starts an unencrypted HTTP/2 upstream that reflects
+// Authorization as x-received-authorization.
+func startH2CAuthEchoUpstream() int {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic("startH2CAuthEchoUpstream: " + err.Error())
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if auth := r.Header.Get("Authorization"); auth != "" {
+			w.Header().Set("x-received-authorization", auth)
+		}
+		w.Header().Set("x-upstream-proto", r.Proto)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("h2c upstream ok"))
+	})
+	protocols := new(http.Protocols)
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
+	srv := &http.Server{
+		Handler:   mux,
+		Protocols: protocols,
+	}
+	go srv.Serve(l) //nolint:errcheck
 	return l.Addr().(*net.TCPAddr).Port
 }
 
@@ -649,6 +694,7 @@ func (r *recorderUpstream) Reset() {
 const (
 	clusterExtensionTLSServerName  = "cluster-tls.local"
 	clusterExtensionMTLSServerName = "cluster-mtls.local"
+	upstreamAuthH2TLSServerName    = "upstream-auth-h2.local"
 )
 
 type tlsUpstream struct {
@@ -702,11 +748,16 @@ func startTLSUpstream(serverName string, requireClientCert bool) (tlsUpstream, f
 			if len(r.TLS.PeerCertificates) > 0 {
 				clientCN = r.TLS.PeerCertificates[0].Subject.CommonName
 			}
+			if auth := r.Header.Get("Authorization"); auth != "" {
+				w.Header().Set("x-received-authorization", auth)
+			}
+			w.Header().Set("x-upstream-proto", r.Proto)
 			fmt.Fprintf(w, "tls upstream ok sni=%s client=%s", r.TLS.ServerName, clientCN)
 		}),
 		TLSConfig: &tls.Config{
 			Certificates: []tls.Certificate{material.serverCert},
 			MinVersion:   tls.VersionTLS12,
+			NextProtos:   []string{"h2", "http/1.1"},
 		},
 	}
 	if requireClientCert {
@@ -842,13 +893,19 @@ type envoyPorts struct {
 	AlsSinkPort                        int
 	UpstreamFilterPort                 int
 	UpstreamAuthPort                   int
+	UpstreamAuthH2CPort                int
+	UpstreamAuthH2TLSPort              int
 	UpstreamAuthGroupPort              int
 	UpstreamFilterUpstreamPort         int
+	UpstreamAuthH2CUpstreamPort        int
+	UpstreamAuthH2TLSUpstreamPort      int
+	UpstreamAuthH2TLSCAPath            string
 	LbPolicyPort                       int
 	LbPolicyUpstreamPort               int
 	ClusterExtensionPort               int
 	ClusterExtensionUpstreamPort       int
 	ClusterExtensionTLSPort            int
+	ClusterExtensionH2TLSAuthPort      int
 	ClusterExtensionTLSUpstreamPort    int
 	ClusterExtensionTLSCAPath          string
 	ClusterExtensionMTLSPort           int

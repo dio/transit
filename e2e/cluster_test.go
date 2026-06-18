@@ -27,6 +27,18 @@ func TestClusterExtension_tlsHosts(t *testing.T) {
 	require.Equal(t, "tls upstream ok sni=cluster-tls.local client=", readBody(t, resp))
 }
 
+// TestClusterExtension_h2TLSWithUpstreamFilter verifies the dynamic cluster
+// path works with upstream HTTP/2 filters before the upstream codec.
+func TestClusterExtension_h2TLSWithUpstreamFilter(t *testing.T) {
+	resp, err := http.Get(clusterExtensionH2TLSAuthAddr + "/") //nolint:noctx
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, "HTTP/2.0", resp.Header.Get("x-upstream-proto"))
+	require.Equal(t, "Bearer test-token", resp.Header.Get("x-received-authorization"))
+}
+
 // TestClusterExtension_mTLSHosts verifies that Envoy can add a client
 // certificate on top of the same Cluster Extension host discovery path. The
 // local HTTPS upstream requires and verifies that client certificate before it
