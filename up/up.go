@@ -109,11 +109,28 @@ func WithResponse(r ResponseHandlerFunc) FilterOption {
 // WithStreamingBody attaches a request body handler in streaming mode: the
 // handler is called once per chunk as data arrives. For bodyless requests
 // (GET etc.) the handler is called once with Data: nil. Mutually exclusive
-// with [WithMutableBody].
+// with [WithBody] and [WithMutableBody].
 func WithStreamingBody(rb RequestBodyHandlerFunc) FilterOption {
 	return func(cf *configFactory) {
 		cf.requestBodyHandler = rb
 		cf.bufferBody = false
+		cf.mutableRequestBody = false
+	}
+}
+
+// WithBody enables buffered, read-only request body handling. If rb is non-nil,
+// it is called once with the full accumulated request body. Use this when a
+// filter needs the finalized body for inspection or signing but must not replace
+// the request body. Mutually exclusive with [WithStreamingBody] and
+// [WithMutableBody].
+//
+// Unlike [WithMutableBody], request content-length and transfer-encoding are
+// preserved because the request body is not replaced.
+func WithBody(rb RequestBodyHandlerFunc) FilterOption {
+	return func(cf *configFactory) {
+		cf.requestBodyHandler = rb
+		cf.bufferBody = true
+		cf.mutableRequestBody = false
 	}
 }
 
@@ -122,7 +139,7 @@ func WithStreamingBody(rb RequestBodyHandlerFunc) FilterOption {
 // response body only (useful when WithResponse needs the full body but the
 // request body is not of interest). Use Writer.SetRequestBody /
 // SetResponseBody to replace body content. Mutually exclusive with
-// [WithStreamingBody].
+// [WithStreamingBody] and [WithBody].
 //
 // # Upstream vs downstream body source
 //
@@ -140,6 +157,7 @@ func WithMutableBody(rb RequestBodyHandlerFunc) FilterOption {
 	return func(cf *configFactory) {
 		cf.requestBodyHandler = rb
 		cf.bufferBody = true
+		cf.mutableRequestBody = true
 	}
 }
 

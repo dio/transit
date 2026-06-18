@@ -247,9 +247,10 @@ func TestWriterHTTPCallout_fromRequestBodyReplacesBodyAndContinues(t *testing.T)
 		}),
 	)
 	f := &filter{
-		handle:     handle,
-		handler:    noopHandler,
-		bufferBody: true,
+		handle:             handle,
+		handler:            noopHandler,
+		bufferBody:         true,
+		mutableRequestBody: true,
 		requestBodyHandler: func(w *Writer, _ *BodyChunk) {
 			init, err := w.HTTPCallout(HTTPCalloutRequest{Cluster: "body-auth"}, func(_ HTTPCalloutResult, _ [][2]shared.UnsafeEnvoyBuffer, body []shared.UnsafeEnvoyBuffer) {
 				require.Len(t, body, 1)

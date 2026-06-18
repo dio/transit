@@ -31,6 +31,10 @@ func newFilterWithBody(handle shared.HttpFilterHandle, rb RequestBodyHandlerFunc
 }
 
 func newFilterWithBodyBuffered(handle shared.HttpFilterHandle, rb RequestBodyHandlerFunc) *filter {
+	return &filter{handle: handle, handler: noopHandler, requestBodyHandler: rb, bufferBody: true, mutableRequestBody: true}
+}
+
+func newFilterWithReadOnlyBody(handle shared.HttpFilterHandle, rb RequestBodyHandlerFunc) *filter {
 	return &filter{handle: handle, handler: noopHandler, requestBodyHandler: rb, bufferBody: true}
 }
 
@@ -121,6 +125,25 @@ func TestFilter_OnRequestHeaders_bufferedMode_stripsLengthHeaders(t *testing.T) 
 	require.NotEmpty(t, headers.Headers["content-type"]) // unrelated header untouched
 }
 
+func TestFilter_OnRequestHeaders_readOnlyBody_preservesLengthHeaders(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	handle := newMockHandle(ctrl)
+
+	headers := fake.NewFakeHeaderMap(map[string][]string{
+		"content-length":    {"42"},
+		"transfer-encoding": {"chunked"},
+		"content-type":      {"text/plain"},
+	})
+	f := newFilterWithReadOnlyBody(handle, func(_ *Writer, _ *BodyChunk) {})
+
+	status := f.OnRequestHeaders(headers, false)
+
+	require.Equal(t, shared.HeadersStatusStop, status)
+	require.Equal(t, "42", headers.Headers["content-length"][0])
+	require.Equal(t, "chunked", headers.Headers["transfer-encoding"][0])
+	require.Equal(t, "text/plain", headers.Headers["content-type"][0])
+}
+
 // Buffered mode with endOfStream=true still issues the synthetic body call and
 // must NOT strip headers (there is no body to replace).
 func TestFilter_OnRequestHeaders_bufferedMode_endOfStream_syntheticCall(t *testing.T) {
@@ -195,7 +218,9 @@ func TestFilter_OnRequestBody_buffered_endOfStream_callsHandlerWithBufferedData(
 	ctrl := gomock.NewController(t)
 	handle := newMockHandle(ctrl)
 	buf := fake.NewFakeBodyBuffer([]byte("full body"))
+	reqHeaders := fake.NewFakeHeaderMap(nil)
 	handle.EXPECT().BufferedRequestBody().Return(buf).AnyTimes()
+	handle.EXPECT().RequestHeaders().Return(reqHeaders).AnyTimes()
 
 	var got *BodyChunk
 	f := newFilterWithBodyBuffered(handle, func(_ *Writer, c *BodyChunk) { got = c })
@@ -205,6 +230,7 @@ func TestFilter_OnRequestBody_buffered_endOfStream_callsHandlerWithBufferedData(
 	require.Equal(t, shared.BodyStatusContinue, status)
 	require.Equal(t, []byte("full body"), got.Data)
 	require.True(t, got.EndStream)
+	require.Equal(t, "9", reqHeaders.Headers["content-length"][0])
 }
 
 // Buffered mode: upstream filter chains don't pre-fill BufferedRequestBody on
@@ -214,7 +240,9 @@ func TestFilter_OnRequestBody_buffered_upstreamChain_usesBodyWhenBufferEmpty(t *
 	ctrl := gomock.NewController(t)
 	handle := newMockHandle(ctrl)
 	emptyBuf := fake.NewFakeBodyBuffer(nil)
+	reqHeaders := fake.NewFakeHeaderMap(nil)
 	handle.EXPECT().BufferedRequestBody().Return(emptyBuf).AnyTimes()
+	handle.EXPECT().RequestHeaders().Return(reqHeaders).AnyTimes()
 
 	var got *BodyChunk
 	f := newFilterWithBodyBuffered(handle, func(_ *Writer, c *BodyChunk) { got = c })
@@ -224,6 +252,7 @@ func TestFilter_OnRequestBody_buffered_upstreamChain_usesBodyWhenBufferEmpty(t *
 	require.Equal(t, shared.BodyStatusContinue, status)
 	require.Equal(t, []byte("upstream body"), got.Data)
 	require.True(t, got.EndStream)
+	require.Equal(t, "13", reqHeaders.Headers["content-length"][0])
 }
 
 // Buffered mode with SetRequestBody: the buffer must be drained and refilled
@@ -245,6 +274,52 @@ func TestFilter_OnRequestBody_buffered_replacement_updatesBufferAndHeader(t *tes
 	f.OnRequestBody(fake.NewFakeBodyBuffer(nil), true)
 
 	require.Equal(t, replacement, buf.Body)
+	require.Equal(t, "8", reqHeaders.Headers["content-length"][0])
+}
+
+func TestFilter_OnRequestBody_buffered_replacementContentLengthWinsAfterQueuedHeaderMutation(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	handle := newMockHandle(ctrl)
+
+	buf := fake.NewFakeBodyBuffer([]byte("original"))
+	reqHeaders := fake.NewFakeHeaderMap(map[string][]string{
+		"content-length": {"999"},
+	})
+	handle.EXPECT().BufferedRequestBody().Return(buf).AnyTimes()
+	handle.EXPECT().RequestHeaders().Return(reqHeaders).AnyTimes()
+
+	replacement := []byte("rewritten-body")
+	f := newFilterWithBodyBuffered(handle, func(w *Writer, _ *BodyChunk) {
+		w.RemoveRequestHeader("content-length")
+		w.SetRequestBody(replacement)
+	})
+
+	status := f.OnRequestBody(fake.NewFakeBodyBuffer(nil), true)
+
+	require.Equal(t, shared.BodyStatusContinue, status)
+	require.Equal(t, replacement, buf.Body)
+	require.Equal(t, "14", reqHeaders.Headers["content-length"][0])
+}
+
+func TestFilter_OnRequestBody_readOnlyBody_ignoresSetRequestBodyAndPreservesLength(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	handle := newMockHandle(ctrl)
+
+	buf := fake.NewFakeBodyBuffer([]byte("original"))
+	reqHeaders := fake.NewFakeHeaderMap(map[string][]string{
+		"content-length": {"8"},
+	})
+	handle.EXPECT().BufferedRequestBody().Return(buf).AnyTimes()
+	handle.EXPECT().RequestHeaders().Return(reqHeaders).AnyTimes()
+
+	f := newFilterWithReadOnlyBody(handle, func(w *Writer, _ *BodyChunk) {
+		w.SetRequestBody([]byte("rewritten-body"))
+	})
+
+	status := f.OnRequestBody(fake.NewFakeBodyBuffer(nil), true)
+
+	require.Equal(t, shared.BodyStatusContinue, status)
+	require.Equal(t, []byte("original"), buf.Body)
 	require.Equal(t, "8", reqHeaders.Headers["content-length"][0])
 }
 

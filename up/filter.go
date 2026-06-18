@@ -19,6 +19,7 @@ type configFactory struct {
 	onStreamComplete   OnStreamCompleteFunc
 	onStreamFinalized  OnStreamFinalizedFunc
 	bufferBody         bool
+	mutableRequestBody bool
 	group              *Group
 	logAttrs           []slog.Attr
 	logMetadataNS      string
@@ -75,6 +76,7 @@ func (f *configFactory) Create(h shared.HttpFilterConfigHandle, raw []byte) (sha
 		onStreamComplete:   f.onStreamComplete,
 		onStreamFinalized:  f.onStreamFinalized,
 		bufferBody:         f.bufferBody,
+		mutableRequestBody: f.mutableRequestBody,
 		stop:               stop,
 		logAttrs:           f.logAttrs,
 		logMetadataNS:      f.logMetadataNS,
@@ -91,6 +93,7 @@ type filterFactory struct {
 	onStreamComplete   OnStreamCompleteFunc
 	onStreamFinalized  OnStreamFinalizedFunc
 	bufferBody         bool
+	mutableRequestBody bool
 	stop               func()
 	logAttrs           []slog.Attr
 	logMetadataNS      string
@@ -106,6 +109,7 @@ func (f *filterFactory) Create(handle shared.HttpFilterHandle) shared.HttpFilter
 		onStreamComplete:   f.onStreamComplete,
 		onStreamFinalized:  f.onStreamFinalized,
 		bufferBody:         f.bufferBody,
+		mutableRequestBody: f.mutableRequestBody,
 		logAttrs:           f.logAttrs,
 		logMetadataNS:      f.logMetadataNS,
 	}
@@ -160,6 +164,7 @@ type filter struct {
 	onStreamComplete   OnStreamCompleteFunc
 	onStreamFinalized  OnStreamFinalizedFunc
 	bufferBody         bool
+	mutableRequestBody bool
 	logAttrs           []slog.Attr
 	logMetadataNS      string
 	reqID              string
@@ -219,7 +224,7 @@ type filter struct {
 	localReply      *localResponse // set by SendLocalResponse; cleared by flush after sending
 
 	// stripFramingOnResume is set by OnRequestHeaders when a body is expected and
-	// buffered-body replacement is active. flush removes content-length and
+	// request body replacement is active. flush removes content-length and
 	// transfer-encoding after applying all queued header mutations, so that a
 	// handler-queued framing value cannot reach upstream before OnRequestBody
 	// writes the correct content-length after body replacement.
@@ -348,7 +353,7 @@ func (f *filter) flush(continueReq bool) {
 	// The sync body path clears these flags in OnRequestBody before calling flush,
 	// so this branch only fires on the async body path.
 	if f.hasRequestBodyReplacement {
-		buf := f.handle.BufferedRequestBody()
+		buf := requestBodyReplacementBuffer(f.handle, nil)
 		if buf != nil {
 			buf.Drain(buf.GetSize())
 			buf.Append(f.requestBodyReplacement)
@@ -385,15 +390,16 @@ func (f *filter) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool) sh
 	f.handler(w, newRequestWithContext(headers, f.name, &f.context))
 	f.registerFinalized()
 
-	// Mark that framing headers must be stripped. The actual removal happens in
-	// flush after all queued header mutations are applied, so a handler-queued
-	// content-length or transfer-encoding cannot survive past the strip point.
+	// Mutable request body mode strips framing headers. The actual removal
+	// happens in flush after all queued header mutations are applied, so a
+	// handler-queued content-length or transfer-encoding cannot survive past the
+	// strip point. Read-only body mode preserves request framing.
 	// Not needed when endOfStream is true (no body replacement will follow).
 	//
 	// Do NOT use HeadersStatusStopAllAndBuffer: the SDK has no async resume path
 	// for that status and it freezes the filter chain permanently.
 	stopForBufferedBody := !endOfStream && f.bufferBody && f.requestBodyHandler != nil
-	if stopForBufferedBody {
+	if stopForBufferedBody && f.mutableRequestBody {
 		f.stripFramingOnResume = true
 	}
 
@@ -505,21 +511,41 @@ func (f *filter) OnRequestBody(body shared.BodyBuffer, endOfStream bool) shared.
 	}
 	f.flushCompletedCallout(w.calloutStarted)
 
-	// Sync path: apply body replacement inline before flush.
-	// Clear flags first so flush's async-body-replacement branch does not double-apply.
-	if f.bufferBody && f.hasRequestBodyReplacement {
-		buf := f.handle.BufferedRequestBody()
-		buf.Drain(buf.GetSize())
-		buf.Append(f.requestBodyReplacement)
-		f.handle.RequestHeaders().Set("content-length", strconv.Itoa(len(f.requestBodyReplacement)))
+	// Sync path: flush queued header/state mutations before writing replacement
+	// framing. Body handlers commonly remove stale content-length before
+	// replacing the body; the final replacement content-length must win.
+	if f.bufferBody && f.mutableRequestBody && f.hasRequestBodyReplacement {
+		replacement := f.requestBodyReplacement
 		f.hasRequestBodyReplacement = false
 		f.requestBodyReplacement = nil
+		f.flush(false)
+		if f.stopped {
+			return shared.BodyStatusStopAndBuffer
+		}
+		buf := requestBodyReplacementBuffer(f.handle, body)
+		buf.Drain(buf.GetSize())
+		buf.Append(replacement)
+		f.handle.RequestHeaders().Set("content-length", strconv.Itoa(len(replacement)))
+		return shared.BodyStatusContinue
 	}
 	f.flush(false) // apply header mutations and other queued state
 	if f.stopped {
 		return shared.BodyStatusStopAndBuffer
 	}
+	if f.bufferBody && f.mutableRequestBody {
+		f.handle.RequestHeaders().Set("content-length", strconv.Itoa(len(data)))
+	}
 	return shared.BodyStatusContinue
+}
+
+func requestBodyReplacementBuffer(handle shared.HttpFilterHandle, current shared.BodyBuffer) shared.BodyBuffer {
+	if buf := handle.BufferedRequestBody(); buf != nil && buf.GetSize() > 0 {
+		return buf
+	}
+	if current != nil {
+		return current
+	}
+	return handle.BufferedRequestBody()
 }
 
 // OnHttpCalloutDone implements shared.HttpCalloutCallback. Envoy invokes it

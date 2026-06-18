@@ -405,8 +405,9 @@ func TestFilter_OnRequestHeaders_stripsFramingOnSyncContinue(t *testing.T) {
 		}),
 	)
 	f := &filter{
-		handle:     handle,
-		bufferBody: true,
+		handle:             handle,
+		bufferBody:         true,
+		mutableRequestBody: true,
 		handler: func(w *Writer, _ *Request) {
 			// Handler queues a stale framing value; strip must undo it.
 			w.SetRequestHeader("content-length", "999")
@@ -433,6 +434,7 @@ func TestFilter_flush_stripsFramingOnAsyncResume(t *testing.T) {
 	f := &filter{
 		handle:               handle,
 		bufferBody:           true,
+		mutableRequestBody:   true,
 		requestBodyHandler:   func(_ *Writer, _ *BodyChunk) {},
 		stripFramingOnResume: true,
 		// Pre-queue a stale content-length to verify strip runs after mutations.
