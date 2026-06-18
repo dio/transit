@@ -92,6 +92,7 @@ var (
 	streamFinalizedLocalAddr      string
 	streamFinalizedFallbackAddr   string
 	streamFinalizedLoopbackAddr   string
+	openAIClusterProvidedAddr     string
 	adminAddr                     string
 )
 
@@ -171,6 +172,8 @@ func TestMain(m *testing.M) {
 	streamFinalizedLocalPort := freePort()
 	streamFinalizedFallbackPort := freePort()
 	streamFinalizedLoopbackPort := freePort()
+	openAIClusterProvidedPort := freePort()
+	openAIClusterProvidedEnabled := os.Getenv("RUN_TRANSIT_OPENAI_H2_E2E") == "1"
 	// deadUpstreamPort: nothing listens here; Envoy gets ECONNREFUSED, setting UF flag.
 	deadUpstreamPort := freePort()
 	adminPort := freePort()
@@ -213,6 +216,7 @@ func TestMain(m *testing.M) {
 	streamFinalizedLocalAddr = fmt.Sprintf("http://localhost:%d", streamFinalizedLocalPort)
 	streamFinalizedFallbackAddr = fmt.Sprintf("http://localhost:%d", streamFinalizedFallbackPort)
 	streamFinalizedLoopbackAddr = fmt.Sprintf("http://127.0.0.1:%d", streamFinalizedLoopbackPort)
+	openAIClusterProvidedAddr = fmt.Sprintf("http://localhost:%d", openAIClusterProvidedPort)
 	adminAddr = fmt.Sprintf("http://localhost:%d", adminPort)
 
 	otelSink = otelsink.New()
@@ -312,6 +316,8 @@ func TestMain(m *testing.M) {
 		StreamFinalizedLocalPort:           streamFinalizedLocalPort,
 		StreamFinalizedFallbackPort:        streamFinalizedFallbackPort,
 		StreamFinalizedLoopbackPort:        streamFinalizedLoopbackPort,
+		OpenAIClusterProvidedPort:          openAIClusterProvidedPort,
+		OpenAIClusterProvidedEnabled:       openAIClusterProvidedEnabled,
 		DeadUpstreamPort:                   deadUpstreamPort,
 		AdminPort:                          adminPort,
 	})
@@ -937,6 +943,8 @@ type envoyPorts struct {
 	StreamFinalizedLocalPort           int
 	StreamFinalizedFallbackPort        int
 	StreamFinalizedLoopbackPort        int
+	OpenAIClusterProvidedPort          int
+	OpenAIClusterProvidedEnabled       bool
 	DeadUpstreamPort                   int
 	AdminPort                          int
 }

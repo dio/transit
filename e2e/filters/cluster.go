@@ -1,9 +1,12 @@
 package filters
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"sync/atomic"
+	"time"
 
 	"github.com/dio/transit/up"
 )
@@ -19,8 +22,9 @@ type clusterStaticHostsFactory struct{}
 func (f *clusterStaticHostsFactory) Create(config []byte) (up.ClusterConfigFactory, error) {
 	var parsed struct {
 		Hosts []struct {
-			Address string `json:"address"`
-			Weight  uint32 `json:"weight,omitempty"`
+			Address  string `json:"address"`
+			Hostname string `json:"hostname,omitempty"`
+			Weight   uint32 `json:"weight,omitempty"`
 		} `json:"hosts"`
 	}
 	if err := json.Unmarshal(config, &parsed); err != nil {
@@ -35,9 +39,30 @@ func (f *clusterStaticHostsFactory) Create(config []byte) (up.ClusterConfigFacto
 		if host.Address == "" {
 			return nil, fmt.Errorf("cluster e2e: host %d address is required", i)
 		}
-		hosts = append(hosts, up.HostSpec{Address: host.Address, Weight: host.Weight})
+		hosts = append(hosts, up.HostSpec{
+			Address:  resolveClusterHostAddr(host.Address),
+			Hostname: host.Hostname,
+			Weight:   host.Weight,
+		})
 	}
 	return &clusterStaticHostsConfigFactory{hosts: hosts}, nil
+}
+
+func resolveClusterHostAddr(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	if net.ParseIP(host) != nil {
+		return addr
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	ips, err := net.DefaultResolver.LookupHost(ctx, host)
+	if err != nil || len(ips) == 0 {
+		return addr
+	}
+	return net.JoinHostPort(ips[0], port)
 }
 
 type clusterStaticHostsConfigFactory struct {
