@@ -677,6 +677,92 @@ func (b *allSettledBatch) finish(i int, resp HTTPCalloutAllSettledResponse) {
 	b.f.calloutState.CompareAndSwap(calloutStateActive, calloutStateDone)
 }
 
+// HTTPCalloutSequence initiates outbound Envoy HTTP callouts one at a time from
+// a request callback and pauses the request until done runs. next receives the
+// previous response and decides whether to issue another callout. done runs from
+// the callback path, so SendLocalResponse is reliable there.
+//
+// Panics if called after Go or after another HTTPCallout/HTTPCalloutAllSettled.
+func (w *Writer) HTTPCalloutSequence(next HTTPCalloutSequenceNextFunc, done HTTPCalloutSequenceDoneFunc) error {
+	if w.calloutStarted || w.goStarted {
+		panic("up: HTTPCalloutSequence cannot be started after Go or another HTTPCallout")
+	}
+	if next == nil {
+		panic("up: HTTPCalloutSequence called with nil next callback")
+	}
+	if done == nil {
+		panic("up: HTTPCalloutSequence called with nil done callback")
+	}
+	w.calloutStarted = true
+	w.f.calloutState.Store(calloutStateActive)
+
+	s := &calloutSequence{f: w.f, next: next, done: done}
+	s.step(nil)
+	return nil
+}
+
+type calloutSequence struct {
+	f *filter
+
+	next      HTTPCalloutSequenceNextFunc
+	done      HTTPCalloutSequenceDoneFunc
+	responses []HTTPCalloutAllSettledResponse
+	finished  bool
+}
+
+func (s *calloutSequence) step(previous *HTTPCalloutAllSettledResponse) {
+	if s.finished || s.f.streamDone.Load() {
+		return
+	}
+	req, ok := s.next(len(s.responses), previous)
+	if !ok {
+		s.finish()
+		return
+	}
+	init, _ := s.f.handle.HttpCallout(
+		req.Cluster,
+		req.Headers,
+		req.Body,
+		req.TimeoutMillis,
+		doCallbackFunc(func(_ uint64, r HTTPCalloutResult, headers [][2]shared.UnsafeEnvoyBuffer, body []shared.UnsafeEnvoyBuffer) {
+			resp := HTTPCalloutAllSettledResponse{
+				Init:    HTTPCalloutInitSuccess,
+				Result:  r,
+				Err:     errCalloutResult(r),
+				Headers: copyUnsafeEnvoyHeaderBuffers(headers),
+				Body:    copyUnsafeEnvoyBuffers(body),
+			}
+			s.responses = append(s.responses, resp)
+			s.step(&s.responses[len(s.responses)-1])
+		}),
+	)
+	if calloutInit := HTTPCalloutInitResult(init); calloutInit != HTTPCalloutInitSuccess {
+		resp := HTTPCalloutAllSettledResponse{
+			Init: calloutInit,
+			Err:  errCalloutInitResult(calloutInit),
+		}
+		s.responses = append(s.responses, resp)
+		s.step(&s.responses[len(s.responses)-1])
+	}
+}
+
+func (s *calloutSequence) finish() {
+	if s.finished || s.f.streamDone.Load() {
+		return
+	}
+	s.finished = true
+	responses := append([]HTTPCalloutAllSettledResponse(nil), s.responses...)
+	s.done(responses)
+	if s.f.streamDone.Load() {
+		return
+	}
+	if s.f.calloutState.CompareAndSwap(calloutStatePaused, calloutStateFlushed) {
+		s.f.flush(true)
+		return
+	}
+	s.f.calloutState.CompareAndSwap(calloutStateActive, calloutStateDone)
+}
+
 // Do performs an Envoy HTTP callout from inside a Go goroutine and blocks
 // until the callout completes or ctx is cancelled.
 //

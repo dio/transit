@@ -575,6 +575,84 @@ func TestWriterHTTPCalloutAllSettled_emptyBatchRunsInline(t *testing.T) {
 	require.Equal(t, "ok", handle.RequestHeaders().GetOne("x-empty-batch").ToString())
 }
 
+func TestWriterHTTPCalloutSequence_synchronousCallbacksDoNotStop(t *testing.T) {
+	handle := testutil.NewFilterHandle(
+		testutil.WithHTTPCalloutFunc(func(cluster string, _ [][2]string, _ []byte, _ uint64, cb shared.HttpCalloutCallback) (shared.HttpCalloutInitResult, uint64) {
+			cb.OnHttpCalloutDone(1, shared.HttpCalloutSuccess, nil, []shared.UnsafeEnvoyBuffer{unsafeBuffer(cluster)})
+			return shared.HttpCalloutInitSuccess, 1
+		}),
+	)
+	f := &filter{
+		handle: handle,
+		handler: func(w *Writer, _ *Request) {
+			err := w.HTTPCalloutSequence(func(attempt int, previous *HTTPCalloutAllSettledResponse) (HTTPCalloutRequest, bool) {
+				if attempt == 2 {
+					return HTTPCalloutRequest{}, false
+				}
+				if attempt == 0 {
+					require.Nil(t, previous)
+				} else {
+					require.NotNil(t, previous)
+				}
+				return HTTPCalloutRequest{Cluster: fmt.Sprintf("attempt-%d", attempt)}, true
+			}, func(responses []HTTPCalloutAllSettledResponse) {
+				require.Len(t, responses, 2)
+				w.SetRequestHeader("x-sequence", responses[0].Body[0].ToString()+","+responses[1].Body[0].ToString())
+			})
+			require.NoError(t, err)
+		},
+	}
+
+	status := f.OnRequestHeaders(handle.RequestHeaders(), true)
+	require.Equal(t, shared.HeadersStatusContinue, status)
+	require.Equal(t, 0, handle.ContinuedReq)
+	require.Equal(t, "attempt-0,attempt-1", handle.RequestHeaders().GetOne("x-sequence").ToString())
+}
+
+func TestWriterHTTPCalloutSequence_asyncLocalResponseResumesOnce(t *testing.T) {
+	var callbacks []shared.HttpCalloutCallback
+	handle := testutil.NewFilterHandle(
+		testutil.WithHTTPCalloutFunc(func(_ string, _ [][2]string, _ []byte, _ uint64, cb shared.HttpCalloutCallback) (shared.HttpCalloutInitResult, uint64) {
+			callbacks = append(callbacks, cb)
+			return shared.HttpCalloutInitSuccess, uint64(len(callbacks))
+		}),
+	)
+	f := &filter{
+		handle: handle,
+		handler: func(w *Writer, _ *Request) {
+			err := w.HTTPCalloutSequence(func(attempt int, previous *HTTPCalloutAllSettledResponse) (HTTPCalloutRequest, bool) {
+				if attempt == 2 {
+					return HTTPCalloutRequest{}, false
+				}
+				if attempt == 1 {
+					require.NotNil(t, previous)
+					require.Equal(t, "try-0", previous.Body[0].ToString())
+				}
+				return HTTPCalloutRequest{Cluster: fmt.Sprintf("try-%d", attempt)}, true
+			}, func(responses []HTTPCalloutAllSettledResponse) {
+				require.Len(t, responses, 2)
+				w.SendLocalResponse(200, []byte(responses[0].Body[0].ToString()+"|"+responses[1].Body[0].ToString()))
+			})
+			require.NoError(t, err)
+		},
+	}
+
+	status := f.OnRequestHeaders(handle.RequestHeaders(), true)
+	require.Equal(t, shared.HeadersStatusStop, status)
+	require.Len(t, callbacks, 1)
+
+	callbacks[0].OnHttpCalloutDone(1, shared.HttpCalloutSuccess, nil, []shared.UnsafeEnvoyBuffer{unsafeBuffer("try-0")})
+	require.Len(t, callbacks, 2)
+	require.Empty(t, handle.LocalResponses)
+	require.Equal(t, 0, handle.ContinuedReq)
+
+	callbacks[1].OnHttpCalloutDone(2, shared.HttpCalloutSuccess, nil, []shared.UnsafeEnvoyBuffer{unsafeBuffer("try-1")})
+	require.Equal(t, 0, handle.ContinuedReq)
+	require.Len(t, handle.LocalResponses, 1)
+	require.Equal(t, uint32(200), handle.LocalResponses[0].Status)
+	require.Equal(t, "try-0|try-1", string(handle.LocalResponses[0].Body))
+}
+
 func TestWriterHTTPCalloutAllSettled_panicsAfterGoAndHTTPCallout(t *testing.T) {
 	w := &Writer{f: &filter{handle: testutil.NewFilterHandle()}, goStarted: true}
 	require.PanicsWithValue(t, "up: HTTPCalloutAllSettled cannot be started after Go or another HTTPCallout", func() {
@@ -584,6 +662,23 @@ func TestWriterHTTPCalloutAllSettled_panicsAfterGoAndHTTPCallout(t *testing.T) {
 	w = &Writer{f: &filter{handle: testutil.NewFilterHandle()}, calloutStarted: true}
 	require.PanicsWithValue(t, "up: HTTPCalloutAllSettled cannot be started after Go or another HTTPCallout", func() {
 		_ = w.HTTPCalloutAllSettled([]HTTPCalloutRequest{{Cluster: "c"}}, func([]HTTPCalloutAllSettledResponse) {})
+	})
+}
+
+func TestWriterHTTPCalloutSequence_panicsAfterGoAndHTTPCallout(t *testing.T) {
+	next := func(int, *HTTPCalloutAllSettledResponse) (HTTPCalloutRequest, bool) {
+		return HTTPCalloutRequest{}, false
+	}
+	done := func([]HTTPCalloutAllSettledResponse) {}
+
+	w := &Writer{f: &filter{handle: testutil.NewFilterHandle()}, goStarted: true}
+	require.PanicsWithValue(t, "up: HTTPCalloutSequence cannot be started after Go or another HTTPCallout", func() {
+		_ = w.HTTPCalloutSequence(next, done)
+	})
+
+	w = &Writer{f: &filter{handle: testutil.NewFilterHandle()}, calloutStarted: true}
+	require.PanicsWithValue(t, "up: HTTPCalloutSequence cannot be started after Go or another HTTPCallout", func() {
+		_ = w.HTTPCalloutSequence(next, done)
 	})
 }
 

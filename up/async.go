@@ -1,13 +1,14 @@
 // Package up provides the user-facing API for transit HTTP filter handlers.
 // This file defines all types related to asynchronous HTTP callouts and the
-// two async modes a handler can use:
+// callback callout and goroutine callout modes:
 //
-//  1. HTTPCallout / HTTPCalloutAllSettled — callback form. The filter stops the
-//     request, Envoy sends one or more outbound HTTP requests to named clusters,
-//     and the user-supplied callback runs when the response or response group
-//     arrives. The callback may queue mutations (SetRequestHeader, etc.) or send
-//     a local response. Transit then applies those mutations and resumes (or
-//     terminates) the stream. This is the only path that supports
+//  1. HTTPCallout / HTTPCalloutAllSettled / HTTPCalloutSequence — callback form.
+//     The filter stops the request, Envoy sends outbound HTTP requests to named
+//     clusters, and the user-supplied callback runs when the response, response
+//     group, or sequence arrives. The callback may queue mutations
+//     (SetRequestHeader, etc.) or send a local response. Transit then applies
+//     those mutations and resumes (or terminates) the stream. This is the only
+//     path that supports
 //     SendLocalResponse reliably, because the callback runs from a filter
 //     callback, not from a scheduler, and Envoy only honours SendLocalResponse
 //     from filter callbacks.
@@ -137,6 +138,17 @@ type HTTPCalloutFunc func(result HTTPCalloutResult, headers [][2]shared.UnsafeEn
 // callouts fail initialization. It may call Writer mutation methods, including
 // SendLocalResponse.
 type HTTPCalloutAllSettledFunc func(responses []HTTPCalloutAllSettledResponse)
+
+// HTTPCalloutSequenceNextFunc decides the next request in a sequential callout
+// chain. attempt is zero-based. previous is nil for attempt 0, then points to
+// the response from the immediately preceding attempt. Return ok=false to stop
+// the sequence and run HTTPCalloutSequenceDoneFunc with all collected responses.
+type HTTPCalloutSequenceNextFunc func(attempt int, previous *HTTPCalloutAllSettledResponse) (req HTTPCalloutRequest, ok bool)
+
+// HTTPCalloutSequenceDoneFunc is invoked once when HTTPCalloutSequenceNextFunc
+// stops the sequence. It runs from the callout callback path and may call
+// Writer mutation methods, including SendLocalResponse.
+type HTTPCalloutSequenceDoneFunc func(responses []HTTPCalloutAllSettledResponse)
 
 // requestHeaderMutation is a deferred request header operation.
 // del takes priority; add uses HeaderMap.Add (multi-value); default uses Set.

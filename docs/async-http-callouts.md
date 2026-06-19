@@ -3,8 +3,9 @@
 Transit HTTP filters can pause request processing, start Envoy HTTP callouts,
 and resume the request after asynchronous work finishes.
 
-Use callback-style `w.HTTPCallout` when the filter might send a local response.
-The continuation runs from Envoy's callout callback, so `SendLocalResponse` is
+Use callback-style `w.HTTPCallout`, `w.HTTPCalloutAllSettled`, or
+`w.HTTPCalloutSequence` when the filter might send a local response. The
+continuation runs from Envoy's callout callback, so `SendLocalResponse` is
 honored. Use `w.Go` plus `w.Do` only for work that ultimately forwards the
 request; local responses from the scheduler path are not reliable in Envoy.
 
@@ -40,6 +41,50 @@ sent a local response.
 `w.Do` must be called inside `w.Go`. It schedules `HttpCallout` back onto the
 Envoy stream thread, waits for the callout callback or context cancellation, and
 then lets the goroutine queue request mutations before forwarding.
+
+## Sequential Attempts
+
+Use `w.HTTPCalloutSequence` when attempt N depends on attempt N-1 and the final
+decision may be a local response. This is the retry/fallback shape: build one
+request, inspect the response, then decide whether to stop or issue the next
+request.
+
+```go
+func Handler(w *up.Writer, r *up.Request) {
+	err := w.HTTPCalloutSequence(func(attempt int, previous *up.HTTPCalloutAllSettledResponse) (up.HTTPCalloutRequest, bool) {
+		if attempt == 2 {
+			return up.HTTPCalloutRequest{}, false
+		}
+		if previous != nil && previous.Result == up.HTTPCalloutSuccess {
+			return up.HTTPCalloutRequest{}, false
+		}
+		return up.HTTPCalloutRequest{
+			Cluster: "provider-egress",
+			Headers: [][2]string{
+				{":method", "POST"},
+				{":path", "/v1/chat/completions"},
+				{"host", "provider.local"},
+			},
+			Body: attemptBody(attempt),
+		}, true
+	}, func(responses []up.HTTPCalloutAllSettledResponse) {
+		last := responses[len(responses)-1]
+		if last.Result != up.HTTPCalloutSuccess {
+			w.SendLocalResponse(503, []byte("all attempts failed"))
+			return
+		}
+		w.SendLocalResponse(200, []byte(last.Body[0].ToString()))
+	})
+	if err != nil {
+		w.SendLocalResponse(503, []byte(err.Error()))
+	}
+}
+```
+
+`next` receives `previous=nil` for attempt 0. Every accepted callout response is
+copied before `next` sees it, so it is safe to inspect previous headers and body
+while choosing the next request. Init failures are also recorded as response
+slots; `next` decides whether to retry after them or stop.
 
 ## Parallel Fan-Out
 
@@ -81,8 +126,9 @@ client needs a merged response.
 
 ### HTTPCallout path
 
-`w.HTTPCallout` and `w.HTTPCalloutAllSettled` are mutex-free on the stream mutation
-path. They can be initiated from request headers or request body callbacks.
+`w.HTTPCallout`, `w.HTTPCalloutAllSettled`, and `w.HTTPCalloutSequence` are
+mutex-free on the stream mutation path. They can be initiated from request
+headers or request body callbacks.
 `OnHttpCalloutDone` fires the user callback and calls `flush(true)` when the
 initiating callback has already returned Stop.
 
@@ -107,6 +153,11 @@ callback runs, because earlier Envoy-owned response buffers may be invalid by
 the time every callout has settled. The API intentionally reports every slot and
 leaves aggregate policy to the caller: partial success, all-failed error, or
 empty successful result are application decisions.
+
+Use `w.HTTPCalloutSequence` when each Envoy-managed outbound request must wait
+for the previous response before deciding what to send next. It uses the same
+`Active→Paused/Done→Flushed` handoff as the other callback callout APIs and
+keeps the final callback on the reliable local-response path.
 
 The callback naming intentionally follows the Promise vocabulary:
 
