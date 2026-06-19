@@ -748,8 +748,6 @@ func startTLSUpstream(serverName string, requireClientCert bool) (tlsUpstream, f
 				http.Error(w, "request did not use TLS", http.StatusInternalServerError)
 				return
 			}
-			w.Header().Set("content-type", "text/plain")
-			w.WriteHeader(http.StatusOK)
 			clientCN := ""
 			if len(r.TLS.PeerCertificates) > 0 {
 				clientCN = r.TLS.PeerCertificates[0].Subject.CommonName
@@ -757,7 +755,11 @@ func startTLSUpstream(serverName string, requireClientCert bool) (tlsUpstream, f
 			if auth := r.Header.Get("Authorization"); auth != "" {
 				w.Header().Set("x-received-authorization", auth)
 			}
+			w.Header().Set("content-type", "text/plain")
+			w.Header().Set("x-upstream-scheme", r.Header.Get("x-forwarded-proto"))
+			w.Header().Set("x-upstream-url-scheme", r.URL.Scheme)
 			w.Header().Set("x-upstream-proto", r.Proto)
+			w.WriteHeader(http.StatusOK)
 			fmt.Fprintf(w, "tls upstream ok sni=%s client=%s", r.TLS.ServerName, clientCN)
 		}),
 		TLSConfig: &tls.Config{

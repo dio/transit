@@ -114,6 +114,8 @@ func (s *UpstreamFilterSuite) TestGet_authHeaderInjectedH2TLS() {
 	resp.Body.Close()
 
 	s.Require().Equal(http.StatusOK, resp.StatusCode)
+	s.Require().Equal("https", resp.Header.Get("x-upstream-scheme"),
+		"upstream should receive an HTTPS scheme when Envoy uses TLS upstream transport")
 	s.Require().Equal("HTTP/2.0", resp.Header.Get("x-upstream-proto"),
 		"upstream should receive the request over HTTP/2")
 	s.Require().Equal("Bearer test-token", resp.Header.Get("x-received-authorization"),

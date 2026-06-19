@@ -35,6 +35,7 @@ func TestClusterExtension_h2TLSWithUpstreamFilter(t *testing.T) {
 	defer resp.Body.Close()
 
 	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, "https", resp.Header.Get("x-upstream-scheme"))
 	require.Equal(t, "HTTP/2.0", resp.Header.Get("x-upstream-proto"))
 	require.Equal(t, "Bearer test-token", resp.Header.Get("x-received-authorization"))
 }
