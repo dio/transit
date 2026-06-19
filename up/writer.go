@@ -126,6 +126,58 @@ func (w *Writer) Log(level LogLevel, format string, args ...any) {
 	w.f.handle.Log(shared.LogLevel(level), format, args...)
 }
 
+// RequestHeaders returns all current request headers as copied Go strings.
+// Header mutations queued earlier in the same callback are reflected in the
+// returned view, even though they are applied to Envoy only when the callback
+// flushes.
+func (w *Writer) RequestHeaders() [][2]string {
+	if w.f == nil || w.f.handle == nil {
+		return nil
+	}
+	raw := w.f.handle.RequestHeaders().GetAll()
+	out := make([][2]string, len(raw))
+	for i, h := range raw {
+		out[i] = [2]string{h[0].ToString(), h[1].ToString()}
+	}
+	for _, m := range w.f.reqHeaders {
+		out = applyRequestHeaderMutation(out, m)
+	}
+	return out
+}
+
+// RequestHeader returns the first current value of the named request header, or
+// "" if absent. Header mutations queued earlier in the same callback are
+// reflected in the returned value.
+func (w *Writer) RequestHeader(name string) string {
+	for _, h := range w.RequestHeaders() {
+		if strings.EqualFold(h[0], name) {
+			return h[1]
+		}
+	}
+	return ""
+}
+
+func applyRequestHeaderMutation(headers [][2]string, m requestHeaderMutation) [][2]string {
+	if m.del {
+		return removeRequestHeader(headers, m.name)
+	}
+	if m.add {
+		return append(headers, [2]string{m.name, m.value})
+	}
+	headers = removeRequestHeader(headers, m.name)
+	return append(headers, [2]string{m.name, m.value})
+}
+
+func removeRequestHeader(headers [][2]string, name string) [][2]string {
+	out := headers[:0]
+	for _, h := range headers {
+		if !strings.EqualFold(h[0], name) {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
 // Slog returns a [*slog.Logger] whose handler routes through Envoy's logging
 // mechanism. The logger automatically prepends filter=<name> to every line,
 // followed by any attributes registered via [WithAttributes]. Call once at the

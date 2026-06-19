@@ -100,6 +100,27 @@ func TestFilter_OnRequestHeaders_bodyHandler_capturesContentMetadata(t *testing.
 	require.Equal(t, "gzip", got.ContentEncoding)
 }
 
+func TestFilter_OnRequestBody_writerReadsRequestHeaders(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	handle := newMockHandle(ctrl)
+
+	headers := fake.NewFakeHeaderMap(map[string][]string{
+		"x-provider": {"openai"},
+	})
+	handle.EXPECT().RequestHeaders().Return(headers).AnyTimes()
+
+	var got string
+	f := newFilterWithBody(handle, func(w *Writer, _ *BodyChunk) {
+		got = w.RequestHeader("x-provider")
+	})
+
+	f.OnRequestHeaders(headers, false)
+	status := f.OnRequestBody(fake.NewFakeBodyBuffer([]byte(`{}`)), true)
+
+	require.Equal(t, shared.BodyStatusContinue, status)
+	require.Equal(t, "openai", got)
+}
+
 // In buffered mode, content-length and transfer-encoding must be removed from
 // request headers before they are forwarded, since the body may be replaced.
 // The filter must return Stop (not StopAllAndBuffer — that freezes the chain).

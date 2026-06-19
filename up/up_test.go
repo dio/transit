@@ -299,6 +299,40 @@ func TestRequest_Header_caseInsensitive(t *testing.T) {
 	require.Equal(t, "abc-123", r.Header("x-request-id"))
 }
 
+// --- Writer request headers ---
+
+func TestWriterRequestHeaders_copiesCurrentHeaders(t *testing.T) {
+	handle := testutil.NewFilterHandle(
+		testutil.WithHeaders(map[string]string{":method": "POST", "x-user": "alice"}),
+	)
+	w := NewWriter(handle)
+
+	require.Equal(t, "alice", w.RequestHeader("x-user"))
+	require.ElementsMatch(t, [][2]string{
+		{":method", "POST"},
+		{"x-user", "alice"},
+	}, w.RequestHeaders())
+}
+
+func TestWriterRequestHeader_reflectsQueuedMutations(t *testing.T) {
+	handle := testutil.NewFilterHandle(
+		testutil.WithHeaders(map[string]string{"x-user": "alice", "x-remove": "gone"}),
+	)
+	w := &Writer{f: &filter{handle: handle}}
+
+	w.SetRequestHeader("x-user", "bob")
+	w.AddRequestHeader("x-extra", "one")
+	w.RemoveRequestHeader("x-remove")
+
+	require.Equal(t, "bob", w.RequestHeader("x-user"))
+	require.Equal(t, "one", w.RequestHeader("x-extra"))
+	require.Empty(t, w.RequestHeader("x-remove"))
+	require.ElementsMatch(t, [][2]string{
+		{"x-user", "bob"},
+		{"x-extra", "one"},
+	}, w.RequestHeaders())
+}
+
 // --- Writer.SendLocalResponse ---
 
 func TestWriter_SendLocalResponse_delegatesToHandle(t *testing.T) {
