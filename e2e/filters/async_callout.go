@@ -121,6 +121,46 @@ func asyncCallout(w *up.Writer, r *up.Request) {
 			w.SendLocalResponse(503, []byte(err.Error()), [2]string{"content-type", "text/plain"})
 		}
 
+	case "/sequence-local":
+		// Sequential callback callouts keep the final decision on the callback
+		// path, so SendLocalResponse remains reliable after attempt N.
+		err := w.HTTPCalloutSequence(func(attempt int, previous *up.HTTPCalloutAllSettledResponse) (up.HTTPCalloutRequest, bool) {
+			if attempt == 2 {
+				return up.HTTPCalloutRequest{}, false
+			}
+			if attempt == 1 && (previous == nil || previous.Result != up.HTTPCalloutSuccess) {
+				return up.HTTPCalloutRequest{}, false
+			}
+			return up.HTTPCalloutRequest{
+				Cluster: "async-callout-upstream",
+				Headers: [][2]string{
+					{":method", "GET"},
+					{":path", fmt.Sprintf("/sequence-%d", attempt)},
+					{":scheme", "http"},
+					{"host", "async-callout.local"},
+				},
+				TimeoutMillis: 1000,
+			}, true
+		}, func(responses []up.HTTPCalloutAllSettledResponse) {
+			if len(responses) != 2 ||
+				responses[0].Result != up.HTTPCalloutSuccess ||
+				responses[1].Result != up.HTTPCalloutSuccess ||
+				len(responses[0].Body) == 0 ||
+				len(responses[1].Body) == 0 {
+				w.SendLocalResponse(503, []byte("sequence callout failed"), [2]string{"content-type", "text/plain"})
+				return
+			}
+			w.SendLocalResponse(
+				200,
+				[]byte(responses[0].Body[0].ToString()+"|"+responses[1].Body[0].ToString()),
+				[2]string{"content-type", "text/plain"},
+				[2]string{"x-async-callout-sequence", "ok"},
+			)
+		})
+		if err != nil {
+			w.SendLocalResponse(503, []byte(err.Error()), [2]string{"content-type", "text/plain"})
+		}
+
 	case "/fanout":
 		// Two concurrent Do calls inside a single goroutine; results merged into one
 		// header so the forward-echo upstream can reflect the combined value.

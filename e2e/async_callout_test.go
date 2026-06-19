@@ -186,6 +186,18 @@ func (s *AsyncCalloutSuite) TestGet_headerHTTPCalloutAllSettledMutatesAndForward
 	s.Require().Equal("a,b", resp.Header.Get("x-received-x-header-batch-result"))
 }
 
+func (s *AsyncCalloutSuite) TestGet_headerHTTPCalloutSequenceLocalResponse() {
+	req, err := http.NewRequest(http.MethodGet, asyncCalloutAddr+"/sequence-local", nil)
+	s.Require().NoError(err)
+
+	resp := mustDo(s.T(), req)
+	body := readBody(s.T(), resp)
+
+	s.Require().Equal(http.StatusOK, resp.StatusCode)
+	s.Require().Equal("ok", resp.Header.Get("x-async-callout-sequence"))
+	s.Require().Equal("sequence-0|sequence-1", body)
+}
+
 func (s *AsyncCalloutSuite) TestGet_goDoFanoutBothCalloutsSeen() {
 	// The filter issues two w.Do calls concurrently inside a single w.Go goroutine
 	// (fan-out). Each callout targets a different path on async-callout-upstream,
