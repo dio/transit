@@ -1,7 +1,7 @@
 # spa e2e
 
 Browser-based end-to-end tests for the `examples/spa` filter using
-[Lightpanda](https://lightpanda.io) (headless browser) + Playwright (CDP).
+Playwright with headless Google Chrome.
 
 ## What it tests
 
@@ -21,8 +21,10 @@ Browser-based end-to-end tests for the `examples/spa` filter using
 ## Prerequisites
 
 - Envoy binary at `../../.bin/envoy` (run `make download-envoy` from project root)
-- Node >= 24 (`@lightpanda/browser` requires it)
+- Node >= 24
 - `npm ci` (run once, or let `run.sh` do it)
+- Chrome installed for Playwright:
+  `npm --prefix examples/spa/e2e exec -- playwright install chrome`
 
 ## Run
 
@@ -44,25 +46,20 @@ SPA_URL=http://localhost:10000 node --test spa.test.mjs
 
 `run.sh`:
 1. Builds `libspa.so` from `examples/spa/cmd`
-2. Runs `npm ci` to install Lightpanda + Playwright
+2. Runs `npm ci` to install Playwright
 3. Starts Envoy with the spa filter loaded, waits for `/ready`
 4. Runs `node --test spa.test.mjs`
 5. Kills Envoy on exit (trap)
 
-`spa.test.mjs` uses `before()`/`after()` (node:test) to start Lightpanda
-on port 9222 and connect Playwright over CDP. Each test opens a page and
-closes it in a `withPage()` helper: Lightpanda only supports one page at
-a time.
-
-`page.evaluate()` quirk: no `async/await` inside `evaluate` — use
-`function()` + `.then()` chaining + `JSON.stringify` return.
+`spa.test.mjs` uses `before()`/`after()` (node:test) to launch headless Chrome.
+Set `PLAYWRIGHT_CHANNEL=chromium` to use Playwright's bundled Chromium instead.
 
 ## File structure
 
 ```
 examples/spa/e2e/
-  spa.test.mjs       13 browser tests (node:test + Playwright + Lightpanda)
+  spa.test.mjs       13 browser tests (node:test + Playwright + Chrome)
   run.sh             build .so, start Envoy, run tests, tear down
-  package.json       pinned: @lightpanda/browser 1.3.1, playwright-core 1.60.0
+  package.json       pinned: playwright 1.60.0
   .gitignore         node_modules/
 ```

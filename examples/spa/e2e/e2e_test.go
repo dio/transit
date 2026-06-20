@@ -1,6 +1,6 @@
 // Package e2e runs HTTP-level integration tests for the spa filter against a
 // real Envoy instance. No browser is required — DOM rendering is covered by
-// the Lightpanda suite in spa.test.mjs (make e2e-js).
+// the Playwright suite in spa.test.mjs (make e2e-js).
 //
 // Run:
 //

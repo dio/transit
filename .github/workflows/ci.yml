@@ -88,6 +88,11 @@ jobs:
           cache: npm
           cache-dependency-path: examples/spa/e2e/package-lock.json
 
+      - name: install spa browser
+        run: |
+          npm ci --prefix examples/spa/e2e
+          npm --prefix examples/spa/e2e exec -- playwright install --with-deps chrome
+
       - name: cache envoy
         id: cache-envoy
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5

@@ -62,7 +62,7 @@ Browser e2e test:
 make -C examples/spa e2e
 ```
 
-The e2e suite uses Lightpanda and Playwright. See `e2e/README.md` for browser
+The e2e suite uses Playwright with headless Chrome. See `e2e/README.md` for browser
 test details.
 
 ## Files

@@ -22,12 +22,12 @@ build: $(ZIG_BIN)
 test:
 	cd $(ROOT)/examples && go test ./spa/...
 
-## e2e: build .so, run Go HTTP-level e2e tests, then Lightpanda browser e2e tests (requires Node 24)
+## e2e: build .so, run Go HTTP-level e2e tests, then Playwright Chrome browser e2e tests (requires Node 24)
 e2e: build
-	cd $(ROOT)/examples && ENVOY_BIN=$(ENVOY_BIN) go test ./spa/e2e/... -v -timeout=60s -count=1
+	cd $(ROOT)/examples && ENVOY_BIN=$(ENVOY_BIN) GOWORK=off go test ./spa/e2e/... -v -timeout=60s -count=1
 	TRANSIT_SKIP_BUILD=1 ENVOY_BIN=$(ENVOY_BIN) bash $(CURDIR)/e2e/run.sh
 
-## e2e-js: build .so, start Envoy, run Lightpanda browser tests only (requires Node 24)
+## e2e-js: build .so, start Envoy, run Playwright Chrome browser tests only (requires Node 24)
 e2e-js: build
 	ENVOY_BIN=$(ENVOY_BIN) bash $(CURDIR)/e2e/run.sh
 

@@ -1,30 +1,26 @@
 /**
- * E2e tests for the transit examples/spa filter using Lightpanda + Playwright (CDP).
+ * E2e tests for the transit examples/spa filter using Playwright + Chrome.
  *
  * Prerequisites:
  *   - Envoy running with the spa .so loaded (see run.sh)
- *   - npm install  (installs @lightpanda/browser + playwright-core)
+ *   - npm install
+ *   - npx playwright install chrome
  *
  * Run:
  *   node --test spa.test.mjs
  *   SPA_URL=http://localhost:10000 node --test spa.test.mjs
  *
- * Note: Lightpanda supports only one active page at a time. All tests use the
- * withPage() helper which guarantees page.close() even on assertion failure.
- *
- * Note: page.evaluate does not support async/await or arrow closures over
- * outer variables — use function() + .then() chaining + JSON.stringify return.
+ * Set PLAYWRIGHT_CHANNEL=chromium to use Playwright's bundled Chromium instead
+ * of the default Google Chrome stable channel.
  */
 
 import assert from "node:assert/strict";
 import { describe, it, before, after } from "node:test";
-import { chromium } from "playwright-core";
-import { lightpanda } from "@lightpanda/browser";
+import { chromium } from "playwright";
 
-const BASE    = process.env.SPA_URL ?? "http://localhost:10000";
-const LP_PORT = 9222;
+const BASE = process.env.SPA_URL ?? "http://localhost:10000";
+const CHANNEL = process.env.PLAYWRIGHT_CHANNEL ?? "chrome";
 
-let lpProcess;
 let browser;
 let context;
 
@@ -33,32 +29,22 @@ let context;
 // ---------------------------------------------------------------------------
 
 before(async () => {
-  lpProcess = await lightpanda.serve({ host: "127.0.0.1", port: LP_PORT });
-  // lightpanda.serve() resolves before the CDP port is accepting connections.
-  // Retry connectOverCDP with a brief delay to avoid ECONNREFUSED.
-  for (let attempt = 0; attempt < 10; attempt++) {
-    try {
-      browser = await chromium.connectOverCDP(`http://127.0.0.1:${LP_PORT}`);
-      break;
-    } catch (_) {
-      await new Promise((r) => setTimeout(r, 100));
-    }
-  }
-  if (!browser) throw new Error(`Lightpanda CDP not ready after retries on :${LP_PORT}`);
+  browser = await chromium.launch({
+    channel: CHANNEL,
+    headless: true,
+  });
   context = await browser.newContext();
 });
 
 after(async () => {
   await context?.close();
   await browser?.close();
-  lpProcess?.kill();
 });
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-// Lightpanda supports one page at a time — always close in a finally block.
 async function withPage(path, fn) {
   const page = await context.newPage();
   await page.goto(`${BASE}${path}`, { waitUntil: "domcontentloaded" });
@@ -67,19 +53,6 @@ async function withPage(path, fn) {
   } finally {
     await page.close();
   }
-}
-
-// page.evaluate can't return plain objects in Lightpanda — round-trip via JSON.
-// Must use function() + .then() chaining; no async/await or arrow closures.
-async function evalJSON(page, fn, ...args) {
-  const raw = await page.evaluate(
-    ([fnSrc, baseArg, ...rest]) => {
-      const f = new Function(`return (${fnSrc})`)();
-      return Promise.resolve(f(baseArg, ...rest)).then((v) => JSON.stringify(v));
-    },
-    [fn.toString(), ...args]
-  );
-  return JSON.parse(raw);
 }
 
 // ---------------------------------------------------------------------------
@@ -165,7 +138,7 @@ describe("SPA fallback routing", () => {
 describe("GET /api/hello", () => {
   it("returns JSON with message from inside the .so", () =>
     withPage("/", async (page) => {
-      const data = await evalJSON(page, async (base) => {
+      const data = await page.evaluate(async (base) => {
         const res = await fetch(`${base}/api/hello`);
         return res.json();
       }, BASE);
@@ -178,7 +151,7 @@ describe("GET /api/hello", () => {
 describe("GET /api/time", () => {
   it("returns a valid ISO 8601 UTC timestamp", () =>
     withPage("/", async (page) => {
-      const data = await evalJSON(page, async (base) => {
+      const data = await page.evaluate(async (base) => {
         const res = await fetch(`${base}/api/time`);
         return res.json();
       }, BASE);
@@ -191,14 +164,10 @@ describe("GET /api/time", () => {
 describe("GET /api/unknown", () => {
   it("returns 404 with error JSON from the .so", () =>
     withPage("/", async (page) => {
-      // Use function() + .then() chaining — no async/await inside evaluate.
-      const raw = await page.evaluate(function(base) {
-        var captured;
-        return fetch(base + "/api/unknown")
-          .then(function(res) { captured = res.status; return res.json(); })
-          .then(function(body) { return JSON.stringify([captured, body]); });
+      const [status, body] = await page.evaluate(async (base) => {
+        const res = await fetch(`${base}/api/unknown`);
+        return [res.status, await res.json()];
       }, BASE);
-      const [status, body] = JSON.parse(raw);
 
       assert.equal(status,     404);
       assert.equal(body.error, "not found");
@@ -215,17 +184,17 @@ describe("Static assets", () => {
       const scriptSrc = await page.$eval("script[src]", (el) => el.getAttribute("src"));
       assert.match(scriptSrc, /^\/assets\//, "script src must be under /assets/");
 
-      const cacheControl = await evalJSON(page, async (base, src) => {
+      const cacheControl = await page.evaluate(async ({ base, src }) => {
         const res = await fetch(`${base}${src}`);
         return res.headers.get("cache-control");
-      }, BASE, scriptSrc);
+      }, { base: BASE, src: scriptSrc });
 
       assert.match(cacheControl, /immutable/, "fingerprinted assets must be immutable");
     }));
 
   it("index.html has no-cache header", () =>
     withPage("/", async (page) => {
-      const cacheControl = await evalJSON(page, async (base) => {
+      const cacheControl = await page.evaluate(async (base) => {
         const res = await fetch(`${base}/`);
         return res.headers.get("cache-control");
       }, BASE);
