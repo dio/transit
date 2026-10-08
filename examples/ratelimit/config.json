@@ -1,0 +1,10 @@
+{
+  "cluster": "rls-service",
+  "domain": "orange",
+  "timeout_ms": 50,
+  "failure_mode": "closed",
+  "descriptors": [[
+    {"key": "key_id", "header": "x-tars-id"},
+    {"key": "dim", "value": "rpm"}
+  ]]
+}
