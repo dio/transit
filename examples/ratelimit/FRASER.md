@@ -25,7 +25,7 @@ are different contracts; this example implements only the first.
 ## Evidence and branch boundaries
 
 Inspected Fraser `origin/adopt-orange` at `c6f1edc98` and the separate current
-`tars-dataplane` implementation on main at `a32c4d172`:
+`tars-dataplane` implementation on `origin/main` at `573004cbf`:
 
 - Main `tars-dataplane/filter.go`, `OnRequestHeaders`: authentication and
   project/gateway authorization precede stamping `x-tars-id`, `x-tars-user`,
@@ -147,3 +147,18 @@ unmatched descriptors may be treated as unlimited by the service.
   correctness/availability review. Protocol compatibility is not readiness.
 
 No Fraser integration or production deployment is part of this example.
+
+## Targeting origin/main independently
+
+Do not merge `adopt-orange` or introduce Plum to adopt this module on main.
+Main's Composer entrypoint embeds TARS and guardrails directly through the
+Envoy Go SDK. It currently pins SDK `b579d07d3ad7`; this Transit example was
+tested with Envoy/SDK `0d6e3c60aa55`. A Transit dependency bump is therefore
+neither necessary nor sufficient for main's integration.
+
+If product requirements call for code-built descriptors or independently
+reloaded client policy, qualify a separate Envoy-loaded `libratelimit.so` on
+main's exact Envoy build, alongside `libcomposer.so`, then add explicit Liaison
+filter placement and identity/order tests. If the requirements are only request
+quotas over existing trusted headers or metadata, prefer the native filter.
+Both can call the same RLS and use its custom quota configuration source.
