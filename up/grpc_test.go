@@ -2,9 +2,11 @@ package up
 
 import (
 	"encoding/binary"
+	"strconv"
 	"testing"
 
 	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared"
+	"github.com/envoyproxy/envoy/source/extensions/dynamic_modules/sdk/go/shared/fake"
 	"github.com/stretchr/testify/require"
 
 	"github.com/dio/transit/up/testutil"
@@ -167,4 +169,42 @@ func TestWriterGRPCCallout_wrapsHTTPStream(t *testing.T) {
 		{"te", "trailers"},
 	}, gotHeaders)
 	require.Equal(t, []byte("request"), decodeGRPCBody([]shared.UnsafeEnvoyBuffer{{Ptr: &gotBody[0], Len: uint64(len(gotBody))}}))
+}
+
+func TestHeaderGRPCCalloutHoldsBodyUntilDecision(t *testing.T) {
+	for _, deny := range []bool{false, true} {
+		t.Run(strconv.FormatBool(deny), func(t *testing.T) {
+			var callback shared.HttpStreamCallback
+			h := testutil.NewFilterHandle(testutil.WithHTTPStreamFunc(func(_ string, _ [][2]string, _ []byte, _ bool, _ uint64, cb shared.HttpStreamCallback) (shared.HttpCalloutInitResult, uint64) {
+				callback = cb
+				return shared.HttpCalloutInitSuccess, 1
+			}))
+			f := &filter{handle: h, handler: func(w *Writer, _ *Request) {
+				_, err := w.GRPCCallout(GRPCCalloutRequest{Cluster: "rls", Method: "/rls/Check"}, func(GRPCCalloutResponse) {
+					if deny {
+						w.SendLocalResponse(429, []byte("denied"))
+					}
+				})
+				require.NoError(t, err)
+			}}
+			require.Equal(t, shared.HeadersStatusStop, f.OnRequestHeaders(h.RequestHeaders(), false))
+			require.Equal(t, shared.BodyStatusStopAndBuffer, f.OnRequestBody(fake.NewFakeBodyBuffer([]byte("part")), false))
+			require.Equal(t, shared.BodyStatusStopAndBuffer, f.OnRequestBody(fake.NewFakeBodyBuffer([]byte("rest")), true))
+			require.Zero(t, h.ContinuedReq)
+			require.Equal(t, shared.TrailersStatusStop, f.OnRequestTrailers(nil))
+			callback.OnHttpStreamComplete(1)
+			if deny {
+				require.Zero(t, h.ContinuedReq)
+				require.Len(t, h.LocalResponses, 1)
+				require.EqualValues(t, 429, h.LocalResponses[0].Status)
+				require.Equal(t, shared.TrailersStatusStop, f.OnRequestTrailers(nil))
+				require.Equal(t, shared.BodyStatusStopAndBuffer, f.OnRequestBody(fake.NewFakeBodyBuffer(nil), true))
+			} else {
+				require.Equal(t, 1, h.ContinuedReq)
+				require.Empty(t, h.LocalResponses)
+				require.Equal(t, shared.TrailersStatusContinue, f.OnRequestTrailers(nil))
+				require.Equal(t, shared.BodyStatusContinue, f.OnRequestBody(fake.NewFakeBodyBuffer(nil), true))
+			}
+		})
+	}
 }

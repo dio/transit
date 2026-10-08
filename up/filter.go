@@ -471,6 +471,12 @@ func (f *filter) OnRequestHeaders(headers shared.HeaderMap, endOfStream bool) sh
 // non-empty, and falls back to body otherwise.
 func (f *filter) OnRequestBody(body shared.BodyBuffer, endOfStream bool) shared.BodyStatus {
 	if f.requestBodyHandler == nil {
+		// StopIteration on headers still permits body callbacks. Returning
+		// Continue here would release headers to the router before admission
+		// completes, even if the callout later sends a local denial.
+		if f.calloutState.Load() == calloutStatePaused || f.stopped {
+			return shared.BodyStatusStopAndBuffer
+		}
 		return shared.BodyStatusContinue
 	}
 	if f.bufferBody && !endOfStream {
@@ -536,6 +542,15 @@ func (f *filter) OnRequestBody(body shared.BodyBuffer, endOfStream bool) shared.
 		f.handle.RequestHeaders().Set("content-length", strconv.Itoa(len(data)))
 	}
 	return shared.BodyStatusContinue
+}
+
+// OnRequestTrailers must not release a request whose admission callout is still
+// pending. Envoy can deliver trailers after stopped headers/body callbacks.
+func (f *filter) OnRequestTrailers(_ shared.HeaderMap) shared.TrailersStatus {
+	if f.calloutState.Load() == calloutStatePaused || f.stopped {
+		return shared.TrailersStatusStop
+	}
+	return shared.TrailersStatusContinue
 }
 
 func requestBodyReplacementBuffer(handle shared.HttpFilterHandle, current shared.BodyBuffer) shared.BodyBuffer {
