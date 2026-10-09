@@ -5,12 +5,13 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/dio/transit/up"
-	"github.com/dio/transit/up/testutil"
 	rlscommonv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/common/ratelimit/v3"
 	rlsv3 "github.com/envoyproxy/go-control-plane/envoy/service/ratelimit/v3"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/dio/transit/up"
+	"github.com/dio/transit/up/testutil"
 )
 
 func TestCodeBuilderReadsTrustedMetadata(t *testing.T) {

@@ -18,13 +18,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dio/transit/examples/internal/e2etest"
-	"github.com/dio/transit/examples/ratelimit"
 	rlsv3 "github.com/envoyproxy/go-control-plane/envoy/service/ratelimit/v3"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/dio/transit/examples/internal/e2etest"
+	"github.com/dio/transit/examples/ratelimit"
 )
 
 //go:embed testdata/envoy.tmpl.yaml

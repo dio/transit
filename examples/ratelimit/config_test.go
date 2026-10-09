@@ -8,8 +8,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/dio/transit/up"
 	"github.com/stretchr/testify/require"
+
+	"github.com/dio/transit/up"
 )
 
 func validConfig() Config {
