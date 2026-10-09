@@ -57,6 +57,7 @@ jobs:
       - name: example tests
         run: |
           make -C examples/hello test
+          make -C examples/ratelimit test
           make -C examples/sse-tap test
           make -C examples/request-ui test
           make -C examples/lb-policy test
