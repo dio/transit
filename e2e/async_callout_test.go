@@ -29,6 +29,16 @@ func (s *AsyncCalloutSuite) TestGet_calloutBodyReturnedAsLocalResponse() {
 	s.Require().Equal("checked", body)
 }
 
+func (s *AsyncCalloutSuite) TestPost_headerCalloutStillBlocksForwarding() {
+	req, err := http.NewRequest(http.MethodPost, asyncCalloutAddr+"/checked", strings.NewReader("must remain paused"))
+	s.Require().NoError(err)
+	resp := mustDo(s.T(), req)
+	body := readBody(s.T(), resp)
+	s.Require().Equal(http.StatusOK, resp.StatusCode)
+	s.Require().Equal("ok", resp.Header.Get("x-async-callout"))
+	s.Require().Equal("checked", body)
+}
+
 func (s *AsyncCalloutSuite) TestGet_calloutMutatesAndForwards() {
 	// The filter issues a callout; the callback sets x-callout-result and does
 	// NOT send a local response. The request is forwarded to the echo upstream

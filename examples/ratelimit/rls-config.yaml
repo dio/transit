@@ -1,0 +1,9 @@
+domain: orange
+descriptors:
+  - key: key_id
+    descriptors:
+      - key: dim
+        value: rpm
+        rate_limit:
+          unit: minute
+          requests_per_unit: 60
