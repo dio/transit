@@ -12,3 +12,4 @@ examples/*/lib*.h
 .hermes/
 .DS_Store
 *.rdb
+.commandcode/
