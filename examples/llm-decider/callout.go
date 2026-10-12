@@ -4,14 +4,14 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dio/switchyard-capi/go/jev"
+	"github.com/dio/libsygo/jev"
 
 	"github.com/dio/transit/up"
 )
 
 // judgeDecider serves the routing core's judge call over Envoy's own egress.
 //
-// It satisfies decision.Decider. The Decider is per request because the callout
+// It satisfies libsygo.Decider. The Decider is per request because the callout
 // belongs to one stream; the Router is shared, because it holds the latch.
 type judgeDecider struct {
 	w      *up.Writer

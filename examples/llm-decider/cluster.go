@@ -89,7 +89,7 @@ func (c *modelCluster) Init(h up.ClusterHandle) {
 	h.PreInitComplete()
 }
 
-func (c *modelCluster) NewClusterLB() up.ClusterLB   { return &modelClusterLB{parent: c} }
+func (c *modelCluster) NewClusterLB() up.ClusterLB           { return &modelClusterLB{parent: c} }
 func (c *modelCluster) ServerInitialized(_ up.ClusterHandle) {}
 func (c *modelCluster) DrainStarted(_ up.ClusterHandle)      {}
 func (c *modelCluster) Shutdown(_ up.ClusterHandle, done func()) {

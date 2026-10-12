@@ -1,7 +1,7 @@
 // Package llmdecider routes a request to a model tier by asking a judge model.
 //
 // It is the transit side of the decision seam. The routing core comes from
-// github.com/dio/switchyard-capi/go/decision, which performs no I/O of its own;
+// github.com/dio/libsygo, which performs no I/O of its own;
 // this package supplies the judge call over Envoy's own egress and applies the
 // result. Egress, credentials and retries stay with Envoy.
 //
@@ -28,7 +28,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/dio/switchyard-capi/go/decision"
+	"github.com/dio/libsygo"
 
 	"github.com/dio/transit/examples/llm-decider/internal/config"
 	"github.com/dio/transit/up"
@@ -103,7 +103,7 @@ func sessionHandler(_ *up.Writer, r *up.Request) {
 // It runs in a goroutine because the judge is a network call — 70-500 ms for
 // System One — and blocking the Envoy worker on it would stall the stream. That
 // goroutine is also where Writer.Do is legal.
-func decideHandler(router *decision.Router, cfg Config) up.RequestBodyHandlerFunc {
+func decideHandler(router *libsygo.Router, cfg Config) up.RequestBodyHandlerFunc {
 	return func(w *up.Writer, chunk *up.BodyChunk) {
 		// Buffered mode: one call, with the whole body, at end of stream.
 		if !chunk.EndStream {
@@ -125,7 +125,7 @@ func decideHandler(router *decision.Router, cfg Config) up.RequestBodyHandlerFun
 
 		w.Go(func(ctx context.Context) {
 			outcome := router.Route(ctx,
-				decision.Turn{Prompt: prompt, Session: session},
+				libsygo.Turn{Prompt: prompt, Session: session},
 				judgeDecider{w: w, config: cfg})
 			applyOutcome(w, outcome)
 		})
@@ -137,7 +137,7 @@ func decideHandler(router *decision.Router, cfg Config) up.RequestBodyHandlerFun
 // It cannot answer from here: SendLocalResponse is only honoured from a filter
 // callback, not from a scheduled goroutine. A failed decision is therefore
 // recorded as a header, which the route and the access log can act on.
-func applyOutcome(w *up.Writer, outcome decision.Outcome) {
+func applyOutcome(w *up.Writer, outcome libsygo.Outcome) {
 	if outcome.Error != "" {
 		w.SetRequestHeader(HeaderDecisionError, outcome.Error)
 		return
@@ -150,7 +150,7 @@ func applyOutcome(w *up.Writer, outcome decision.Outcome) {
 
 // decisionSource names the rule that produced the outcome, from the evidence the
 // router records.
-func decisionSource(outcome decision.Outcome) string {
+func decisionSource(outcome libsygo.Outcome) string {
 	var evidence struct {
 		Source string `json:"source"`
 	}

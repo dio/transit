@@ -3,6 +3,7 @@ module github.com/dio/transit/examples
 go 1.26.4
 
 require (
+	github.com/dio/libsygo v0.0.0-20261012062029-ebd13df8aeeb
 	github.com/dio/transit v0.0.0-20260609142809-c8f591ca64a5
 	github.com/envoyproxy/envoy/source/extensions/dynamic_modules v0.0.0-20260521055639-0d6e3c60aa55
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0
@@ -29,7 +30,6 @@ require (
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cncf/xds/go v0.0.0-20260202195803-dba9d589def2 // indirect
-	github.com/dio/switchyard-capi/go v0.0.0-20261012043813-34847f74a23c
 	github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect

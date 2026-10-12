@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/dio/switchyard-capi/go/decision"
+	"github.com/dio/libsygo"
 )
 
 func TestPromptFromBody(t *testing.T) {
@@ -43,32 +43,32 @@ func TestPromptFromBody(t *testing.T) {
 func TestDecisionSource(t *testing.T) {
 	cases := []struct {
 		name    string
-		outcome decision.Outcome
+		outcome libsygo.Outcome
 		want    string
 	}{
 		{
 			name:    "judged",
-			outcome: decision.Outcome{Evidence: json.RawMessage(`{"source":"decision_classifier","score":0.77}`)},
+			outcome: libsygo.Outcome{Evidence: json.RawMessage(`{"source":"decision_classifier","score":0.77}`)},
 			want:    "decision_classifier",
 		},
 		{
 			name:    "fail open",
-			outcome: decision.Outcome{Evidence: json.RawMessage(`{"source":"fail_open","reason_code":"call_error"}`)},
+			outcome: libsygo.Outcome{Evidence: json.RawMessage(`{"source":"fail_open","reason_code":"call_error"}`)},
 			want:    "fail_open",
 		},
 		{
 			name:    "latched",
-			outcome: decision.Outcome{Latched: true, Evidence: json.RawMessage(`{"source":"retained"}`)},
+			outcome: libsygo.Outcome{Latched: true, Evidence: json.RawMessage(`{"source":"retained"}`)},
 			want:    "retained",
 		},
 		{
 			name:    "latched without evidence",
-			outcome: decision.Outcome{Latched: true},
+			outcome: libsygo.Outcome{Latched: true},
 			want:    "retained",
 		},
 		{
 			name:    "no evidence",
-			outcome: decision.Outcome{},
+			outcome: libsygo.Outcome{},
 			want:    "",
 		},
 	}

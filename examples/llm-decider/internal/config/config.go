@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/dio/switchyard-capi/go/decision"
+	"github.com/dio/libsygo"
 )
 
 // Config is the module's runtime configuration. Every field has a default, so
@@ -60,15 +60,15 @@ func FromEnv() (Config, error) {
 }
 
 // Profile builds the routing profile described by this configuration.
-func (c Config) Profile() decision.Profile {
+func (c Config) Profile() libsygo.Profile {
 	failOpen := c.FailOpen
-	return decision.Profile{
+	return libsygo.Profile{
 		ID:              FilterID,
 		Algorithm:       "llm_classifier",
 		Mode:            "capability",
 		FailOpen:        &failOpen,
 		SessionAffinity: true,
-		Judge: &decision.Judge{
+		Judge: &libsygo.Judge{
 			Type:   "decision",
 			Cutoff: c.Cutoff,
 			Candidates: map[string]string{
@@ -87,8 +87,8 @@ func (c Config) Profile() decision.Profile {
 // "any" must list every routable target: the selected target is resolved against
 // it, and the order is the fallback order. It mirrors the reference runner's
 // capability pool, [efficient, capable].
-func (c Config) Models() decision.Models {
-	return decision.Models{
+func (c Config) Models() libsygo.Models {
+	return libsygo.Models{
 		"capable":   {c.CapableModel},
 		"efficient": {c.EfficientModel},
 		"judge":     {c.JudgeModel},
@@ -97,8 +97,8 @@ func (c Config) Models() decision.Models {
 }
 
 // Router builds the routing core for this configuration.
-func (c Config) Router() (*decision.Router, error) {
-	return decision.New(c.Profile(), c.Models())
+func (c Config) Router() (*libsygo.Router, error) {
+	return libsygo.New(c.Profile(), c.Models())
 }
 
 // FilterID names this profile, for use as a cache key.
