@@ -3,7 +3,7 @@ module github.com/dio/transit/examples
 go 1.26.4
 
 require (
-	github.com/dio/libsygo v0.0.0-20261012063459-7e3e276f105d
+	github.com/dio/libsygo v0.0.0-20261012103328-74d697e37b84
 	github.com/dio/transit v0.0.0-20260609142809-c8f591ca64a5
 	github.com/envoyproxy/envoy/source/extensions/dynamic_modules v0.0.0-20260521055639-0d6e3c60aa55
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0

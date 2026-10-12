@@ -65,7 +65,7 @@ func TestRouterSelectsTheCapableTierAboveCutoff(t *testing.T) {
 	require.NoError(t, err)
 
 	outcome := router.Route(context.Background(),
-		libsygo.Turn{Prompt: "refactor the payment module", Session: "tenant-a/s-1"},
+		libsygo.Turn{Request: libsygo.TextRequest("refactor the payment module"), Session: "tenant-a/s-1"},
 		fakeDecider{advantage: 0.77})
 
 	require.Empty(t, outcome.Error)
@@ -82,7 +82,7 @@ func TestRouterSelectsTheEfficientTierBelowCutoff(t *testing.T) {
 	require.NoError(t, err)
 
 	outcome := router.Route(context.Background(),
-		libsygo.Turn{Prompt: "write a haiku", Session: "s-1"},
+		libsygo.Turn{Request: libsygo.TextRequest("write a haiku"), Session: "s-1"},
 		fakeDecider{advantage: 0.05})
 
 	require.Equal(t, "cheap", outcome.Model)
@@ -98,7 +98,7 @@ func TestRouterFailsOpenToCapable(t *testing.T) {
 	require.NoError(t, err)
 
 	outcome := router.Route(context.Background(),
-		libsygo.Turn{Prompt: "anything", Session: "s-1"},
+		libsygo.Turn{Request: libsygo.TextRequest("anything"), Session: "s-1"},
 		fakeDecider{err: errJudge})
 
 	require.Empty(t, outcome.Error)
@@ -115,7 +115,7 @@ func TestRouterFailsClosedWhenConfigured(t *testing.T) {
 	require.NoError(t, err)
 
 	outcome := router.Route(context.Background(),
-		libsygo.Turn{Prompt: "anything", Session: "s-1"},
+		libsygo.Turn{Request: libsygo.TextRequest("anything"), Session: "s-1"},
 		fakeDecider{err: errJudge})
 
 	require.NotEmpty(t, outcome.Error)

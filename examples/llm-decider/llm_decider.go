@@ -8,8 +8,8 @@
 // One module, five entry points — every surface a single dynamic module can
 // register at once:
 //
-//	llm-decider            downstream HTTP filter. Parses the prompt, asks the
-//	                       judge, and stamps the decision onto the request.
+//	llm-decider            downstream HTTP filter. Normalizes the request, asks
+//	                       the judge, and stamps the decision onto the request.
 //	llm-decider-upstream   upstream HTTP filter. Turns the decided model into
 //	                       upstream request shaping.
 //	llm-decider-cluster    cluster extension. Owns the host set and selects the
@@ -110,7 +110,7 @@ func decideHandler(router *libsygo.Router, cfg Config) up.RequestBodyHandlerFunc
 			return
 		}
 
-		prompt, err := promptFromBody(chunk.Data)
+		request, err := requestFromBody(chunk.Data)
 		if err != nil {
 			w.SetRequestHeader(HeaderDecisionError, err.Error())
 			return
@@ -125,7 +125,7 @@ func decideHandler(router *libsygo.Router, cfg Config) up.RequestBodyHandlerFunc
 
 		w.Go(func(ctx context.Context) {
 			outcome := router.Route(ctx,
-				libsygo.Turn{Prompt: prompt, Session: session},
+				libsygo.Turn{Request: request, Session: session},
 				judgeDecider{w: w, config: cfg})
 			applyOutcome(w, outcome)
 		})
@@ -163,22 +163,23 @@ func decisionSource(outcome libsygo.Outcome) string {
 	return ""
 }
 
-// promptFromBody extracts the prompt the judge evaluates.
+// requestFromBody normalizes the request body into what libsygo routes on.
 //
-// The body shape is deliberately minimal: a real deployment would take the
-// normalized request from its own translation layer rather than parsing here.
-func promptFromBody(body []byte) (string, error) {
+// The whole body is decoded rather than a prompt extracted from it, because what the
+// judge is shown depends on the conversation: the opening task and the latest user
+// turn, with tool traffic and reasoning between them excluded. A flattened prompt
+// cannot express any of that, and would judge a resumed session on whatever text
+// happened to come first.
+func requestFromBody(body []byte) (libsygo.LlmRequest, error) {
 	if len(body) == 0 {
-		return "", errors.New("request has no body to decide on")
+		return libsygo.LlmRequest{}, errors.New("request has no body to decide on")
 	}
-	var parsed struct {
-		Prompt string `json:"prompt"`
+	request, err := libsygo.DecodeOpenAIChat(body)
+	if err != nil {
+		return libsygo.LlmRequest{}, fmt.Errorf("normalizing request body: %w", err)
 	}
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", fmt.Errorf("parsing request body: %w", err)
+	if len(request.Messages) == 0 {
+		return libsygo.LlmRequest{}, errors.New(`request body must carry a non-empty "messages" array`)
 	}
-	if parsed.Prompt == "" {
-		return "", errors.New(`request body must carry a non-empty "prompt"`)
-	}
-	return parsed.Prompt, nil
+	return request, nil
 }

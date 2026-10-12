@@ -194,7 +194,8 @@ func decide(t *testing.T, prompt, session string) map[string]string {
 	t.Helper()
 
 	request, err := http.NewRequest(http.MethodPost, proxyURL+"/",
-		strings.NewReader(fmt.Sprintf(`{"prompt":%q}`, prompt)))
+		strings.NewReader(fmt.Sprintf(
+			`{"model":"auto","messages":[{"role":"user","content":%q}]}`, prompt)))
 	require.NoError(t, err)
 	request.Header.Set("content-type", "application/json")
 	if session != "" {
@@ -258,6 +259,8 @@ func startUpstream(name string) int {
 			"decided":      r.Header.Get("x-llm-decided-model"),
 			"target":       r.Header.Get("x-llm-target-model"),
 			"decisionFrom": r.Header.Get("x-llm-decision-source"),
+			// Surfaced so a failed decision says why instead of only that it did.
+			"decisionError": r.Header.Get("x-llm-decision-error"),
 		})
 	})
 	go func() { _ = http.Serve(listener, mux) }()
