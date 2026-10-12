@@ -12,7 +12,7 @@ INTEGRATION := $(ROOT)/integrations/llm-decider-eg
 
 include $(ROOT)/scripts/zig.mk
 
-.PHONY: build test e2e clean download-envoy
+.PHONY: build test e2e e2e-eg clean download-envoy
 
 build: $(ZIG_BIN)
 	cd $(ROOT)/examples && $(ZIG_BUILD_ENV) go build -trimpath -buildmode=c-shared \
@@ -22,13 +22,16 @@ build: $(ZIG_BIN)
 test:
 	cd $(ROOT)/examples && go test ./$(EXAMPLE)/... -count=1
 
-# The Envoy-backed coverage lives in the Envoy Gateway integration: one module
-# registered at five entry points needs a real gateway to exercise.
-e2e:
+e2e: build
+	cd $(ROOT)/examples && ENVOY_BIN=$(ENVOY_BIN) go test ./$(EXAMPLE)/e2e/... -v -timeout=60s -count=1
+
+# The same module under Envoy Gateway, registered through the gateway control
+# plane rather than a hand-written bootstrap.
+e2e-eg:
 	@if [ -f $(INTEGRATION)/Makefile ]; then \
 	  $(MAKE) -C $(INTEGRATION) e2e; \
 	else \
-	  echo "e2e lives in integrations/llm-decider-eg, which is not present yet"; \
+	  echo "integrations/llm-decider-eg is not present yet"; \
 	  exit 1; \
 	fi
 
