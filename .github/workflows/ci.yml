@@ -66,6 +66,7 @@ jobs:
           make -C examples/cluster-dfp test
           make -C examples/cluster-router test
           make -C examples/cluster-shard-router test
+          make -C examples/llm-decider test
           make -C examples/spa test
 
   # ---------------------------------------------------------------------------
@@ -121,6 +122,7 @@ jobs:
       - run: make -C examples/lb-policy e2e
       - run: make -C examples/lb-policy-header-hash e2e
       - run: make -C examples/lb-policy-metadata-route e2e
+      - run: make -C examples/llm-decider e2e
       - run: make -C examples/mcp-catalog-router e2e
       - run: make -C examples/mcp-profile-gateway e2e
       - run: make -C examples/mcp-profile-router e2e

@@ -19,8 +19,10 @@ build: $(ZIG_BIN)
 	  -o $(EXAMPLE)/$(OUTPUT) ./$(EXAMPLE)/cmd
 	@echo "built: $(OUTPUT)"
 
+# Unit tests only. The e2e package needs a built shared library, so it runs under
+# `e2e`, which builds first.
 test:
-	cd $(ROOT)/examples && go test ./$(EXAMPLE)/... -count=1
+	cd $(ROOT)/examples && go test ./$(EXAMPLE) ./$(EXAMPLE)/internal/... -count=1
 
 e2e: build
 	cd $(ROOT)/examples && ENVOY_BIN=$(ENVOY_BIN) go test ./$(EXAMPLE)/e2e/... -v -timeout=60s -count=1
